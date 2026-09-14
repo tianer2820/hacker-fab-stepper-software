@@ -25,6 +25,8 @@ DEFAULT_UV_EXPOSURE: float = 25000.0
 
 
 def main():
+    if sys.platform == "win32":
+        sys.argv += ['-platform', 'windows:darkmode=2'] 
     app = QApplication(sys.argv)
     app.setApplicationName("Hacker Fab Stepper V2")
 
