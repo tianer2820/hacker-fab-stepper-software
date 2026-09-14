@@ -757,7 +757,11 @@ class ActionSubpanelWidget(QWidget):
         effective = layer.get_effective_settings(self.engine.project.settings)
 
         if effective.tiling_enabled:
-            op = TiledExposureOperation(layer_index=layer_idx, settings=effective)
+            op = TiledExposureOperation(
+                layer_index=layer_idx,
+                settings=effective,
+                autofocus_config=getattr(self.engine, "autofocus_config", None),
+            )
         else:
             op = ExposureOperation(layer_index=layer_idx, settings=effective)
 

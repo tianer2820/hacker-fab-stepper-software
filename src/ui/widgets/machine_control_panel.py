@@ -286,11 +286,14 @@ class MachineControlPanelWidget(QWidget):
         self.bridge.start_operation(op)
 
     def _on_autofocus_clicked(self):
-        op = AutofocusOperation(blue_only=(self.engine.projector.color_mode == ColorMode.UV))
+        op = AutofocusOperation(
+            blue_only=(self.engine.projector.color_mode == ColorMode.UV),
+            config=getattr(self.engine, "autofocus_config", None),
+        )
         self.bridge.start_operation(op)
 
     def _on_align_clicked(self):
-        op = AlignmentOperation()
+        op = AlignmentOperation(config=getattr(self.engine, "alignment_config", None))
         self.bridge.start_operation(op)
 
     def _on_pos_changed(self, coords: tuple):

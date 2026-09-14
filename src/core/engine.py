@@ -32,11 +32,15 @@ class StepperEngine:
         dlpc: Optional[Any] = None,
         delay_func: Optional[Callable[[float], None]] = None,
         warning_callback: Optional[Callable[[str], None]] = None,
+        autofocus_config: Optional[Any] = None,
+        alignment_config: Optional[Any] = None,
     ):
         self.stage = stage
         self.projector = projector
         self.camera = camera
         self.dlpc = dlpc
+        self.autofocus_config = autofocus_config
+        self.alignment_config = alignment_config
         
         self.delay_func = delay_func or time.sleep
         self.warning_callback = warning_callback or self._default_warning

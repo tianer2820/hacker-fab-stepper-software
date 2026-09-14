@@ -16,13 +16,12 @@ from PySide6.QtWidgets import QApplication, QFileDialog
 
 from camera import get_available_camera_types, get_camera
 from core.engine import StepperEngine
+from operations.alignment import AlignmentConfig
+from operations.autofocus import AutofocusConfig
 from stage_control import get_available_stage_types, get_stage_controller
 from ui.bridge import QtEngineBridge
 from ui.main_window import MainWindow
 from ui.projector import QtProjector
-
-DEFAULT_RED_EXPOSURE: float = 4167.0
-DEFAULT_UV_EXPOSURE: float = 25000.0
 
 
 def main():
@@ -58,10 +57,12 @@ def main():
     get_available_stage_types(print_missing=True)
     print("---------------------------------")
 
-    # STAGE CONFIG
+    # STAGE & TILING CONFIG
     stage_config = config.get("stage", {})
+    tiling_config = config.get("tiling", {})
+    tiling_enabled = bool(tiling_config.get("enabled", False))
     try:
-        stage = get_stage_controller(stage_config)
+        stage = get_stage_controller(stage_config, tiling=tiling_enabled)
     except Exception as e:
         print(f"Error initializing stage controller: {e}")
         return 1
@@ -74,9 +75,12 @@ def main():
         print(f"Error initializing camera: {e}")
         return 1
 
-    camera_scale = float(camera_config.get("gui-scale", 1.0))
-    red_exposure = float(camera_config.get("red-exposure", DEFAULT_RED_EXPOSURE))
-    uv_exposure = float(camera_config.get("uv-exposure", DEFAULT_UV_EXPOSURE))
+    # AUTOFOCUS & ALIGNMENT CONFIG
+    autofocus_config_dict = config.get("autofocus", {})
+    autofocus_config = AutofocusConfig.from_dict(autofocus_config_dict)
+
+    alignment_config_dict = config.get("alignment", {})
+    alignment_config = AlignmentConfig.from_dict(alignment_config_dict)
 
     # DLPC CONFIG
     dlpc = None
@@ -111,14 +115,16 @@ def main():
         stage=stage,
         projector=projector,
         camera=camera,
-        # red_exposure=red_exposure,
-        # uv_exposure=uv_exposure,
         dlpc=dlpc,
+        autofocus_config=autofocus_config,
+        alignment_config=alignment_config,
     )
+    if "enabled" in tiling_config:
+        engine.project.update_settings(tiling_enabled=tiling_enabled)
 
     # Qt Bridge & Main Application Window
     bridge = QtEngineBridge(engine)
-    main_win = MainWindow(engine, bridge, camera_scale=camera_scale)
+    main_win = MainWindow(engine, bridge)
     main_win.show()
 
     exit_code = app.exec()

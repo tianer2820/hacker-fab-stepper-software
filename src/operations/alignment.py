@@ -18,6 +18,21 @@ class AlignmentConfig:
     x_scale_factor: float = -1100.0
     y_scale_factor: float = 800.0
 
+    @classmethod
+    def from_dict(cls, d: Optional[dict] = None) -> "AlignmentConfig":
+        if not d:
+            return cls()
+        return cls(
+            enabled=bool(d.get("enabled", True)),
+            model_path=str(d.get("model_path", "ckpts/best.pt")),
+            right_marker_x=float(d.get("right_marker_x", 1820.0)),
+            left_marker_x=float(d.get("left_marker_x", 280.0)),
+            top_marker_y=float(d.get("top_marker_y", 269.0)),
+            bottom_marker_y=float(d.get("bottom_marker_y", 1075.0)),
+            x_scale_factor=float(d.get("x_scale_factor", -1100.0)),
+            y_scale_factor=float(d.get("y_scale_factor", 800.0)),
+        )
+
 
 
 

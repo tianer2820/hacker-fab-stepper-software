@@ -59,11 +59,12 @@ def get_available_stage_types(print_missing: bool = False) -> dict[str, dict[str
     return statuses
 
 
-def get_stage_controller(stage_config: dict) -> StageController:
+def get_stage_controller(stage_config: dict, tiling: Optional[bool] = None) -> StageController:
     """Factory function to instantiate and connect a StageController from configuration."""
     def _create_dummy_stage() -> DummyStage:
-        delay = float(stage_config.get("delay", 0.01))
-        speed = stage_config.get("speed")
+        dummy_cfg = stage_config.get("dummy", {}) if isinstance(stage_config.get("dummy"), dict) else {}
+        delay = float(dummy_cfg.get("delay", stage_config.get("delay", 0.01)))
+        speed = dummy_cfg.get("speed", stage_config.get("speed"))
         if speed is not None:
             speed = float(speed)
         return DummyStage(delay=delay, speed=speed)
@@ -82,10 +83,14 @@ def get_stage_controller(stage_config: dict) -> StageController:
                 "Install with: pip install '.[omm]'"
             ) from e
 
-        omm_config = stage_config.get("omm", {})
-        z_max = omm_config.get("z-max", -1)
+        omm_config = stage_config.get("omm") or stage_config.get("oom") or {}
+        z_max = omm_config.get("z-max", stage_config.get("z-max", -1))
         stage = OMMStage(z_max)
-        stage.connect(stage_config["port"], stage_config["baud-rate"])
+        port = omm_config.get("port", stage_config.get("port"))
+        baud = omm_config.get("baud-rate", stage_config.get("baud-rate", 921600))
+        if not port:
+            raise ValueError("Serial port not specified for OMM stage in config")
+        stage.connect(port, baud)
         return stage
 
     elif stage_type == "grbl":
@@ -98,19 +103,21 @@ def get_stage_controller(stage_config: dict) -> StageController:
                 "Install with: pip install '.[grbl]'"
             ) from e
 
-        port = stage_config["port"]
-        baud = stage_config["baud-rate"]
+        grbl_config = stage_config.get("grbl", {}) if isinstance(stage_config.get("grbl"), dict) else {}
+        port = grbl_config.get("port", stage_config.get("port"))
+        baud = grbl_config.get("baud-rate", stage_config.get("baud-rate", 115200))
+        if not port:
+            raise ValueError("Serial port not specified for GRBL stage in config")
         try:
             serial_port = serial.Serial(port, baud)
             print(f"Using serial port {serial_port.name}")
         except Exception as e:
             raise RuntimeError(f"Failed to open serial port {port} at {baud} baud: {e}") from e
 
-        # default features to False if they aren't specified -> supports legacy config.toml files
-        tiling = stage_config.get("tiling", False)
-        homing = stage_config.get("homing", False)
+        effective_tiling = tiling if tiling is not None else grbl_config.get("tiling", stage_config.get("tiling", False))
+        homing = grbl_config.get("homing", stage_config.get("homing", False))
 
-        return GrblStage(serial_port, homing, tiling)
+        return GrblStage(serial_port, homing, effective_tiling)
 
     elif stage_type in ("dummy", "none"):
         return _create_dummy_stage()

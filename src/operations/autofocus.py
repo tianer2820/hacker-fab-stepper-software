@@ -1,6 +1,7 @@
 import os
 import time
-from typing import Callable, Optional
+from dataclasses import dataclass
+from typing import Callable, Optional, Union
 
 import cv2
 import numpy as np
@@ -199,15 +200,39 @@ def execute_autofocus(
             log_file.close()
 
 
+@dataclass
+class AutofocusConfig:
+    enabled: bool = True
+
+    @classmethod
+    def from_dict(cls, d: Optional[dict] = None) -> "AutofocusConfig":
+        if not d:
+            return cls()
+        return cls(enabled=bool(d.get("enabled", True)))
+
+
 class AutofocusOperation(Operation):
     """Performs autofocus calibration."""
 
-    def __init__(self, blue_only: bool = False, log: bool = False):
+    def __init__(
+        self,
+        blue_only: bool = False,
+        log: bool = False,
+        config: Optional[Union[AutofocusConfig, dict]] = None,
+    ):
         super().__init__("Autofocus")
         self.blue_only = blue_only
         self.log = log
+        if isinstance(config, dict):
+            self.config = AutofocusConfig.from_dict(config)
+        else:
+            self.config = config or AutofocusConfig()
 
-    def execute(self, context: ExecutionContext, report_progress: Callable[[float, str], None]):
+    def execute(self, context: ExecutionContext, report_progress: Callable[[float, str], None]) -> Optional[str]:
+        if not self.config.enabled:
+            report_progress(1.0, "Autofocus disabled in config")
+            return "Autofocus disabled in config"
+
         report_progress(0.2, "Executing autofocus...")
 
         execute_autofocus(

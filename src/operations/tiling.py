@@ -11,10 +11,16 @@ from operations.movement import JogOperation
 class TiledExposureOperation(Operation):
     """Runs a multi-tile step-and-repeat exposure sequence composing lower-level operations directly."""
 
-    def __init__(self, layer_index: int, settings: PatterningSettings):
+    def __init__(
+        self,
+        layer_index: int,
+        settings: PatterningSettings,
+        autofocus_config: Optional[Any] = None,
+    ):
         super().__init__("Tiled Exposure")
         self.layer_index = layer_index
         self.settings = settings
+        self.autofocus_config = autofocus_config
         self._current_sub_op: Optional[Operation] = None
 
     def abort(self):
@@ -70,15 +76,23 @@ class TiledExposureOperation(Operation):
                 context.projector.set_image_source(ProjectorImageSource.ACTIVE_LAYER)
 
                 # Step 5: Set projector to red and run auto focus
-                context.projector.set_color_mode(ColorMode.RED)
-                report_progress(
-                    pct_base + 0.3 * pct_step,
-                    f"Tile {tile_idx + 1}/{total_tiles} - Autofocusing...",
-                )
-                af_op = AutofocusOperation(blue_only=False)
-                err = self._run_sub_op(af_op, context, lambda p, m: None)
-                if err or self.is_aborted:
-                    break
+                af_enabled = True
+                if self.autofocus_config is not None:
+                    if isinstance(self.autofocus_config, dict):
+                        af_enabled = self.autofocus_config.get("enabled", True)
+                    elif hasattr(self.autofocus_config, "enabled"):
+                        af_enabled = getattr(self.autofocus_config, "enabled", True)
+
+                if af_enabled:
+                    context.projector.set_color_mode(ColorMode.RED)
+                    report_progress(
+                        pct_base + 0.3 * pct_step,
+                        f"Tile {tile_idx + 1}/{total_tiles} - Autofocusing...",
+                    )
+                    af_op = AutofocusOperation(blue_only=False, config=self.autofocus_config)
+                    err = self._run_sub_op(af_op, context, lambda p, m: None)
+                    if err or self.is_aborted:
+                        break
 
                 # Step 6: Then, do an exposure
                 report_progress(

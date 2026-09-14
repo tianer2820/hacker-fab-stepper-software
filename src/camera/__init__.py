@@ -103,15 +103,17 @@ def get_camera(camera_config: dict) -> CameraModule:
     camera_type = str(camera_config.get("type", "none")).lower()
 
     if camera_type in ("none", "dummy"):
-        width = int(camera_config.get("width", 640))
-        height = int(camera_config.get("height", 480))
+        dummy_cfg = camera_config.get("dummy", {}) if isinstance(camera_config.get("dummy"), dict) else {}
+        width = int(dummy_cfg.get("width", camera_config.get("width", 640)))
+        height = int(dummy_cfg.get("height", camera_config.get("height", 480)))
         return DummyCamera(width=width, height=height)
 
     if camera_type == "webcam":
         try:
             from camera.webcam import Webcam
+            webcam_cfg = camera_config.get("webcam", {}) if isinstance(camera_config.get("webcam"), dict) else {}
             try:
-                index = int(camera_config.get("index", 0))
+                index = int(webcam_cfg.get("index", camera_config.get("index", 0)))
             except (ValueError, TypeError):
                 index = 0
             return Webcam(index)
@@ -121,8 +123,11 @@ def get_camera(camera_config: dict) -> CameraModule:
     elif camera_type in ("basler", "pylon"):
         try:
             from camera.pylon import BaslerPylon
+            pylon_cfg = camera_config.get("pylon", camera_config.get("basler", {}))
+            if not isinstance(pylon_cfg, dict):
+                pylon_cfg = {}
             try:
-                index = int(camera_config.get("index", 0))
+                index = int(pylon_cfg.get("index", camera_config.get("index", 0)))
             except (ValueError, TypeError):
                 index = 0
             return BaslerPylon(index)

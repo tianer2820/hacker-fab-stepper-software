@@ -29,14 +29,12 @@ class CameraViewWidget(QWidget):
         engine: StepperEngine,
         bridge: QtEngineBridge,
         camera: Optional[CameraModule] = None,
-        camera_scale: float = 0.5,
         parent: QWidget = None,
     ):
         super().__init__(parent)
         self.engine = engine
         self.bridge = bridge
         self.camera = camera
-        self.camera_scale = camera_scale
 
         self.current_frame: Optional[np.ndarray] = None
         self.current_qimage: Optional[QImage] = None

@@ -23,11 +23,10 @@ from ui.widgets import (
 class MainWindow(QMainWindow):
     """Main Application Window for Hacker Fab Stepper V2 using PySide6 QDockWidgets."""
 
-    def __init__(self, engine: StepperEngine, bridge: QtEngineBridge, camera_scale: float = 1.0):
+    def __init__(self, engine: StepperEngine, bridge: QtEngineBridge):
         super().__init__()
         self.engine = engine
         self.bridge = bridge
-        self.camera_scale = camera_scale
 
         self.setWindowTitle("Hacker Fab - Stepper V2")
         self.resize(1400, 900)
@@ -74,7 +73,7 @@ class MainWindow(QMainWindow):
         self.dock_map = self._create_dock("Stage Map", self.stage_map_widget, "dock_stage_map")
 
         self.camera_widget = CameraViewWidget(
-            self.engine, self.bridge, self.engine.camera, self.camera_scale, self
+            self.engine, self.bridge, self.engine.camera, self
         )
         self.dock_camera = self._create_dock("Camera View", self.camera_widget, "dock_camera")
 
