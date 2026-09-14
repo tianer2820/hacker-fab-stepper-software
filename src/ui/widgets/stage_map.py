@@ -25,7 +25,7 @@ class StageMapWidget(QWidget):
         layout.setSpacing(4)
 
         # Header readout
-        self.coord_label = QLabel("Position: X 0.000, Y 0.000, Z 0.000 mm")
+        self.coord_label = QLabel("Position: X 0.000, Y 0.000, Z 0.000 um")
         self.coord_label.setStyleSheet("color: #aaaaaa; font-size: 11px;")
         layout.addWidget(self.coord_label)
 
@@ -38,7 +38,7 @@ class StageMapWidget(QWidget):
 
     def _on_stage_moved(self, coords: tuple):
         x, y, z = coords
-        self.coord_label.setText(f"Position: X {x:.3f}, Y {y:.3f}, Z {z:.3f} mm")
+        self.coord_label.setText(f"Position: X {x:.3f}, Y {y:.3f}, Z {z:.3f} um")
         self.canvas.update()
 
 
