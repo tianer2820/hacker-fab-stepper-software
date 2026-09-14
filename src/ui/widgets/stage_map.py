@@ -91,27 +91,18 @@ class StageMapCanvas(QFrame):
             sy = oy + (max_y - y) * scale
             return sx, sy
 
-        # Draw stage travel border (non-distorting blue area)
+        # Draw stage travel border
         painter.setPen(QPen(QColor("#334155"), 1.5))
         painter.setBrush(QBrush(QColor("#1e293b")))
         painter.drawRect(QRectF(ox, oy, box_w, box_h))
-
-        # Draw grid lines inside the blue area
-        painter.setPen(QPen(QColor("#1e293b").lighter(130), 1, Qt.DotLine))
-        for gx in range(int(min_x), int(max_x) + 1, 5):
-            sx, _ = to_screen(gx, min_y)
-            if ox <= sx <= ox + box_w:
-                painter.drawLine(QPointF(sx, oy), QPointF(sx, oy + box_h))
-        for gy in range(int(min_y), int(max_y) + 1, 5):
-            _, sy = to_screen(min_x, gy)
-            if oy <= sy <= oy + box_h:
-                painter.drawLine(QPointF(ox, sy), QPointF(ox + box_w, sy))
 
         # Draw previous exposure footprints
         chip_project = self.parent_widget.engine.project
         painter.setPen(QPen(QColor("#f59e0b"), 1))
         painter.setBrush(QBrush(QColor(245, 158, 11, 80)))
         for layer in chip_project.layers:
+
+            # currently dead code. TODO: implement through a different way
             if hasattr(layer, "exposures"):
                 for exp in layer.exposures:
                     ex_x, ex_y, _ = exp.coords
@@ -130,7 +121,7 @@ class StageMapCanvas(QFrame):
         painter.drawLine(QPointF(cur_sx - 8, cur_sy), QPointF(cur_sx + 8, cur_sy))
         painter.drawLine(QPointF(cur_sx, cur_sy - 8), QPointF(cur_sx, cur_sy + 8))
 
-        # Target point
+        # # Target point
         painter.setPen(QPen(QColor("#ffffff"), 1))
         painter.setBrush(QBrush(QColor("#38bdf8")))
         painter.drawEllipse(QPointF(cur_sx, cur_sy), 4, 4)
