@@ -10,6 +10,7 @@ _src_dir = str(Path(__file__).resolve().parent)
 if _src_dir not in sys.path:
     sys.path.insert(0, _src_dir)
 
+import qdarktheme
 import toml
 from PySide6.QtWidgets import QApplication, QFileDialog
 
@@ -29,6 +30,7 @@ def main():
         sys.argv += ['-platform', 'windows:darkmode=2'] 
     app = QApplication(sys.argv)
     app.setApplicationName("Hacker Fab Stepper V2")
+    qdarktheme.setup_theme()
 
     # Determine config file (from argv, default.toml, or prompt)
     config_path = "default.toml"

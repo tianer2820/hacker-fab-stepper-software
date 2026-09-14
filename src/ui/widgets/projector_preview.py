@@ -28,7 +28,7 @@ class ProjectorPreviewWidget(QWidget):
 
         # Status mode label
         self.mode_label = QLabel("Output: Disabled (Off)")
-        self.mode_label.setStyleSheet("color: #888888; font-size: 11px;")
+        self.mode_label.setStyleSheet("font-size: 11px;")
         layout.addWidget(self.mode_label)
 
         self.canvas = ProjectorCanvas(self)

@@ -58,87 +58,8 @@ class MainWindow(QMainWindow):
         self.bridge.warning_emitted.connect(self._show_warning_dialog)
 
     def _apply_theme(self):
-        # return
-        self.setStyleSheet(
-            """
-            QMainWindow {
-                background-color: #18181b;
-            }
-            QDockWidget {
-                color: #f4f4f5;
-                font-weight: bold;
-                font-size: 12px;
-                titlebar-close-icon: none;
-            }
-            QDockWidget::title {
-                background-color: #27272a;
-                padding: 6px;
-                border-bottom: 1px solid #3f3f46;
-                border-radius: 2px;
-            }
-            QTabWidget::pane {
-                border: 1px solid #3f3f46;
-                background-color: #18181b;
-            }
-            QTabBar::tab {
-                background-color: #27272a;
-                color: #a1a1aa;
-                padding: 6px 14px;
-                border-top-left-radius: 4px;
-                border-top-right-radius: 4px;
-                margin-right: 2px;
-            }
-            QTabBar::tab:selected {
-                background-color: #3f3f46;
-                color: #ffffff;
-                font-weight: bold;
-            }
-            QGroupBox {
-                border: 1px solid #3f3f46;
-                border-radius: 4px;
-                margin-top: 10px;
-                font-weight: bold;
-                color: #e4e4e7;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 8px;
-                padding: 0 4px;
-            }
-            QPushButton {
-                background-color: #3f3f46;
-                color: #f4f4f5;
-                border-radius: 4px;
-                padding: 5px 12px;
-                border: 1px solid #52525b;
-            }
-            QPushButton:hover {
-                background-color: #52525b;
-            }
-            QPushButton:pressed {
-                background-color: #27272a;
-            }
-            QLineEdit, QSpinBox, QDoubleSpinBox {
-                background-color: #27272a;
-                color: #f4f4f5;
-                border: 1px solid #3f3f46;
-                border-radius: 4px;
-                padding: 4px;
-            }
-            QTableWidget {
-                background-color: #18181b;
-                color: #f4f4f5;
-                gridline-color: #27272a;
-                border: 1px solid #3f3f46;
-            }
-            QHeaderView::section {
-                background-color: #27272a;
-                color: #d4d4d8;
-                padding: 4px;
-                border: 1px solid #3f3f46;
-            }
-            """
-        )
+        import qdarktheme
+        qdarktheme.setup_theme()
 
     def _create_dock(self, title: str, widget: QWidget, obj_name: str) -> QDockWidget:
         dock = QDockWidget(title, self)

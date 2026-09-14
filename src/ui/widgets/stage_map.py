@@ -26,7 +26,7 @@ class StageMapWidget(QWidget):
 
         # Header readout
         self.coord_label = QLabel("Position: X 0.000, Y 0.000, Z 0.000 um")
-        self.coord_label.setStyleSheet("color: #aaaaaa; font-size: 11px;")
+        self.coord_label.setStyleSheet("font-size: 11px;")
         layout.addWidget(self.coord_label)
 
         self.canvas = StageMapCanvas(self)
@@ -59,10 +59,10 @@ class StageMapCanvas(QFrame):
 
         # Margins
         margin = 25
-        dw = w - 2 * margin
-        dh = h - 2 * margin
+        avail_w = w - 2 * margin
+        avail_h = h - 2 * margin
 
-        if dw <= 0 or dh <= 0:
+        if avail_w <= 0 or avail_h <= 0:
             return
 
         # Stage bounds in mm
@@ -77,24 +77,35 @@ class StageMapCanvas(QFrame):
         span_x = max(1e-5, max_x - min_x)
         span_y = max(1e-5, max_y - min_y)
 
+        # Non-distorting aspect ratio matching stage physical motion range
+        scale = min(avail_w / span_x, avail_h / span_y)
+        box_w = span_x * scale
+        box_h = span_y * scale
+
+        # Center the blue area in the canvas
+        ox = margin + (avail_w - box_w) / 2.0
+        oy = margin + (avail_h - box_h) / 2.0
+
         def to_screen(x: float, y: float):
-            sx = margin + (x - min_x) / span_x * dw
-            sy = margin + (max_y - y) / span_y * dh
+            sx = ox + (x - min_x) * scale
+            sy = oy + (max_y - y) * scale
             return sx, sy
 
-        # Draw stage travel border
+        # Draw stage travel border (non-distorting blue area)
         painter.setPen(QPen(QColor("#334155"), 1.5))
         painter.setBrush(QBrush(QColor("#1e293b")))
-        painter.drawRect(margin, margin, dw, dh)
+        painter.drawRect(QRectF(ox, oy, box_w, box_h))
 
-        # Draw grid lines
+        # Draw grid lines inside the blue area
         painter.setPen(QPen(QColor("#1e293b").lighter(130), 1, Qt.DotLine))
         for gx in range(int(min_x), int(max_x) + 1, 5):
             sx, _ = to_screen(gx, min_y)
-            painter.drawLine(int(sx), margin, int(sx), margin + dh)
+            if ox <= sx <= ox + box_w:
+                painter.drawLine(QPointF(sx, oy), QPointF(sx, oy + box_h))
         for gy in range(int(min_y), int(max_y) + 1, 5):
             _, sy = to_screen(min_x, gy)
-            painter.drawLine(margin, int(sy), margin + dw, int(sy))
+            if oy <= sy <= oy + box_h:
+                painter.drawLine(QPointF(ox, sy), QPointF(ox + box_w, sy))
 
         # Draw previous exposure footprints
         chip_project = self.parent_widget.engine.project
@@ -106,8 +117,8 @@ class StageMapCanvas(QFrame):
                     ex_x, ex_y, _ = exp.coords
                     sx, sy = to_screen(ex_x, ex_y)
                     # Draw exposure tile footprint (~1mm x 0.5mm approx)
-                    tile_w = max(4.0, (1.0 / span_x) * dw)
-                    tile_h = max(3.0, (0.5 / span_y) * dh)
+                    tile_w = max(4.0, 1.0 * scale)
+                    tile_h = max(3.0, 0.5 * scale)
                     painter.drawRect(QRectF(sx - tile_w / 2, sy - tile_h / 2, tile_w, tile_h))
 
         # Draw current stage position indicator
@@ -116,8 +127,8 @@ class StageMapCanvas(QFrame):
 
         # Target cross
         painter.setPen(QPen(QColor("#38bdf8"), 2))
-        painter.drawLine(int(cur_sx - 8), int(cur_sy), int(cur_sx + 8), int(cur_sy))
-        painter.drawLine(int(cur_sx), int(cur_sy - 8), int(cur_sx), int(cur_sy + 8))
+        painter.drawLine(QPointF(cur_sx - 8, cur_sy), QPointF(cur_sx + 8, cur_sy))
+        painter.drawLine(QPointF(cur_sx, cur_sy - 8), QPointF(cur_sx, cur_sy + 8))
 
         # Target point
         painter.setPen(QPen(QColor("#ffffff"), 1))

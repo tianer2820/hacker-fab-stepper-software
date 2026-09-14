@@ -10,6 +10,7 @@ dependencies = [
     "pillow>=10.4.0",
     "toml>=0.10.2",
     "pyside6>=6.6.0",
+    "pyqtdarktheme>=0.1.7",
 ]
 
 [project.optional-dependencies]
@@ -69,8 +70,4 @@ indent-style = "space"
 [tool.ty.src]
 # Explicitly tell it which folders to check
 include = ["src/*"]
-<<<<<<< HEAD
-=======
-# Uncomment to specify Which directories/files to skip
-# exclude = ["<insert>"]
->>>>>>> upstream/main
+

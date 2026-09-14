@@ -79,19 +79,24 @@ class BaslerPylon(CameraModule):
     def close(self) -> bool:
         self.should_stop.set()
         if self.camera is not None and self.camera.IsOpen():
-            print("Stopping camera")
             try:
                 if self.camera.IsGrabbing():
                     self.camera.StopGrabbing()
+            except Exception as e:
+                print(f"Error stopping grabbing on Basler camera: {e}")
+
+        if self.capture_thread is not None:
+            self.capture_thread.join(timeout=2.0)
+            self.capture_thread = None
+            print("Joined capture thread")
+
+        if self.camera is not None and self.camera.IsOpen():
+            print("Stopping camera")
+            try:
                 self.camera.Close()
             except Exception as e:
                 print(f"Error closing Basler camera: {e}")
             print("Closed camera")
-
-        if self.capture_thread is not None:
-            self.capture_thread.join(timeout=1.0)
-            self.capture_thread = None
-            print("Joined capture thread")
 
         with self._lock:
             self._latest_frame = None
@@ -113,24 +118,34 @@ class BaslerPylon(CameraModule):
             if grabResult is None:
                 continue
 
-            if grabResult.GrabSucceeded():
-                image = self.converter.Convert(grabResult)
-                frame = image.GetArray()
-                with self._lock:
-                    self._latest_frame = frame
+            try:
+                # Validate result handle before calling GrabSucceeded to prevent NULL pointer errors on shutdown
+                if hasattr(grabResult, "IsValid") and not grabResult.IsValid():
+                    grabResult.Release()
+                    continue
 
-                if self.event_bus is not None:
-                    self.event_bus.emit(Event.CAMERA_FRAME_READY, frame)
+                if grabResult.GrabSucceeded():
+                    image = self.converter.Convert(grabResult)
+                    frame = image.GetArray()
+                    with self._lock:
+                        self._latest_frame = frame
 
-                if self._stream_callback is not None:
-                    try:
-                        self._stream_callback(frame, frame.size, "BGR888")
-                    except Exception as e:
-                        print(f"Pylon stream callback error: {e}")
-            else:
-                if not self.should_stop.is_set():
-                    print("Error: ", grabResult.ErrorCode, grabResult.ErrorDescription)
-            grabResult.Release()
+                    if self.event_bus is not None:
+                        self.event_bus.emit(Event.CAMERA_FRAME_READY, frame)
+
+                    if self._stream_callback is not None:
+                        try:
+                            self._stream_callback(frame, frame.size, "BGR888")
+                        except Exception as e:
+                            print(f"Pylon stream callback error: {e}")
+                else:
+                    if not self.should_stop.is_set():
+                        print("Error: ", grabResult.ErrorCode, grabResult.ErrorDescription)
+                grabResult.Release()
+            except Exception as e:
+                if self.should_stop.is_set():
+                    break
+                print(f"Pylon result handling error: {e}")
 
         print("Exited Pylon capture loop")
 

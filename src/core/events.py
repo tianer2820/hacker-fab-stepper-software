@@ -22,6 +22,7 @@ class ProjectorImageSource(StrAutoEnum):
 
     ACTIVE_LAYER = auto()
     CUSTOM_FILE = auto()
+    SOLID = auto()
 
 
 class Event(StrAutoEnum):

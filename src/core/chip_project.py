@@ -474,6 +474,8 @@ class ChipProject:
                     return None
             else:
                 return None
+        elif image_source == ProjectorImageSource.SOLID:
+            img = Image.new("RGB", projector_size, (255, 255, 255))
 
         if img is None:
             return None

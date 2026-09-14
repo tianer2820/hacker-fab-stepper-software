@@ -87,7 +87,16 @@ class ProjectorController(EngineModule):
                     print(f"DLPC LED sync failed: {e}")
         else:
             img = None
-            if self.project is not None:
+            if self.image_source == ProjectorImageSource.SOLID:
+                from lib.img import select_channels
+                base = Image.new("RGB", self.size(), (255, 255, 255))
+                if self.color_mode == ColorMode.RED:
+                    img = select_channels(base, red=True, green=False, blue=False)
+                elif self.color_mode == ColorMode.UV:
+                    img = select_channels(base, red=False, green=False, blue=True)
+                else:
+                    img = base
+            elif self.project is not None:
                 img = self.project.render_for_projector(
                     color_mode=self.color_mode,
                     image_source=self.image_source,

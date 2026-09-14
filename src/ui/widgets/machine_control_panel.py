@@ -94,7 +94,7 @@ class MachineControlPanelWidget(QWidget):
         grid.addWidget(self.btn_x_neg, 1, 0)
 
         self.btn_home = QPushButton("⌂ Home")
-        self.btn_home.setStyleSheet("font-weight: bold; background-color: #3f3f46;")
+        self.btn_home.setStyleSheet("font-weight: bold;")
         self.btn_home.clicked.connect(self._on_home_clicked)
         grid.addWidget(self.btn_home, 1, 1)
 
@@ -175,10 +175,13 @@ class MachineControlPanelWidget(QWidget):
         self.radio_src_active = QRadioButton("Active Layer")
         self.radio_src_active.setChecked(True)
         self.radio_src_custom = QRadioButton("Custom File")
+        self.radio_src_solid = QRadioButton("Solid")
         self.src_btn_group.addButton(self.radio_src_active)
         self.src_btn_group.addButton(self.radio_src_custom)
+        self.src_btn_group.addButton(self.radio_src_solid)
         src_radio_row.addWidget(self.radio_src_active)
         src_radio_row.addWidget(self.radio_src_custom)
+        src_radio_row.addWidget(self.radio_src_solid)
         src_layout.addLayout(src_radio_row)
 
         # Custom file row
@@ -195,6 +198,7 @@ class MachineControlPanelWidget(QWidget):
 
         self.radio_src_active.toggled.connect(self._on_image_source_toggled)
         self.radio_src_custom.toggled.connect(self._on_image_source_toggled)
+        self.radio_src_solid.toggled.connect(self._on_image_source_toggled)
 
         proj_layout.addWidget(src_group_box)
         layout.addWidget(proj_box)
@@ -224,6 +228,8 @@ class MachineControlPanelWidget(QWidget):
         if is_custom:
             path = self.txt_custom_file.text().strip() or None
             self.engine.projector.set_image_source(ProjectorImageSource.CUSTOM_FILE, path)
+        elif self.radio_src_solid.isChecked():
+            self.engine.projector.set_image_source(ProjectorImageSource.SOLID)
         else:
             self.engine.projector.set_image_source(ProjectorImageSource.ACTIVE_LAYER)
 
@@ -250,16 +256,22 @@ class MachineControlPanelWidget(QWidget):
     def _sync_image_source(self, src: ProjectorImageSource):
         self.radio_src_active.blockSignals(True)
         self.radio_src_custom.blockSignals(True)
+        self.radio_src_solid.blockSignals(True)
         if src == ProjectorImageSource.CUSTOM_FILE:
             self.radio_src_custom.setChecked(True)
             self.txt_custom_file.setEnabled(True)
             self.btn_browse_custom.setEnabled(True)
+        elif src == ProjectorImageSource.SOLID:
+            self.radio_src_solid.setChecked(True)
+            self.txt_custom_file.setEnabled(False)
+            self.btn_browse_custom.setEnabled(False)
         else:
             self.radio_src_active.setChecked(True)
             self.txt_custom_file.setEnabled(False)
             self.btn_browse_custom.setEnabled(False)
         self.radio_src_active.blockSignals(False)
         self.radio_src_custom.blockSignals(False)
+        self.radio_src_solid.blockSignals(False)
 
     def _on_step_changed(self, checked: bool, val: float):
         if checked:
@@ -304,5 +316,6 @@ class MachineControlPanelWidget(QWidget):
             self.radio_color_uv,
             self.radio_src_active,
             self.radio_src_custom,
+            self.radio_src_solid,
         ]:
             btn.setEnabled(not is_busy)

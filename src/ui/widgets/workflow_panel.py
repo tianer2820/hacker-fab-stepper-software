@@ -335,7 +335,7 @@ class LayerSubpanelWidget(QTabWidget):
         file_row.addWidget(self.btn_load_pattern)
 
         self.lbl_pattern_file = QLabel("No pattern selected")
-        self.lbl_pattern_file.setStyleSheet("color: #9ca3af; font-style: italic;")
+        self.lbl_pattern_file.setStyleSheet("font-style: italic;")
         file_row.addWidget(self.lbl_pattern_file, stretch=1)
         layout.addLayout(file_row)
 
@@ -343,7 +343,6 @@ class LayerSubpanelWidget(QTabWidget):
         mid_row = QHBoxLayout()
         self.lbl_thumb = QLabel("Thumbnail")
         self.lbl_thumb.setFixedSize(110, 80)
-        self.lbl_thumb.setStyleSheet("background-color: #09090b; border: 1px solid #3f3f46;")
         self.lbl_thumb.setAlignment(Qt.AlignCenter)
         mid_row.addWidget(self.lbl_thumb)
 
@@ -380,11 +379,11 @@ class LayerSubpanelWidget(QTabWidget):
         tiling_layout.setSpacing(6)
 
         self.lbl_tiling_status = QLabel("Tiling: Disabled (Single Pattern Mode)")
-        self.lbl_tiling_status.setStyleSheet("font-weight: bold; color: #38bdf8;")
+        self.lbl_tiling_status.setStyleSheet("font-weight: bold;")
         tiling_layout.addWidget(self.lbl_tiling_status)
 
         self.lbl_tiling_details = QLabel("Standard single-shot exposure mode.")
-        self.lbl_tiling_details.setStyleSheet("color: #9ca3af; font-size: 11px;")
+        self.lbl_tiling_details.setStyleSheet("font-size: 11px;")
         tiling_layout.addWidget(self.lbl_tiling_details)
 
         # Tile Navigation Row
@@ -413,7 +412,6 @@ class LayerSubpanelWidget(QTabWidget):
         preview_row = QHBoxLayout()
         self.lbl_tile_preview = QLabel("No Tile")
         self.lbl_tile_preview.setFixedSize(160, 90)
-        self.lbl_tile_preview.setStyleSheet("background-color: #09090b; border: 1px solid #3f3f46;")
         self.lbl_tile_preview.setAlignment(Qt.AlignCenter)
         preview_row.addWidget(self.lbl_tile_preview)
 
@@ -472,11 +470,11 @@ class LayerSubpanelWidget(QTabWidget):
         summary_box = QGroupBox("Effective Resolved Settings")
         summary_form = QFormLayout(summary_box)
         self.lbl_eff_exp = QLabel("8000 ms")
-        self.lbl_eff_exp.setStyleSheet("font-weight: bold; color: #10b981;")
+        self.lbl_eff_exp.setStyleSheet("font-weight: bold;")
         summary_form.addRow("Effective Exposure:", self.lbl_eff_exp)
 
         self.lbl_eff_tiling = QLabel("Disabled")
-        self.lbl_eff_tiling.setStyleSheet("font-weight: bold; color: #10b981;")
+        self.lbl_eff_tiling.setStyleSheet("font-weight: bold;")
         summary_form.addRow("Effective Tiling:", self.lbl_eff_tiling)
         layout.addWidget(summary_box)
 
@@ -565,11 +563,15 @@ class LayerSubpanelWidget(QTabWidget):
         layer = self.engine.project.active_layer
         tile = layer.get_tile(active_idx, self.engine.project.settings, self.engine.projector.size())
         if tile is not None:
-            thumb = tile.resize((160, 90))
+            tw, th = tile.size
+            scale = min(160 / max(1, tw), 90 / max(1, th))
+            nw = max(1, int(tw * scale))
+            nh = max(1, int(th * scale))
+            thumb = tile.resize((nw, nh), Image.Resampling.BILINEAR)
             if thumb.mode != "RGBA":
                 thumb = thumb.convert("RGBA")
             data = thumb.tobytes("raw", "RGBA")
-            qimg = QImage(data, 160, 90, QImage.Format_RGBA8888)
+            qimg = QImage(data, nw, nh, QImage.Format_RGBA8888)
             self.lbl_tile_preview.setPixmap(QPixmap.fromImage(qimg))
         else:
             self.lbl_tile_preview.clear()
@@ -599,11 +601,15 @@ class LayerSubpanelWidget(QTabWidget):
         if os.path.exists(path):
             try:
                 img = Image.open(path)
-                thumb = img.resize((110, 80))
+                iw, ih = img.size
+                scale = min(110 / max(1, iw), 80 / max(1, ih))
+                nw = max(1, int(iw * scale))
+                nh = max(1, int(ih * scale))
+                thumb = img.resize((nw, nh), Image.Resampling.BILINEAR)
                 if thumb.mode != "RGBA":
                     thumb = thumb.convert("RGBA")
                 data = thumb.tobytes("raw", "RGBA")
-                qimg = QImage(data, 110, 80, QImage.Format_RGBA8888)
+                qimg = QImage(data, nw, nh, QImage.Format_RGBA8888)
                 self.lbl_thumb.setPixmap(QPixmap.fromImage(qimg))
             except Exception:
                 self.lbl_thumb.setText("Preview Error")
@@ -670,40 +676,22 @@ class ActionSubpanelWidget(QWidget):
         card_layout.setContentsMargins(6, 6, 6, 6)
 
         self.lbl_active_name = QLabel("Layer 1")
-        self.lbl_active_name.setStyleSheet("font-weight: bold; font-size: 13px; color: #f4f4f5;")
+        self.lbl_active_name.setStyleSheet("font-weight: bold; font-size: 13px;")
         card_layout.addRow("Active Target:", self.lbl_active_name)
 
         self.lbl_active_exp = QLabel("8000 ms")
-        self.lbl_active_exp.setStyleSheet("font-weight: bold; color: #38bdf8;")
+        self.lbl_active_exp.setStyleSheet("font-weight: bold;")
         card_layout.addRow("Exposure:", self.lbl_active_exp)
 
         self.lbl_active_mode = QLabel("Single Field Exposure")
-        self.lbl_active_mode.setStyleSheet("font-weight: bold; color: #a1a1aa;")
+        self.lbl_active_mode.setStyleSheet("font-weight: bold;")
         card_layout.addRow("Execution Mode:", self.lbl_active_mode)
 
         layout.addWidget(card)
 
         # Big trigger action button
         self.btn_expose = QPushButton("Expose Layer")
-        self.btn_expose.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #2563eb;
-                color: #ffffff;
-                font-size: 14px;
-                font-weight: bold;
-                padding: 10px;
-                border-radius: 6px;
-            }
-            QPushButton:hover {
-                background-color: #3b82f6;
-            }
-            QPushButton:disabled {
-                background-color: #3f3f46;
-                color: #71717a;
-            }
-            """
-        )
+        self.btn_expose.setStyleSheet("font-size: 14px; font-weight: bold; padding: 10px;")
         self.btn_expose.clicked.connect(self._on_expose_clicked)
         layout.addWidget(self.btn_expose)
 
