@@ -1,3 +1,5 @@
+import threading
+import time
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Optional
 import numpy as np
@@ -74,27 +76,65 @@ class DummyCamera(CameraModule):
         self._active = False
         self._frame_count = 0
         self._exposure_time = 20000.0
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._latest_frame: Optional[np.ndarray] = None
 
     def open(self) -> bool:
         self._active = True
+        self._stop_event.clear()
+        self._thread = threading.Thread(
+            target=self._capture_loop, name="DummyCaptureThread", daemon=True
+        )
+        self._thread.start()
         return True
 
     def close(self) -> bool:
         self._active = False
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+            self._thread = None
+        with self._lock:
+            self._latest_frame = None
         return True
 
     def is_open(self) -> bool:
         return self._active
 
-    def get_latest_frame(self) -> Optional[np.ndarray]:
-        if not self._active:
-            return None
+    def _generate_frame(self) -> np.ndarray:
         self._frame_count += 1
         frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
         shift = (self._frame_count * 4) % self.width
         frame[:, :, 0] = np.linspace(0, 255, self.width, dtype=np.uint8)
         frame[:, :, 1] = np.linspace(0, 255, self.height, dtype=np.uint8).reshape(-1, 1)
         frame[:, shift : min(shift + 20, self.width), 2] = 255
+        return frame
+
+    def _capture_loop(self):
+        while not self._stop_event.is_set():
+            frame = self._generate_frame()
+            with self._lock:
+                self._latest_frame = frame
+            if self.event_bus is not None:
+                self.event_bus.emit(Event.CAMERA_FRAME_READY, frame)
+            if self._stream_callback is not None:
+                try:
+                    self._stream_callback(frame, frame.size, "BGR888")
+                except Exception as e:
+                    print(f"Dummy stream callback error: {e}")
+            time.sleep(0.033)
+
+    def get_latest_frame(self) -> Optional[np.ndarray]:
+        if not self._active:
+            return None
+        with self._lock:
+            if self._latest_frame is not None:
+                return self._latest_frame.copy()
+        frame = self._generate_frame()
+        with self._lock:
+            self._latest_frame = frame
         if self.event_bus is not None:
             self.event_bus.emit(Event.CAMERA_FRAME_READY, frame)
         return frame

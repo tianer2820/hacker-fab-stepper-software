@@ -5,7 +5,7 @@ from typing import Optional
 
 import cv2
 import numpy as np
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
+from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QCursor, QImage, QPainter, QPen
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
 
 from camera import CameraModule
 from core.engine import StepperEngine
-from core.events import Event
 from ui.bridge import QtEngineBridge
 
 
@@ -55,10 +54,8 @@ class CameraViewWidget(QWidget):
 
         self._init_ui()
 
-        # Camera polling timer (approx 30 FPS)
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self._fetch_frame)
-        self.timer.start(33)
+        # Listen for camera frame ready event from engine bridge
+        self.bridge.camera_frame_ready.connect(self._on_frame_ready)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -175,8 +172,10 @@ class CameraViewWidget(QWidget):
         self.bridge.status_message.emit(f"Snapshot saved: {filename.name}")
 
     def cleanup(self):
-        if hasattr(self, "timer") and self.timer.isActive():
-            self.timer.stop()
+        try:
+            self.bridge.camera_frame_ready.disconnect(self._on_frame_ready)
+        except Exception:
+            pass
         if self.camera and self.camera.is_open():
             try:
                 self.camera.close()
@@ -187,21 +186,11 @@ class CameraViewWidget(QWidget):
         self.cleanup()
         super().closeEvent(event)
 
-    def _fetch_frame(self):
-        if not self.camera:
-            return
-
-        try:
-            frame = self.camera.get_latest_frame()
-        except Exception as e:
-            print(f"Error fetching camera frame: {e}")
-            return
-
+    def _on_frame_ready(self, frame: Optional[np.ndarray]):
         if frame is None:
             return
 
         self.current_frame = frame
-        self.engine.event_bus.emit(Event.CAMERA_FRAME_READY, frame)
 
         # Convert directly to QImage without cvtColor overhead
         h, w = frame.shape[:2]
