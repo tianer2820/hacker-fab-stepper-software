@@ -23,6 +23,9 @@ class ExposureOperation(Operation):
         layer = context.project.layers[self.layer_index]
 
         prev_color_mode = context.projector.color_mode
+        coords = context.stage.get_position() if context.stage else (0.0, 0.0, 0.0)
+        start_datetime = datetime.now()
+        start_t = time.time()
         try:
             report_progress(0.0, f"Starting exposure ({int(duration_ms)} ms)...")
             context.project.select_layer(self.layer_index)
@@ -31,7 +34,6 @@ class ExposureOperation(Operation):
             context.projector.set_image_source(ProjectorImageSource.ACTIVE_LAYER)
             context.projector.set_color_mode(ColorMode.UV)
 
-            start_t = time.time()
             end_t = start_t + (duration_ms / 1000.0)
 
             progress_resolution = min((0.1, duration_ms / 1000.0 / 10))
@@ -45,6 +47,18 @@ class ExposureOperation(Operation):
                 context.delay_func(progress_resolution)
         finally:
             context.projector.set_color_mode(prev_color_mode)
+            elapsed_ms = (time.time() - start_t) * 1000.0
+            if context.project is not None:
+                from core.chip_project import ExposureRecord
+                record = ExposureRecord(
+                    coords=coords,
+                    time=start_datetime,
+                    duration=elapsed_ms,
+                    aborted=self.is_aborted,
+                    layer_index=self.layer_index,
+                    tile_index=self.tile_index,
+                )
+                context.project.add_exposure_record(record)
 
         if self.is_aborted:
             report_progress(1.0, "Exposure aborted")

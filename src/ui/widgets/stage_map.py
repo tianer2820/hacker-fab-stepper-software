@@ -1,7 +1,7 @@
 from typing import Optional
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen
-from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from core.engine import StepperEngine
 from ui.bridge import QtEngineBridge
@@ -24,10 +24,22 @@ class StageMapWidget(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
 
-        # Header readout
+        # Header row: coordinate readout + clear history button
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(6)
+
         self.coord_label = QLabel("Position: X 0.000, Y 0.000, Z 0.000 um")
         self.coord_label.setStyleSheet("font-size: 11px;")
-        layout.addWidget(self.coord_label)
+        header_layout.addWidget(self.coord_label, stretch=1)
+
+        self.btn_clear_history = QPushButton("Clear History")
+        self.btn_clear_history.setStyleSheet("font-size: 10px; padding: 2px 6px;")
+        self.btn_clear_history.setToolTip("Clear all exposure history records")
+        self.btn_clear_history.clicked.connect(self._on_clear_history)
+        header_layout.addWidget(self.btn_clear_history)
+
+        layout.addLayout(header_layout)
 
         self.canvas = StageMapCanvas(self)
         layout.addWidget(self.canvas, stretch=1)
@@ -35,11 +47,16 @@ class StageMapWidget(QWidget):
         # Connect signals
         self.bridge.stage_position_changed.connect(self._on_stage_moved)
         self.bridge.project_changed.connect(lambda _: self.canvas.update())
+        self.bridge.exposure_history_changed.connect(lambda _: self.canvas.update())
 
     def _on_stage_moved(self, coords: tuple):
         x, y, z = coords
         self.coord_label.setText(f"Position: X {x:.3f}, Y {y:.3f}, Z {z:.3f} um")
         self.canvas.update()
+
+    def _on_clear_history(self):
+        if hasattr(self.engine.project, "clear_exposure_history"):
+            self.engine.project.clear_exposure_history()
 
 
 class StageMapCanvas(QFrame):
@@ -98,19 +115,18 @@ class StageMapCanvas(QFrame):
 
         # Draw previous exposure footprints
         chip_project = self.parent_widget.engine.project
-        painter.setPen(QPen(QColor("#f59e0b"), 1))
-        painter.setBrush(QBrush(QColor(245, 158, 11, 80)))
-        for layer in chip_project.layers:
+        if chip_project and hasattr(chip_project, "exposure_history"):
+            painter.setPen(QPen(QColor("#f59e0b"), 1))
+            painter.setBrush(QBrush(QColor(245, 158, 11, 80)))
+            pitch_x = getattr(chip_project.settings, "pitch_x", 983.0) / 1000.0
+            pitch_y = getattr(chip_project.settings, "pitch_y", 512.0) / 1000.0
+            tile_w = max(4.0, pitch_x * scale)
+            tile_h = max(3.0, pitch_y * scale)
 
-            # currently dead code. TODO: implement through a different way
-            if hasattr(layer, "exposures"):
-                for exp in layer.exposures:
-                    ex_x, ex_y, _ = exp.coords
-                    sx, sy = to_screen(ex_x, ex_y)
-                    # Draw exposure tile footprint (~1mm x 0.5mm approx)
-                    tile_w = max(4.0, 1.0 * scale)
-                    tile_h = max(3.0, 0.5 * scale)
-                    painter.drawRect(QRectF(sx - tile_w / 2, sy - tile_h / 2, tile_w, tile_h))
+            for exp in chip_project.exposure_history:
+                ex_x, ex_y = exp.coords[0], exp.coords[1]
+                sx, sy = to_screen(ex_x, ex_y)
+                painter.drawRect(QRectF(sx - tile_w / 2, sy - tile_h / 2, tile_w, tile_h))
 
         # Draw current stage position indicator
         cx, cy, _ = self.parent_widget.engine.stage.get_position()

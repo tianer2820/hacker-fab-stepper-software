@@ -10,6 +10,18 @@ from PIL import Image
 
 
 @dataclass
+class ExposureRecord:
+    """Record of a single exposure event on the platform."""
+
+    coords: Tuple[float, float, float]
+    time: datetime = field(default_factory=datetime.now)
+    duration: float = 0.0  # ms
+    aborted: bool = False
+    layer_index: Optional[int] = None
+    tile_index: Optional[int] = None
+
+
+@dataclass
 class PatterningSettings:
     """Project-level default patterning and exposure settings."""
 
@@ -369,6 +381,7 @@ class ChipProject:
     layers: List[ChipLayer] = field(default_factory=lambda: [ChipLayer(name="Layer 1")])
     active_layer_index: int = 0
     active_tile_index: int = 0
+    exposure_history: List[ExposureRecord] = field(default_factory=list, repr=False, compare=False)
     events: Optional[Any] = field(default=None, repr=False, compare=False)
 
     def __post_init__(self):
@@ -437,6 +450,18 @@ class ChipProject:
             from core.events import Event
             self.events.emit(Event.ACTIVE_TILE_CHANGED, self.active_tile_index)
         return True
+
+    def add_exposure_record(self, record: ExposureRecord) -> None:
+        self.exposure_history.append(record)
+        if self.events is not None:
+            from core.events import Event
+            self.events.emit(Event.EXPOSURE_HISTORY_CHANGED, self.exposure_history)
+
+    def clear_exposure_history(self) -> None:
+        self.exposure_history.clear()
+        if self.events is not None:
+            from core.events import Event
+            self.events.emit(Event.EXPOSURE_HISTORY_CHANGED, self.exposure_history)
 
     def update_settings(self, **kwargs) -> None:
         """Updates project settings, marks all layer tile caches dirty, and emits EXPOSURE_CONFIG_CHANGED."""

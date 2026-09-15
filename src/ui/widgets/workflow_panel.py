@@ -90,6 +90,7 @@ class ProjectSubpanelWidget(QTabWidget):
         self.bridge.project_changed.connect(lambda _: self._refresh_ui())
         self.bridge.exposure_config_changed.connect(lambda: self._refresh_ui())
         self.bridge.active_layer_changed.connect(lambda _: self._refresh_layer_selection())
+        self.bridge.exposure_history_changed.connect(lambda _: self._refresh_ui())
         self._refresh_ui()
 
     def _setup_layers_tab(self):
@@ -194,11 +195,13 @@ class ProjectSubpanelWidget(QTabWidget):
         self.layers_table.blockSignals(True)
         layers = self.engine.project.layers
         self.layers_table.setRowCount(len(layers))
+        exp_history = getattr(self.engine.project, "exposure_history", [])
 
         for i, layer in enumerate(layers):
             item_name = QTableWidgetItem(layer.name)
             item_mask = QTableWidgetItem("✓ Loaded" if layer.pattern_path else "None")
-            item_runs = QTableWidgetItem(str(len(getattr(layer, "exposures", []))))
+            runs = sum(1 for e in exp_history if getattr(e, "layer_index", None) == i)
+            item_runs = QTableWidgetItem(str(runs))
             self.layers_table.setItem(i, 0, item_name)
             self.layers_table.setItem(i, 1, item_mask)
             self.layers_table.setItem(i, 2, item_runs)
@@ -697,25 +700,11 @@ class ActionSubpanelWidget(QWidget):
         self.btn_expose.clicked.connect(self._on_expose_clicked)
         layout.addWidget(self.btn_expose)
 
-        # History table
-        hist_box = QGroupBox("Layer Exposure History")
-        hist_layout = QVBoxLayout(hist_box)
-        hist_layout.setContentsMargins(4, 4, 4, 4)
-
-        self.table_history = QTableWidget()
-        self.table_history.setColumnCount(3)
-        self.table_history.setHorizontalHeaderLabels(["Timestamp", "Duration", "Status"])
-        self.table_history.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.table_history.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.table_history.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        hist_layout.addWidget(self.table_history)
-
-        layout.addWidget(hist_box)
-
         # Connect signals
         self.bridge.project_changed.connect(lambda _: self._refresh_dashboard())
         self.bridge.active_layer_changed.connect(lambda _: self._refresh_dashboard())
         self.bridge.exposure_config_changed.connect(lambda: self._refresh_dashboard())
+        self.bridge.exposure_history_changed.connect(lambda _: self._refresh_dashboard())
         self.bridge.projector_image_changed.connect(lambda _: self._refresh_dashboard())
         self.bridge.operation_started.connect(lambda *_: self._update_lock_state())
         self.bridge.operation_finished.connect(lambda *_: self._update_lock_state())
@@ -736,22 +725,6 @@ class ActionSubpanelWidget(QWidget):
         else:
             self.lbl_active_mode.setText("Single Field Exposure")
             self.btn_expose.setText("Expose Layer")
-
-        # History table
-        exps = getattr(layer, "exposures", [])
-        self.table_history.setRowCount(len(exps))
-        for i, exp in enumerate(reversed(exps)):
-            time_str = exp.time.strftime("%H:%M:%S")
-            dur_str = f"{int(exp.duration)}ms"
-            status_str = "Aborted" if exp.aborted else "Success"
-            self.table_history.setItem(i, 0, QTableWidgetItem(time_str))
-            self.table_history.setItem(i, 1, QTableWidgetItem(dur_str))
-            item_status = QTableWidgetItem(status_str)
-            if exp.aborted:
-                item_status.setForeground(Qt.red)
-            else:
-                item_status.setForeground(Qt.green)
-            self.table_history.setItem(i, 2, item_status)
 
     def _on_expose_clicked(self):
         layer_idx = self.engine.project.active_layer_index
