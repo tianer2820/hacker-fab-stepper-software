@@ -55,8 +55,7 @@ class StageMapWidget(QWidget):
         self.canvas.update()
 
     def _on_clear_history(self):
-        if hasattr(self.engine.project, "clear_exposure_history"):
-            self.engine.project.clear_exposure_history()
+        self.engine.project.clear_exposure_history()
 
 
 class StageMapCanvas(QFrame):

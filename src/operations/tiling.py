@@ -80,7 +80,7 @@ class TiledExposureOperation(Operation):
                 if self.autofocus_config is not None:
                     if isinstance(self.autofocus_config, dict):
                         af_enabled = self.autofocus_config.get("enabled", True)
-                    elif hasattr(self.autofocus_config, "enabled"):
+                    else:
                         af_enabled = getattr(self.autofocus_config, "enabled", True)
 
                 if af_enabled:
