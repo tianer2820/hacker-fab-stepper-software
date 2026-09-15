@@ -33,6 +33,7 @@ class Event(StrAutoEnum):
     ACTIVE_LAYER_CHANGED = auto()  # Emitted when the selected active layer index changes
     ACTIVE_TILE_CHANGED = auto()  # Emitted when the selected active tile index changes
     EXPOSURE_CONFIG_CHANGED = auto()  # Emitted when patterning/exposure config changes (global settings or per-layer overrides)
+    LAYER_CACHE_RECOMPUTED = auto()  # Emitted when a chip layer's tile cache has been recomputed
 
     # Stage
     STAGE_POSITION_CHANGED = auto()  # Emitted when stage position coordinates change

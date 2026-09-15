@@ -33,13 +33,13 @@ class ProjectorController(EngineModule):
             self._event_bus.remove_listener(Event.PROJECT_CHANGED, self._on_project_changed)
             self._event_bus.remove_listener(Event.ACTIVE_LAYER_CHANGED, self._on_active_layer_changed)
             self._event_bus.remove_listener(Event.ACTIVE_TILE_CHANGED, self._on_active_tile_changed)
-            self._event_bus.remove_listener(Event.EXPOSURE_CONFIG_CHANGED, self._on_exposure_config_changed)
+            self._event_bus.remove_listener(Event.LAYER_CACHE_RECOMPUTED, self._on_layer_cache_recomputed)
         self._event_bus = bus
         if self._event_bus is not None:
             self._event_bus.add_listener(Event.PROJECT_CHANGED, self._on_project_changed)
             self._event_bus.add_listener(Event.ACTIVE_LAYER_CHANGED, self._on_active_layer_changed)
             self._event_bus.add_listener(Event.ACTIVE_TILE_CHANGED, self._on_active_tile_changed)
-            self._event_bus.add_listener(Event.EXPOSURE_CONFIG_CHANGED, self._on_exposure_config_changed)
+            self._event_bus.add_listener(Event.LAYER_CACHE_RECOMPUTED, self._on_layer_cache_recomputed)
 
     def _on_project_changed(self, project=None):
         if project is not None:
@@ -52,7 +52,7 @@ class ProjectorController(EngineModule):
     def _on_active_tile_changed(self, tile_index=None):
         self.update_display()
 
-    def _on_exposure_config_changed(self, *args):
+    def _on_layer_cache_recomputed(self, layer=None, *args):
         self.update_display()
 
     def set_project(self, project: Optional[Any]):

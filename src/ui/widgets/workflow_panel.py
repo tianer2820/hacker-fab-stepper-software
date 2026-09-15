@@ -316,12 +316,17 @@ class LayerSubpanelWidget(QTabWidget):
         self.addTab(self.tab_overrides, "Setting Overrides")
 
         # Signals
-        self.bridge.project_changed.connect(lambda _: self._refresh_layer_view())
-        self.bridge.active_layer_changed.connect(lambda _: self._refresh_layer_view())
+        self.bridge.project_changed.connect(lambda _: self._on_project_or_layer_changed())
+        self.bridge.active_layer_changed.connect(lambda _: self._on_project_or_layer_changed())
         self.bridge.active_tile_changed.connect(lambda _: self._refresh_tile_preview())
+        self.bridge.layer_cache_recomputed.connect(lambda _: self._refresh_tile_preview())
         self.bridge.exposure_config_changed.connect(lambda: self._refresh_layer_view())
         self.bridge.projector_image_changed.connect(lambda _: self._refresh_layer_view())
+        self._on_project_or_layer_changed()
+
+    def _on_project_or_layer_changed(self):
         self._refresh_layer_view()
+        self._refresh_tile_preview()
 
     def _setup_pattern_tab(self):
         layout = QVBoxLayout(self.tab_pattern)
@@ -517,8 +522,6 @@ class LayerSubpanelWidget(QTabWidget):
             self.lbl_tiling_details.setText("Standard single-shot exposure will be used.")
             self.btn_regenerate_tiles.setEnabled(False)
 
-        self._refresh_tile_preview()
-
         # Overrides UI
         self.chk_override_exp.blockSignals(True)
         has_exp_override = layer.overrides.exposure_time is not None
@@ -593,8 +596,7 @@ class LayerSubpanelWidget(QTabWidget):
 
     def _on_regenerate_tiles_clicked(self):
         layer = self.engine.project.active_layer
-        layer.regenerate_tiles()
-        self._refresh_tile_preview()
+        layer.regenerate_tiles(self.engine.project.settings, self.engine.projector.size(), force=True)
         self.bridge.status_message.emit("Regenerated tiling patterns for active layer.")
 
     def _load_thumbnail(self, path: str):

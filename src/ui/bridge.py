@@ -39,6 +39,7 @@ class QtEngineBridge(QObject):
     active_layer_changed = Signal(int)
     active_tile_changed = Signal(int)
     exposure_config_changed = Signal()
+    layer_cache_recomputed = Signal(object)
 
     # Stage
     stage_position_changed = Signal(tuple)
@@ -90,6 +91,10 @@ class QtEngineBridge(QObject):
         self.engine.event_bus.add_listener(
             Event.EXPOSURE_CONFIG_CHANGED,
             lambda *args: self.exposure_config_changed.emit(),
+        )
+        self.engine.event_bus.add_listener(
+            Event.LAYER_CACHE_RECOMPUTED,
+            lambda layer=None, *args: self.layer_cache_recomputed.emit(layer),
         )
 
         # Stage

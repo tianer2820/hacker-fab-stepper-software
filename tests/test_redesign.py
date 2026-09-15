@@ -452,6 +452,7 @@ class TestConsolidatedEvents(unittest.TestCase):
             "ACTIVE_LAYER_CHANGED",
             "ACTIVE_TILE_CHANGED",
             "EXPOSURE_CONFIG_CHANGED",
+            "LAYER_CACHE_RECOMPUTED",
             # Stage
             "STAGE_POSITION_CHANGED",
             # Projector
@@ -487,6 +488,7 @@ class TestConsolidatedEvents(unittest.TestCase):
         bridge.active_layer_changed.connect(lambda idx: signals_received.append(f"layer_{idx}"))
         bridge.active_tile_changed.connect(lambda idx: signals_received.append(f"tile_{idx}"))
         bridge.exposure_config_changed.connect(lambda: signals_received.append("exposure_cfg"))
+        bridge.layer_cache_recomputed.connect(lambda l: signals_received.append("layer_recomputed"))
         bridge.stage_position_changed.connect(lambda pos: signals_received.append("stage"))
         bridge.projector_color_mode_changed.connect(lambda mode: signals_received.append("proj_color"))
         bridge.projector_image_source_changed.connect(lambda src: signals_received.append("proj_src"))
@@ -499,6 +501,7 @@ class TestConsolidatedEvents(unittest.TestCase):
         engine.event_bus.emit(Event.ACTIVE_LAYER_CHANGED, 0)
         engine.event_bus.emit(Event.ACTIVE_TILE_CHANGED, 0)
         engine.event_bus.emit(Event.EXPOSURE_CONFIG_CHANGED)
+        engine.event_bus.emit(Event.LAYER_CACHE_RECOMPUTED, None)
         engine.event_bus.emit(Event.STAGE_POSITION_CHANGED)
         engine.projector.set_color_mode(ColorMode.RED)
         engine.projector.set_image_source(ProjectorImageSource.ACTIVE_LAYER)
@@ -509,6 +512,7 @@ class TestConsolidatedEvents(unittest.TestCase):
         self.assertIn("layer_0", signals_received)
         self.assertIn("tile_0", signals_received)
         self.assertIn("exposure_cfg", signals_received)
+        self.assertIn("layer_recomputed", signals_received)
         self.assertIn("stage", signals_received)
         self.assertIn("proj_color", signals_received)
         self.assertIn("proj_src", signals_received)
@@ -536,6 +540,7 @@ class TestChipProjectAndProjectorRefinement(unittest.TestCase):
             "_tile_cache",
             "_tile_cache_dirty",
             "events",
+            "_project",
         }
         self.assertEqual(field_names, expected_fields)
 
@@ -548,6 +553,7 @@ class TestChipProjectAndProjectorRefinement(unittest.TestCase):
         self.assertEqual(layer._tile_cache, [])
         self.assertFalse(layer._tile_cache_dirty)
         self.assertIsNone(layer.events)
+        self.assertIsNone(layer._project)
 
         # Test loading and caching with tiling enabled
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
@@ -619,6 +625,62 @@ class TestChipProjectAndProjectorRefinement(unittest.TestCase):
             self.assertEqual(r.getextrema()[1], 0)
             self.assertEqual(g.getextrema()[1], 0)
             self.assertGreater(b.getextrema()[1], 0)
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+    def test_exposure_config_change_does_not_trigger_tile_recompute(self):
+        import tempfile
+        from PIL import Image
+
+        stage = MockStage()
+        camera = DummyCamera()
+        projector = MockProjector()
+        engine = StepperEngine(stage=stage, projector=projector, camera=camera)
+
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            temp_path = f.name
+        img = Image.new("RGB", (200, 200), "white")
+        img.save(temp_path)
+
+        try:
+            layer = engine.project.active_layer
+            layer.set_pattern_path(temp_path)
+
+            # Recompute tiles initially with force=True
+            tiles = layer.regenerate_tiles(engine.project.settings, (200, 200), force=True)
+            self.assertFalse(layer._tile_cache_dirty)
+
+            # Track update_display calls on projector
+            display_updates = []
+            orig_update_display = projector.update_display
+            projector.update_display = lambda: display_updates.append(True)
+
+            # Changing exposure settings must ONLY mark tiling cache dirty
+            engine.project.update_settings(pitch_x=50.0)
+            self.assertTrue(layer._tile_cache_dirty)
+            # Projector should NOT have updated because it listens to LAYER_CACHE_RECOMPUTED
+            self.assertEqual(len(display_updates), 0)
+
+            # layer.set_exposure_override should also only mark dirty
+            layer.set_exposure_override(9999.0)
+            self.assertTrue(layer._tile_cache_dirty)
+            self.assertEqual(len(display_updates), 0)
+
+            # Calling regenerate_tiles with force=False when dirty -> recomputes and emits LAYER_CACHE_RECOMPUTED
+            layer.regenerate_tiles(engine.project.settings, (200, 200), force=False)
+            self.assertFalse(layer._tile_cache_dirty)
+            self.assertEqual(len(display_updates), 1)
+
+            # Calling regenerate_tiles with force=False when clean -> skips recomputing and does not emit
+            layer.regenerate_tiles(engine.project.settings, (200, 200), force=False)
+            self.assertEqual(len(display_updates), 1)
+
+            # Calling regenerate_tiles with force=True -> recomputes even when clean and emits
+            layer.regenerate_tiles(engine.project.settings, (200, 200), force=True)
+            self.assertEqual(len(display_updates), 2)
+
+            projector.update_display = orig_update_display
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
@@ -729,29 +791,37 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
     def test_chiplayer_emits_exposure_config_changed(self):
         bus = EventBus()
         events_received = []
+        recomputed_received = []
         bus.add_listener(Event.EXPOSURE_CONFIG_CHANGED, lambda *args: events_received.append(True))
+        bus.add_listener(Event.LAYER_CACHE_RECOMPUTED, lambda *args: recomputed_received.append(args[0]))
 
         layer = ChipLayer(name="Test Layer", events=bus)
 
-        # 1. set_image_adjust emits
+        # 1. set_image_adjust emits EXPOSURE_CONFIG_CHANGED and marks dirty
         layer.set_image_adjust((10.0, 20.0, 5.0))
         self.assertEqual(len(events_received), 1)
+        self.assertTrue(layer._tile_cache_dirty)
 
-        # 2. set_exposure_override emits
+        # 2. set_exposure_override emits EXPOSURE_CONFIG_CHANGED and marks dirty
         layer.set_exposure_override(3000.0)
         self.assertEqual(len(events_received), 2)
+        self.assertTrue(layer._tile_cache_dirty)
 
-        # 3. set_tiling_override emits
+        # 3. set_tiling_override emits EXPOSURE_CONFIG_CHANGED and marks dirty
         layer.set_tiling_override(True)
         self.assertEqual(len(events_received), 3)
+        self.assertTrue(layer._tile_cache_dirty)
 
-        # 4. update_overrides emits
+        # 4. update_overrides emits EXPOSURE_CONFIG_CHANGED and marks dirty
         layer.update_overrides(exposure_time=4000.0)
         self.assertEqual(len(events_received), 4)
+        self.assertTrue(layer._tile_cache_dirty)
 
-        # 5. regenerate_tiles emits
+        # 5. regenerate_tiles emits LAYER_CACHE_RECOMPUTED from chip layer
         layer.regenerate_tiles()
-        self.assertEqual(len(events_received), 5)
+        self.assertEqual(len(events_received), 4)
+        self.assertEqual(len(recomputed_received), 1)
+        self.assertIs(recomputed_received[0], layer)
 
     def test_tiled_exposure_exact_sequence(self):
         from unittest.mock import patch

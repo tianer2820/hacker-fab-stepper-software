@@ -109,39 +109,37 @@ class ChipLayer:
     _tile_cache_dirty: bool = field(default=False, repr=False, compare=False)
 
     events: Optional[Any] = field(default=None, repr=False, compare=False)
+    _project: Optional[Any] = field(default=None, repr=False, compare=False)
 
     def set_pattern_path(self, path: Optional[str]):
         self.pattern_path = path
         self._pattern_cache = None
         self._pattern_cache_dirty = True
-        self._tile_cache = []
-        self._tile_cache_dirty = True
+        self.mark_tiling_dirty()
         if self.events is not None:
             self.events.emit(Event.EXPOSURE_CONFIG_CHANGED)
 
     def set_image_adjust(self, adjust: Tuple[float, float, float]):
         self.image_adjust = adjust
-        self._tile_cache = []
-        self._tile_cache_dirty = True
+        self.mark_tiling_dirty()
         if self.events is not None:
             self.events.emit(Event.EXPOSURE_CONFIG_CHANGED)
 
     def set_overrides(self, overrides: LayerSettingsOverride):
         self.overrides = overrides
-        self._tile_cache = []
-        self._tile_cache_dirty = True
+        self.mark_tiling_dirty()
         if self.events is not None:
             self.events.emit(Event.EXPOSURE_CONFIG_CHANGED)
 
     def set_exposure_override(self, exposure_time: Optional[float]):
         self.overrides.exposure_time = exposure_time
-        self.mark_dirty()
+        self.mark_tiling_dirty()
         if self.events is not None:
             self.events.emit(Event.EXPOSURE_CONFIG_CHANGED)
 
     def set_tiling_override(self, tiling_enabled: Optional[bool]):
         self.overrides.tiling_enabled = tiling_enabled
-        self.mark_dirty()
+        self.mark_tiling_dirty()
         if self.events is not None:
             self.events.emit(Event.EXPOSURE_CONFIG_CHANGED)
 
@@ -149,19 +147,41 @@ class ChipLayer:
         for k, v in kwargs.items():
             if hasattr(self.overrides, k):
                 setattr(self.overrides, k, v)
-        self.mark_dirty()
+        self.mark_tiling_dirty()
         if self.events is not None:
             self.events.emit(Event.EXPOSURE_CONFIG_CHANGED)
+
+    def mark_tiling_dirty(self):
+        self._tile_cache_dirty = True
 
     def mark_dirty(self):
         self._pattern_cache_dirty = True
         self._tile_cache_dirty = True
         self._tile_cache = []
 
-    def regenerate_tiles(self):
-        self.mark_dirty()
+    def regenerate_tiles(
+        self,
+        project_settings: Optional[PatterningSettings] = None,
+        projector_size: Tuple[int, int] = (1920, 1080),
+        force: bool = False,
+    ) -> list[Image.Image]:
+        if not force and not self._tile_cache_dirty and len(self._tile_cache) > 0:
+            return self._tile_cache
+
+        if project_settings is None:
+            if hasattr(self, "_project") and self._project is not None:
+                project_settings = getattr(self._project, "settings", PatterningSettings())
+            else:
+                project_settings = PatterningSettings()
+
+        if force:
+            self._tile_cache_dirty = True
+            self._tile_cache = []
+
+        tiles = self.get_tiles(project_settings, projector_size)
         if self.events is not None:
-            self.events.emit(Event.EXPOSURE_CONFIG_CHANGED)
+            self.events.emit(Event.LAYER_CACHE_RECOMPUTED, self)
+        return tiles
 
     def get_pattern_image(self) -> Optional[Image.Image]:
         if self._pattern_cache_dirty or self._pattern_cache is None:
@@ -353,9 +373,10 @@ class ChipProject:
 
     def __post_init__(self):
         if not self.layers:
-            self.layers = [ChipLayer(name="Layer 1", events=self.events)]
+            self.layers = [ChipLayer(name="Layer 1", events=self.events, _project=self)]
         for layer in self.layers:
             layer.events = self.events
+            layer._project = self
         if self.active_layer_index >= len(self.layers):
             self.active_layer_index = max(0, len(self.layers) - 1)
 
@@ -363,6 +384,7 @@ class ChipProject:
         self.events = events
         for layer in self.layers:
             layer.events = events
+            layer._project = self
 
     @property
     def active_layer(self) -> ChipLayer:
@@ -371,7 +393,7 @@ class ChipProject:
     def add_layer(self, name: Optional[str] = None) -> ChipLayer:
         layer_num = len(self.layers) + 1
         layer_name = name or f"Layer {layer_num}"
-        layer = ChipLayer(name=layer_name, events=self.events)
+        layer = ChipLayer(name=layer_name, events=self.events, _project=self)
         self.layers.append(layer)
         self.active_layer_index = len(self.layers) - 1
         self.active_tile_index = 0
@@ -422,7 +444,7 @@ class ChipProject:
             if hasattr(self.settings, k):
                 setattr(self.settings, k, v)
         for layer in self.layers:
-            layer.mark_dirty()
+            layer.mark_tiling_dirty()
         if self.events is not None:
             self.events.emit(Event.EXPOSURE_CONFIG_CHANGED)
 
