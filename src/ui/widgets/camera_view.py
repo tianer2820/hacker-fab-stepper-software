@@ -140,6 +140,7 @@ class CameraViewWidget(QWidget):
     def _on_center_crosshair_clicked(self):
         self.viewport.crosshair_u = 0.5
         self.viewport.crosshair_v = 0.5
+        self.viewport.has_secondary_crosshair = False
         self.viewport.update()
 
     def _zoom_in(self):
@@ -230,6 +231,11 @@ class CameraViewport(QWidget):
         # Normalized crosshair coordinates relative to the image [0.0 - 1.0]
         self.crosshair_u: float = 0.5
         self.crosshair_v: float = 0.5
+
+        # Secondary crosshair (set by right-click in move-crosshair mode)
+        self.secondary_crosshair_u: float = 0.0
+        self.secondary_crosshair_v: float = 0.0
+        self.has_secondary_crosshair: bool = False
 
         # Mouse interaction state
         self._is_panning: bool = False
@@ -327,6 +333,54 @@ class CameraViewport(QWidget):
             painter.drawEllipse(QPointF(cx, cy), 15, 15)
             painter.drawEllipse(QPointF(cx, cy), 35, 35)
 
+            # Draw secondary crosshair (orange) and distance label
+            if self.has_secondary_crosshair:
+                scx = target_rect.x() + self.secondary_crosshair_u * target_rect.width()
+                scy = target_rect.y() + self.secondary_crosshair_v * target_rect.height()
+
+                pen_sec = QPen(QColor(255, 165, 0, 180), 1.5, Qt.DashLine)
+                painter.setPen(pen_sec)
+                painter.drawLine(QPointF(0, scy), QPointF(self.width(), scy))
+                painter.drawLine(QPointF(scx, 0), QPointF(scx, self.height()))
+
+                pen_sec_solid = QPen(QColor(255, 165, 0, 220), 1.5)
+                painter.setPen(pen_sec_solid)
+                painter.drawEllipse(QPointF(scx, scy), 15, 15)
+                painter.drawEllipse(QPointF(scx, scy), 35, 35)
+
+                # Compute pixel distance between the two crosshairs
+                qimg = self.parent_view.current_qimage
+                if qimg is not None and not qimg.isNull() and target_rect.width() > 0:
+                    iw = qimg.width()
+                    ih = qimg.height()
+                    du = (self.secondary_crosshair_u - self.crosshair_u) * iw
+                    dv = (self.secondary_crosshair_v - self.crosshair_v) * ih
+                    dist_px = (du ** 2 + dv ** 2) ** 0.5
+
+                    # Draw a line connecting the two crosshairs
+                    pen_line = QPen(QColor(255, 255, 255, 120), 1.0, Qt.DotLine)
+                    painter.setPen(pen_line)
+                    painter.drawLine(QPointF(cx, cy), QPointF(scx, scy))
+
+                    # Distance label at the midpoint
+                    mid_x = (cx + scx) / 2
+                    mid_y = (cy + scy) / 2
+                    label = f"{dist_px:.1f} px"
+                    font = painter.font()
+                    font.setPointSize(9)
+                    font.setBold(True)
+                    painter.setFont(font)
+                    fm = painter.fontMetrics()
+                    lw = fm.horizontalAdvance(label)
+                    lh = fm.height()
+                    pad = 4
+                    bg_rect = QRectF(mid_x - lw / 2 - pad, mid_y - lh / 2 - pad, lw + pad * 2, lh + pad * 2)
+                    painter.setPen(Qt.NoPen)
+                    painter.setBrush(QColor(0, 0, 0, 160))
+                    painter.drawRoundedRect(bg_rect, 3, 3)
+                    painter.setPen(QColor(255, 220, 80))
+                    painter.drawText(QRectF(mid_x - lw / 2, mid_y - lh / 2, lw, lh), Qt.AlignCenter, label)
+
     def wheelEvent(self, event):
         angle = event.angleDelta().y()
         if angle != 0:
@@ -338,6 +392,11 @@ class CameraViewport(QWidget):
     def mousePressEvent(self, event):
         if self.parent_view.is_moving_crosshair and event.button() == Qt.LeftButton:
             self._update_crosshair_from_pos(event.position())
+            event.accept()
+            return
+
+        if self.parent_view.is_moving_crosshair and event.button() == Qt.RightButton:
+            self._update_secondary_crosshair_from_pos(event.position())
             event.accept()
             return
 
@@ -383,6 +442,16 @@ class CameraViewport(QWidget):
             v = (pos.y() - target_rect.y()) / target_rect.height()
             self.crosshair_u = max(0.0, min(1.0, u))
             self.crosshair_v = max(0.0, min(1.0, v))
+            self.update()
+
+    def _update_secondary_crosshair_from_pos(self, pos: QPointF):
+        target_rect = self._get_target_rect()
+        if target_rect.width() > 0 and target_rect.height() > 0:
+            u = (pos.x() - target_rect.x()) / target_rect.width()
+            v = (pos.y() - target_rect.y()) / target_rect.height()
+            self.secondary_crosshair_u = max(0.0, min(1.0, u))
+            self.secondary_crosshair_v = max(0.0, min(1.0, v))
+            self.has_secondary_crosshair = True
             self.update()
 
 
