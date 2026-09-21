@@ -47,7 +47,6 @@ class TiledExposureOperation(Operation):
 
         report_progress(0.0, f"Beginning tiled exposure ({total_tiles} tiles)...")
 
-        prev_color_mode = context.projector.color_mode
         try:
             for tile_idx, (tx, ty) in enumerate(tiling_path):
                 if self.is_aborted:
@@ -115,7 +114,7 @@ class TiledExposureOperation(Operation):
                 if err or self.is_aborted:
                     break
         finally:
-            context.projector.set_color_mode(prev_color_mode)
+            context.projector.set_color_mode(ColorMode.DISABLE)
 
         if self.is_aborted:
             report_progress(1.0, "Tiled exposure aborted")

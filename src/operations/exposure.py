@@ -22,20 +22,28 @@ class ExposureOperation(Operation):
             return "Invalid project or layer index"
         layer = context.project.layers[self.layer_index]
 
-        prev_color_mode = context.projector.color_mode
         coords = context.stage.get_position() if context.stage else (0.0, 0.0, 0.0)
+        report_progress(0.0, f"Preparing exposure for {layer.name}...")
+
+        # Select layer and tile, and set projector image source to ACTIVE_LAYER
+        context.project.select_layer(self.layer_index)
+        if self.tile_index is not None:
+            context.project.select_tile(self.tile_index)
+        context.projector.set_image_source(ProjectorImageSource.ACTIVE_LAYER)
+
+        # Pre-render the tile into cache before enabling UV light to prevent exposure timing delay
+        tile_idx = self.tile_index if self.tile_index is not None else context.project.active_tile_index
+        projector_size = context.projector.size()
+        layer.get_tile(tile_idx, self.settings, projector_size)
+
+        # Turn on UV illumination and start exposure timer
+        context.projector.set_color_mode(ColorMode.UV)
         start_datetime = datetime.now()
         start_t = time.time()
+        end_t = start_t + (duration_ms / 1000.0)
+
         try:
             report_progress(0.0, f"Starting exposure ({int(duration_ms)} ms)...")
-            context.project.select_layer(self.layer_index)
-            if self.tile_index is not None:
-                context.project.select_tile(self.tile_index)
-            context.projector.set_image_source(ProjectorImageSource.ACTIVE_LAYER)
-            context.projector.set_color_mode(ColorMode.UV)
-
-            end_t = start_t + (duration_ms / 1000.0)
-
             progress_resolution = min((0.1, duration_ms / 1000.0 / 10))
 
             while time.time() < end_t:
@@ -46,7 +54,8 @@ class ExposureOperation(Operation):
                 report_progress(pct, f"Exposing {layer.name}... ({int(pct * 100)}%)")
                 context.delay_func(progress_resolution)
         finally:
-            context.projector.set_color_mode(prev_color_mode)
+            # Ensure projector is turned to disabled after exposure even if previous mode is UV, to prevent over exposure
+            context.projector.set_color_mode(ColorMode.DISABLE)
             elapsed_ms = (time.time() - start_t) * 1000.0
             if context.project is not None:
                 from core.chip_project import ExposureRecord

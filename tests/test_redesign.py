@@ -453,6 +453,7 @@ class TestConsolidatedEvents(unittest.TestCase):
             "ACTIVE_TILE_CHANGED",
             "EXPOSURE_CONFIG_CHANGED",
             "LAYER_CACHE_RECOMPUTED",
+            "EXPOSURE_HISTORY_CHANGED",
             # Stage
             "STAGE_POSITION_CHANGED",
             # Projector
@@ -693,7 +694,7 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
         projector = MockProjector()
         return StepperEngine(stage=stage, projector=projector, camera=camera)
 
-    def test_exposure_operation_restores_color_mode(self):
+    def test_exposure_operation_disables_projector_after_exposure(self):
         engine = self._create_engine()
         engine.projector.set_color_mode(ColorMode.RED)
         self.assertEqual(engine.projector.color_mode, ColorMode.RED)
@@ -702,9 +703,20 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
         op = ExposureOperation(layer_index=0, settings=engine.project.settings)
         op.execute(engine.context, lambda p, m: None)
 
-        self.assertEqual(engine.projector.color_mode, ColorMode.RED)
+        self.assertEqual(engine.projector.color_mode, ColorMode.DISABLE)
 
-    def test_tiled_exposure_operation_restores_color_mode(self):
+    def test_exposure_operation_disables_projector_even_if_previously_uv(self):
+        engine = self._create_engine()
+        engine.projector.set_color_mode(ColorMode.UV)
+        self.assertEqual(engine.projector.color_mode, ColorMode.UV)
+
+        engine.project.settings.exposure_time = 10.0
+        op = ExposureOperation(layer_index=0, settings=engine.project.settings)
+        op.execute(engine.context, lambda p, m: None)
+
+        self.assertEqual(engine.projector.color_mode, ColorMode.DISABLE)
+
+    def test_tiled_exposure_operation_disables_projector_after_exposure(self):
         engine = self._create_engine()
         engine.projector.set_color_mode(ColorMode.RED)
         self.assertEqual(engine.projector.color_mode, ColorMode.RED)
@@ -715,7 +727,39 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
         op = TiledExposureOperation(layer_index=0, settings=engine.project.settings)
         op.execute(engine.context, lambda p, m: None)
 
-        self.assertEqual(engine.projector.color_mode, ColorMode.RED)
+        self.assertEqual(engine.projector.color_mode, ColorMode.DISABLE)
+
+    def test_exposure_operation_preheats_tile_before_uv_mode(self):
+        engine = self._create_engine()
+        layer = engine.project.active_layer
+
+        call_order = []
+        orig_get_tile = layer.get_tile
+        def spy_get_tile(*args, **kwargs):
+            call_order.append("get_tile")
+            return orig_get_tile(*args, **kwargs)
+        layer.get_tile = spy_get_tile
+
+        orig_set_color = engine.projector.set_color_mode
+        def spy_set_color(mode):
+            call_order.append(f"set_color_{mode.value if hasattr(mode, 'value') else mode}")
+            return orig_set_color(mode)
+        engine.projector.set_color_mode = spy_set_color
+
+        engine.project.settings.exposure_time = 20.0
+        op = ExposureOperation(layer_index=0, settings=engine.project.settings)
+        op.execute(engine.context, lambda p, m: None)
+
+        # Ensure get_tile is called BEFORE set_color_uv
+        self.assertIn("get_tile", call_order)
+        self.assertIn("set_color_uv", call_order)
+        self.assertIn("set_color_disable", call_order)
+        get_tile_idx = call_order.index("get_tile")
+        uv_idx = call_order.index("set_color_uv")
+        disable_idx = call_order.index("set_color_disable")
+        self.assertLess(get_tile_idx, uv_idx, "Tile must be pre-heated before UV is enabled to prevent timing delay")
+        self.assertLess(uv_idx, disable_idx, "UV must be disabled after exposure finishes")
+        self.assertEqual(engine.projector.color_mode, ColorMode.DISABLE)
 
     def test_chip_project_update_settings_invalidates_caches_and_emits_event(self):
         bus = EventBus()
