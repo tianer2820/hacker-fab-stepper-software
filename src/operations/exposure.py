@@ -31,13 +31,18 @@ class ExposureOperation(Operation):
             context.project.select_tile(self.tile_index)
         context.projector.set_image_source(ProjectorImageSource.ACTIVE_LAYER)
 
-        # Pre-render the tile into cache before enabling UV light to prevent exposure timing delay
+        # Pre-render the tile into cache and configure UV pattern before turning projector on
         tile_idx = self.tile_index if self.tile_index is not None else context.project.active_tile_index
-        projector_size = context.projector.size()
-        layer.get_tile(tile_idx, self.settings, projector_size)
-
-        # Turn on UV illumination and start exposure timer
+        layer.generate_tiles()
+        layer.get_tile(tile_idx)
         context.projector.set_color_mode(ColorMode.UV)
+
+        # sleep 1 sec to allow other events process so exposure time is accurate
+        time.sleep(1)
+        # Turn on projector output and wait for display to render before starting timer
+        context.projector.set_on(True)
+        context.projector.wait_for_display(timeout=2.0)
+
         start_datetime = datetime.now()
         start_t = time.time()
         end_t = start_t + (duration_ms / 1000.0)
@@ -54,9 +59,11 @@ class ExposureOperation(Operation):
                 report_progress(pct, f"Exposing {layer.name}... ({int(pct * 100)}%)")
                 context.delay_func(progress_resolution)
         finally:
-            # Ensure projector is turned to disabled after exposure even if previous mode is UV, to prevent over exposure
-            context.projector.set_color_mode(ColorMode.DISABLE)
+            # Ensure projector output is turned off immediately after exposure
+            context.projector.set_on(False)
+            context.projector.wait_for_display(timeout=1.0)
             elapsed_ms = (time.time() - start_t) * 1000.0
+            context.projector.set_color_mode(ColorMode.RED)
             if context.project is not None:
                 from core.chip_project import ExposureRecord
                 record = ExposureRecord(

@@ -12,7 +12,6 @@ class StrAutoEnum(str, Enum):
 class ColorMode(StrAutoEnum):
     """Projector color display mode."""
 
-    DISABLE = auto()
     RED = auto()
     UV = auto()
 
@@ -23,6 +22,7 @@ class ProjectorImageSource(StrAutoEnum):
     ACTIVE_LAYER = auto()
     CUSTOM_FILE = auto()
     SOLID = auto()
+    GENERATED = auto()
 
 
 class Event(StrAutoEnum):
@@ -40,6 +40,7 @@ class Event(StrAutoEnum):
     STAGE_POSITION_CHANGED = auto()  # Emitted when stage position coordinates change
 
     # Projector
+    PROJECTOR_ON_OFF_CHANGED = auto()  # Emitted when projector illumination is toggled on/off
     PROJECTOR_COLOR_MODE_CHANGED = auto()  # Emitted when the projector color mode changes
     PROJECTOR_IMAGE_SOURCE_CHANGED = auto()  # Emitted when the projector image source changes
     PROJECTOR_IMAGE_CHANGED = auto()  # Emitted exclusively by the projector when displayed image changes

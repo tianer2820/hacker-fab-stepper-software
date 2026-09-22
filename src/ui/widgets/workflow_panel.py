@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
-from PIL import Image
+import cv2
+import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
@@ -347,37 +348,13 @@ class LayerSubpanelWidget(QTabWidget):
         file_row.addWidget(self.lbl_pattern_file, stretch=1)
         layout.addLayout(file_row)
 
-        # Thumbnail and offset adjustments
+        # Thumbnail preview
         mid_row = QHBoxLayout()
         self.lbl_thumb = QLabel("Thumbnail")
         self.lbl_thumb.setFixedSize(110, 80)
         self.lbl_thumb.setAlignment(Qt.AlignCenter)
         mid_row.addWidget(self.lbl_thumb)
-
-        adj_group = QGroupBox("Fine Align Offsets")
-        adj_form = QFormLayout(adj_group)
-        adj_form.setContentsMargins(4, 4, 4, 4)
-        adj_form.setSpacing(4)
-
-        self.spin_shift_x = QDoubleSpinBox()
-        self.spin_shift_x.setRange(-2000.0, 2000.0)
-        self.spin_shift_x.setValue(0.0)
-        self.spin_shift_x.valueChanged.connect(self._on_adjust_changed)
-        adj_form.addRow("Shift X (px):", self.spin_shift_x)
-
-        self.spin_shift_y = QDoubleSpinBox()
-        self.spin_shift_y.setRange(-2000.0, 2000.0)
-        self.spin_shift_y.setValue(0.0)
-        self.spin_shift_y.valueChanged.connect(self._on_adjust_changed)
-        adj_form.addRow("Shift Y (px):", self.spin_shift_y)
-
-        self.spin_theta = QDoubleSpinBox()
-        self.spin_theta.setRange(-180.0, 180.0)
-        self.spin_theta.setValue(0.0)
-        self.spin_theta.valueChanged.connect(self._on_adjust_changed)
-        adj_form.addRow("Rotation θ (°):", self.spin_theta)
-
-        mid_row.addWidget(adj_group)
+        mid_row.addStretch()
         layout.addLayout(mid_row)
 
         # Tiling preview & navigation section
@@ -490,7 +467,7 @@ class LayerSubpanelWidget(QTabWidget):
 
     def _refresh_layer_view(self):
         layer = self.engine.project.active_layer
-        effective = layer.get_effective_settings(self.engine.project.settings)
+        effective = self.engine.project.settings.with_overrides(layer.overrides)
 
         # File & thumbnail
         if layer.pattern_path:
@@ -500,17 +477,6 @@ class LayerSubpanelWidget(QTabWidget):
             self.lbl_pattern_file.setText("No pattern selected")
             self.lbl_thumb.clear()
             self.lbl_thumb.setText("Thumbnail")
-
-        # Offsets
-        self.spin_shift_x.blockSignals(True)
-        self.spin_shift_y.blockSignals(True)
-        self.spin_theta.blockSignals(True)
-        self.spin_shift_x.setValue(layer.image_adjust[0])
-        self.spin_shift_y.setValue(layer.image_adjust[1])
-        self.spin_theta.setValue(layer.image_adjust[2])
-        self.spin_shift_x.blockSignals(False)
-        self.spin_shift_y.blockSignals(False)
-        self.spin_theta.blockSignals(False)
 
         # Tiling preview
         if effective.tiling_enabled:
@@ -553,7 +519,8 @@ class LayerSubpanelWidget(QTabWidget):
         )
 
     def _refresh_tile_preview(self):
-        tile_count = self.engine.project.get_active_layer_tile_count(self.engine.projector.size())
+        layer = self.engine.project.active_layer
+        tile_count = len(layer._tile_cache)
         active_idx = self.engine.project.active_tile_index
 
         self.spin_tile_index.blockSignals(True)
@@ -567,18 +534,27 @@ class LayerSubpanelWidget(QTabWidget):
 
         # Render preview for the active tile
         layer = self.engine.project.active_layer
-        tile = layer.get_tile(active_idx, self.engine.project.settings, self.engine.projector.size())
-        if tile is not None:
-            tw, th = tile.size
+        tile_data = layer.get_tile(active_idx)
+        tile = tile_data[0] if tile_data is not None else None
+        if tile is not None and isinstance(tile, np.ndarray):
+            th, tw = tile.shape[:2]
             scale = min(160 / max(1, tw), 90 / max(1, th))
             nw = max(1, int(tw * scale))
             nh = max(1, int(th * scale))
-            thumb = tile.resize((nw, nh), Image.Resampling.BILINEAR)
-            if thumb.mode != "RGBA":
-                thumb = thumb.convert("RGBA")
-            data = thumb.tobytes("raw", "RGBA")
-            qimg = QImage(data, nw, nh, QImage.Format_RGBA8888)
-            self.lbl_tile_preview.setPixmap(QPixmap.fromImage(qimg))
+            thumb = cv2.resize(tile, (nw, nh), interpolation=cv2.INTER_LINEAR)
+            contig = np.ascontiguousarray(thumb)
+            if contig.ndim == 2:
+                qimg = QImage(contig.data, nw, nh, nw, QImage.Format_Grayscale8)
+            elif contig.shape[2] == 3:
+                qimg = QImage(contig.data, nw, nh, 3 * nw, QImage.Format_RGB888)
+            elif contig.shape[2] == 4:
+                qimg = QImage(contig.data, nw, nh, 4 * nw, QImage.Format_RGBA8888)
+            else:
+                qimg = None
+            if qimg is not None:
+                self.lbl_tile_preview.setPixmap(QPixmap.fromImage(qimg))
+            else:
+                self.lbl_tile_preview.clear()
         else:
             self.lbl_tile_preview.clear()
             self.lbl_tile_preview.setText("No Tile")
@@ -593,29 +569,36 @@ class LayerSubpanelWidget(QTabWidget):
 
     def _on_next_tile_clicked(self):
         cur = self.engine.project.active_tile_index
-        max_idx = max(0, self.engine.project.get_active_layer_tile_count(self.engine.projector.size()) - 1)
+        max_idx = max(0, self.engine.project.get_active_layer_tile_count() - 1)
         if cur < max_idx:
             self.engine.project.select_tile(cur + 1)
 
     def _on_regenerate_tiles_clicked(self):
         layer = self.engine.project.active_layer
-        layer.regenerate_tiles(self.engine.project.settings, self.engine.projector.size(), force=True)
+        layer.generate_tiles(force=True)
         self.bridge.status_message.emit("Regenerated tiling patterns for active layer.")
 
     def _load_thumbnail(self, path: str):
         if os.path.exists(path):
             try:
-                img = Image.open(path)
-                iw, ih = img.size
-                scale = min(110 / max(1, iw), 80 / max(1, ih))
-                nw = max(1, int(iw * scale))
-                nh = max(1, int(ih * scale))
-                thumb = img.resize((nw, nh), Image.Resampling.BILINEAR)
-                if thumb.mode != "RGBA":
-                    thumb = thumb.convert("RGBA")
-                data = thumb.tobytes("raw", "RGBA")
-                qimg = QImage(data, nw, nh, QImage.Format_RGBA8888)
-                self.lbl_thumb.setPixmap(QPixmap.fromImage(qimg))
+                raw = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+                if raw is not None:
+                    if raw.ndim == 2:
+                        raw = cv2.cvtColor(raw, cv2.COLOR_GRAY2RGB)
+                    elif raw.shape[2] == 4:
+                        raw = cv2.cvtColor(raw, cv2.COLOR_BGRA2RGB)
+                    elif raw.shape[2] == 3:
+                        raw = cv2.cvtColor(raw, cv2.COLOR_BGR2RGB)
+                    ih, iw = raw.shape[:2]
+                    scale = min(110 / max(1, iw), 80 / max(1, ih))
+                    nw = max(1, int(iw * scale))
+                    nh = max(1, int(ih * scale))
+                    thumb = cv2.resize(raw, (nw, nh), interpolation=cv2.INTER_LINEAR)
+                    contig = np.ascontiguousarray(thumb)
+                    qimg = QImage(contig.data, nw, nh, 3 * nw, QImage.Format_RGB888)
+                    self.lbl_thumb.setPixmap(QPixmap.fromImage(qimg))
+                else:
+                    self.lbl_thumb.setText("Preview Error")
             except Exception:
                 self.lbl_thumb.setText("Preview Error")
 
@@ -628,14 +611,6 @@ class LayerSubpanelWidget(QTabWidget):
             layer.set_pattern_path(filename)
             self.engine.event_bus.emit(Event.PROJECT_CHANGED, self.engine.project)
             self.bridge.status_message.emit(f"Loaded mask: {Path(filename).name}")
-
-    def _on_adjust_changed(self):
-        layer = self.engine.project.active_layer
-        layer.set_image_adjust((
-            self.spin_shift_x.value(),
-            self.spin_shift_y.value(),
-            self.spin_theta.value(),
-        ))
 
     def _on_override_exp_toggled(self, checked: bool):
         layer = self.engine.project.active_layer
@@ -714,7 +689,7 @@ class ActionSubpanelWidget(QWidget):
 
     def _refresh_dashboard(self):
         layer = self.engine.project.active_layer
-        effective = layer.get_effective_settings(self.engine.project.settings)
+        effective = self.engine.project.settings.with_overrides(layer.overrides)
 
         self.lbl_active_name.setText(layer.name)
         self.lbl_active_exp.setText(f"{int(effective.exposure_time)} ms")
@@ -729,13 +704,13 @@ class ActionSubpanelWidget(QWidget):
     def _on_expose_clicked(self):
         layer_idx = self.engine.project.active_layer_index
         layer = self.engine.project.active_layer
-        effective = layer.get_effective_settings(self.engine.project.settings)
+        effective = self.engine.project.settings.with_overrides(layer.overrides)
 
         if effective.tiling_enabled:
             op = TiledExposureOperation(
                 layer_index=layer_idx,
                 settings=effective,
-                autofocus_config=getattr(self.engine, "autofocus_config", None),
+                autofocus_config=self.engine.autofocus_config,
             )
         else:
             op = ExposureOperation(layer_index=layer_idx, settings=effective)

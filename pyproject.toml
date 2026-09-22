@@ -7,10 +7,9 @@ requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.26.0",
     "opencv-python>=4.10.0",
-    "pillow>=10.4.0",
     "toml>=0.10.2",
     "pyside6>=6.6.0",
-    "pyqtdarktheme>=0.1.7",
+    "PyQtDarkTheme-fork",
 ]
 
 [project.optional-dependencies]

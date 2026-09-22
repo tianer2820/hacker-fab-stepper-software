@@ -28,31 +28,23 @@ class ProjectorController(EngineModule, ABC):
         self.generated_image: Optional[np.ndarray] = None
 
         self._displayed_image_cache: Optional[np.ndarray] = None
-
-        self._event_bus: Optional[EventBus] = None
         self.dlpc = dlpc
 
         self.project: Optional[ChipProject] = None
         self.display_ready_event = threading.Event()
         self.display_ready_event.set()
 
-    @property
-    def event_bus(self) -> Optional[EventBus]:
-        return self._event_bus
+    def _on_detach_event_bus(self, bus: EventBus):
+        bus.remove_listener(Event.PROJECT_CHANGED, self._on_project_changed)
+        bus.remove_listener(Event.ACTIVE_LAYER_CHANGED, self._on_active_layer_changed)
+        bus.remove_listener(Event.ACTIVE_TILE_CHANGED, self._on_active_tile_changed)
+        bus.remove_listener(Event.LAYER_CACHE_RECOMPUTED, self._on_layer_cache_recomputed)
 
-    @event_bus.setter
-    def event_bus(self, bus: Optional[EventBus]):
-        if self._event_bus is not None:
-            self._event_bus.remove_listener(Event.PROJECT_CHANGED, self._on_project_changed)
-            self._event_bus.remove_listener(Event.ACTIVE_LAYER_CHANGED, self._on_active_layer_changed)
-            self._event_bus.remove_listener(Event.ACTIVE_TILE_CHANGED, self._on_active_tile_changed)
-            self._event_bus.remove_listener(Event.LAYER_CACHE_RECOMPUTED, self._on_layer_cache_recomputed)
-        self._event_bus = bus
-        if self._event_bus is not None:
-            self._event_bus.add_listener(Event.PROJECT_CHANGED, self._on_project_changed)
-            self._event_bus.add_listener(Event.ACTIVE_LAYER_CHANGED, self._on_active_layer_changed)
-            self._event_bus.add_listener(Event.ACTIVE_TILE_CHANGED, self._on_active_tile_changed)
-            self._event_bus.add_listener(Event.LAYER_CACHE_RECOMPUTED, self._on_layer_cache_recomputed)
+    def _on_attach_event_bus(self, bus: EventBus):
+        bus.add_listener(Event.PROJECT_CHANGED, self._on_project_changed)
+        bus.add_listener(Event.ACTIVE_LAYER_CHANGED, self._on_active_layer_changed)
+        bus.add_listener(Event.ACTIVE_TILE_CHANGED, self._on_active_tile_changed)
+        bus.add_listener(Event.LAYER_CACHE_RECOMPUTED, self._on_layer_cache_recomputed)
 
 
 
@@ -82,16 +74,16 @@ class ProjectorController(EngineModule, ABC):
 
     def set_color_mode(self, mode: ColorMode):
         self.color_mode = mode
-        if self._event_bus is not None:
-            self._event_bus.emit(Event.PROJECTOR_COLOR_MODE_CHANGED, self.color_mode)
+        if self.event_bus is not None:
+            self.event_bus.emit(Event.PROJECTOR_COLOR_MODE_CHANGED, self.color_mode)
         self._recompute_image()
         self.update_display()
 
     def set_image_source(self, source: ProjectorImageSource, custom_path: Optional[str] = None):
         self.image_source = source
         self.custom_image_path = custom_path
-        if self._event_bus is not None:
-            self._event_bus.emit(Event.PROJECTOR_IMAGE_SOURCE_CHANGED, self.image_source)
+        if self.event_bus is not None:
+            self.event_bus.emit(Event.PROJECTOR_IMAGE_SOURCE_CHANGED, self.image_source)
         self._recompute_image()
         self.update_display()
 
@@ -114,7 +106,7 @@ class ProjectorController(EngineModule, ABC):
         # get the image
         img: Optional[np.ndarray] = None
         if self.image_source == ProjectorImageSource.SOLID:
-            proj_size = self.size()
+            proj_size = self.projector_size()
             img = np.full((proj_size[1], proj_size[0], 3), 255, dtype=np.uint8)
 
         elif self.image_source == ProjectorImageSource.GENERATED:
@@ -158,8 +150,8 @@ class ProjectorController(EngineModule, ABC):
             except Exception as e:
                 print(f"DLPC LED sync failed: {e}")
 
-        if self._event_bus is not None:
-            self._event_bus.emit(Event.PROJECTOR_ON_OFF_CHANGED, self.is_on)
+        if self.event_bus is not None:
+            self.event_bus.emit(Event.PROJECTOR_ON_OFF_CHANGED, self.is_on)
 
         self.update_display()
 
@@ -202,3 +194,6 @@ class DummyProjector(ProjectorController):
 
     def projector_size(self) -> tuple[int, int]:
         return self._size
+
+    def update_display(self):
+        pass

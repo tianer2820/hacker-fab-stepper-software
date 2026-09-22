@@ -1,7 +1,7 @@
 futures
 numpy
 opencv-python
-pillow
 pyserial
 toml
 pyside6
+PyQtDarkTheme-fork

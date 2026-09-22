@@ -46,6 +46,7 @@ class QtEngineBridge(QObject):
     stage_position_changed = Signal(tuple)
 
     # Projector
+    projector_on_off_changed = Signal(bool)
     projector_color_mode_changed = Signal(object)
     projector_image_source_changed = Signal(object)
     projector_image_changed = Signal(object)
@@ -100,7 +101,7 @@ class QtEngineBridge(QObject):
         self.engine.event_bus.add_listener(
             Event.EXPOSURE_HISTORY_CHANGED,
             lambda history=None, *args: self.exposure_history_changed.emit(
-                history if history is not None else getattr(self.engine.project, "exposure_history", [])
+                history if history is not None else (self.engine.project.exposure_history if self.engine.project else [])
             ),
         )
 
@@ -111,6 +112,12 @@ class QtEngineBridge(QObject):
         )
 
         # Projector
+        self.engine.event_bus.add_listener(
+            Event.PROJECTOR_ON_OFF_CHANGED,
+            lambda on=False, *args: self.projector_on_off_changed.emit(
+                on if isinstance(on, bool) else self.engine.projector.is_on
+            ),
+        )
         self.engine.event_bus.add_listener(
             Event.PROJECTOR_COLOR_MODE_CHANGED,
             lambda mode=None, *args: self.projector_color_mode_changed.emit(
@@ -126,7 +133,7 @@ class QtEngineBridge(QObject):
         self.engine.event_bus.add_listener(
             Event.PROJECTOR_IMAGE_CHANGED,
             lambda img=None, *args: self.projector_image_changed.emit(
-                img if img is not None else self.engine.projector.current_image
+                img if img is not None else self.engine.projector._displayed_image_cache
             ),
         )
 

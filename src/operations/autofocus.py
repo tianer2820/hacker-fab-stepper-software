@@ -1,31 +1,17 @@
 import os
 import time
 from dataclasses import dataclass
-from typing import Callable, Optional, Union
+from typing import Any, Callable, List, Optional, Tuple, Union
 
 import cv2
 import numpy as np
-from core.operation import Operation, ExecutionContext
-
-
-def compute_focus_score(camera_image: np.ndarray, blue_only: bool, ddepth=cv2.CV_64F, kernel_size=5, log: bool = False):
-    if camera_image is None:
-        return 0.0
-
-    camera_image = camera_image.copy()
-    camera_image[:, :, 1] = 0  # green should never be used for focus
-    if blue_only:
-        camera_image[:, :, 0] = 0  # disable red
-
-    src = camera_image
-    src = cv2.cvtColor(src, cv2.COLOR_BGR2GRAY)
-    # Remove noise by blurring with a Gaussian filter
-    src = cv2.GaussianBlur(src, (3, 3), 0)
-
-    # Apply Laplace function
-    src = cv2.Laplacian(src, ddepth, ksize=kernel_size)
-
-    return float(src.var())
+from core.events import ColorMode, ProjectorImageSource
+from core.operation import ExecutionContext, Operation
+from lib.ar_tag import (
+    compute_focus_score,
+    detect_ar_tags,
+    generate_ar_tag_grid,
+)
 
 
 def execute_autofocus(
@@ -39,8 +25,17 @@ def execute_autofocus(
     on_warning: Optional[Callable[[str], None]] = None,
     blue_only: bool = False,
     log: bool = False,
+    projector: Optional[Any] = None,
+    projector_size: Tuple[int, int] = (1920, 1080),
+    min_detection_rate: float = 0.85,
+    uv_z_offset: float = 0.0,
+    is_aborted: Optional[Callable[[], bool]] = None,
 ) -> bool:
-    """Executes the autofocus routine independently of the GUI framework.
+    """Executes iterative ArUco autofocus independently of the GUI framework.
+
+    Iterates through tag grids (2x2 -> 4x4 -> 8x8). For each level, optimizes focal
+    sharpness. The iteration stops when fewer than min_detection_rate (default 85%) of tags
+    can be detected. Finally, applies the UV-Red Z offset if operating in red mode.
 
     Returns True if autofocus completed successfully, False otherwise.
     """
@@ -54,148 +49,119 @@ def execute_autofocus(
         log_file = None
 
     try:
-        if has_homing:
-            counter = 0
+        print("Starting Autofocus...")
+        current_z = get_current_z() if get_current_z is not None else get_autofocus_base()
+        best_overall_z = current_z
 
-            def sample():
-                nonlocal counter
+        # Target illumination color
+        target_mode = ColorMode.UV if blue_only else ColorMode.RED
 
-                def one_sample():
-                    img = get_camera_image()
-                    return compute_focus_score(img, blue_only=blue_only, log=True)
+        # Iterative grid progression: 2x2 (4 large tags) -> 4x4 (16 tags) -> 8x8 (64 tags)
+        grid_sizes = [2, 4, 8]
 
-                focus_score = sum([one_sample() for _ in range(5)]) / 5.0
-                print("focus average:", focus_score)
-                if log and log_file:
-                    log_file.write(f"{counter},{focus_score}\n")
-                    img = get_camera_image()
-                    if img is not None:
-                        cv2.imwrite(f"aftest/img{counter}.png", img)
-                counter += 1
-                return focus_score
+        for grid_n in grid_sizes:
+            if is_aborted and is_aborted():
+                return False
 
-            print("Starting Autofocus...")
+            total_tags = grid_n * grid_n
+
+            # 1. Generate and project ArUco grid using generated image source
+            if projector is not None:
+                grid_img = generate_ar_tag_grid(
+                    grid_n=grid_n,
+                    canvas_size=projector_size,
+                    color_mode=target_mode,
+                )
+                projector.set_generated_image(grid_img)
+                projector.set_color_mode(target_mode)
+                projector.set_image_source(ProjectorImageSource.GENERATED)
+                projector.set_on(True)
+                delay(0.2)
+
+            # 2. Check tag detection
+            frame = get_camera_image()
+            det_count, _, _ = detect_ar_tags(frame)
+            detection_rate = det_count / total_tags if total_tags > 0 else 0.0
+
+            # If moving to a finer grid (N > 2) and detection rate is below threshold, stop iteration
+            if grid_n > 2 and detection_rate < min_detection_rate:
+                print(
+                    f"Grid {grid_n}x{grid_n} detection rate ({detection_rate*100:.1f}%) "
+                    f"< {min_detection_rate*100:.1f}%. Stopping iteration."
+                )
+                break
+
+            # 3. Determine sweep range & step size for this grid level
+            if grid_n == 2:
+                sweep_range = 20.0
+                step_size = 4.0
+            elif grid_n == 4:
+                sweep_range = 10.0
+                step_size = 2.0
+            else:
+                sweep_range = 4.0
+                step_size = 1.0
+
+            # 4. Sweep Z around current best Z to maximize sharpness
             best_score = -1.0
-            best_z = 0.0
-            z_base = get_autofocus_base()
+            best_grid_z = current_z
+            steps = int(sweep_range / step_size)
 
-            # account for uv mode, where z-focus is different
-            if blue_only:
-                z_base += 50.0
-                if not move_absolute({"z": z_base}):
+            for i in range(-steps, steps + 1):
+                if is_aborted and is_aborted():
+                    return False
+
+                target_z = current_z + (i * step_size)
+                if move_absolute({"z": target_z}):
+                    delay(0.1)
+                else:
                     if on_warning:
                         on_warning("Failed autofocus, z-stage can't go past boundary limits")
                     return False
-                delay(1.0)
-            else:
-                for i in range(-20, 20, 2):
-                    if not move_absolute({"z": z_base + i}):
-                        if on_warning:
-                            on_warning("Failed autofocus, z-stage can't go past boundary limits")
-                        return False
-                    delay(0.5)
-                    new_score = sample()
-                    if new_score > best_score:
-                        best_score = new_score
-                        best_z = get_current_z()
 
-                print(f"Fine grain sampling done, best focus is: {best_score}")
-                move_absolute({"z": best_z})
-                delay(1.0)
+                img = get_camera_image()
+                score = compute_focus_score(img, blue_only=blue_only)
+                print(f"focus average: {score}")
 
-        else:
-            counter = 0
+                if score > best_score:
+                    best_score = score
+                    best_grid_z = target_z
 
-            def sample_focus():
-                nonlocal counter
+            print(f"Fine grain sampling done, best focus is: {best_score}")
 
-                def do_thing():
-                    delay(0.1)
-                    img = get_camera_image()
-                    return compute_focus_score(img, blue_only=blue_only)
+            # Move to best Z found in this grid iteration
+            move_absolute({"z": best_grid_z})
+            current_z = best_grid_z
+            best_overall_z = best_grid_z
+            delay(0.2)
 
-                focus_score = sorted([do_thing() for _ in range(3)])[1]
-                if log and log_file:
-                    log_file.write(f"{counter},{focus_score}\n")
-                    img = get_camera_image()
-                    if img is not None:
-                        cv2.imwrite(f"aftest/img{counter}.png", img)
-                counter += 1
-                return focus_score
+            # Verify detection rate at best focus
+            frame_best = get_camera_image()
+            det_count_best, _, _ = detect_ar_tags(frame_best)
+            rate_best = det_count_best / total_tags if total_tags > 0 else 0.0
 
-            delay(1.0)
-            mid_score = sample_focus()
-            move_relative({"z": -20.0})
-            delay(1.0)
-            neg_score = sample_focus()
-            move_relative({"z": 40.0})
-            delay(1.0)
-            pos_score = sample_focus()
-            move_relative({"z": -20.0})
-            delay(1.0)
+            # If detection falls below threshold, do not progress to smaller tags
+            if rate_best < min_detection_rate:
+                print(
+                    f"Post-focus {grid_n}x{grid_n} detection rate ({rate_best*100:.1f}%) "
+                    f"< {min_detection_rate*100:.1f}%. Halting further refinement."
+                )
+                break
 
-            last_focus = mid_score
-
-            if neg_score < mid_score < pos_score:
-                # Improved focus is in the +Z direction
-                for i in range(30):
-                    move_relative({"z": 10.0})
-                    delay(0.5)
-                    new_score = sample_focus()
-                    if last_focus > new_score:
-                        print(f"Successful +Z coarse autofocus {i}")
-                        last_focus = new_score
-                        break
-                    last_focus = new_score
-
-                for i in range(10):
-                    move_relative({"z": -2.0})
-                    delay(0.5)
-                    new_score = sample_focus()
-                    if last_focus > new_score:
-                        print(f"Successful -Z fine autofocus {i}")
-                        break
-                    last_focus = new_score
-            elif neg_score > mid_score > pos_score:
-                # Improved focus is in the -Z direction
-                for i in range(30):
-                    move_relative({"z": -10.0})
-                    delay(0.5)
-                    new_score = sample_focus()
-                    if last_focus > new_score:
-                        print(f"Successful -Z coarse autofocus {i}")
-                        break
-                    last_focus = new_score
-
-                for i in range(10):
-                    move_relative({"z": 2.0})
-                    delay(0.5)
-                    new_score = sample_focus()
-                    if last_focus > new_score:
-                        print(f"Successful +Z fine autofocus {i}")
-                        break
-                    last_focus = new_score
-            elif neg_score < mid_score and pos_score < mid_score:
-                # We are very close to already being in focus
-                print(f"Almost in focus! (neg {neg_score} mid {mid_score} pos {pos_score})")
-                move_relative({"z": -20.0})
-                delay(0.5)
-
-                for i in range(30):
-                    move_relative({"z": 2.0})
-                    delay(0.5)
-                    new_score = sample_focus()
-                    if last_focus > new_score:
-                        print(f"Successful +Z fine autofocus {i}")
-                        break
-                    last_focus = new_score
-            else:
-                print("Autofocus is confused!")
+        # 5. Apply UV-Red Z offset if in red mode and offset is configured
+        if not blue_only and abs(uv_z_offset) > 1e-6:
+            uv_focal_z = best_overall_z + uv_z_offset
+            move_absolute({"z": uv_focal_z})
+            print(f"Applied UV-Red Z offset: {uv_z_offset:+.2f} µm (Z: {best_overall_z:.2f} -> {uv_focal_z:.2f} µm)")
 
         print("Autofocus Complete.")
         return True
 
     finally:
+        if projector is not None:
+            projector.set_on(False)
+            projector.set_generated_image(None)
+            projector.set_image_source(ProjectorImageSource.ACTIVE_LAYER)
         if log_file:
             log_file.close()
 
@@ -203,16 +169,22 @@ def execute_autofocus(
 @dataclass
 class AutofocusConfig:
     enabled: bool = True
+    uv_z_offset: float = 0.0
+    min_detection_rate: float = 0.85
 
     @classmethod
     def from_dict(cls, d: Optional[dict] = None) -> "AutofocusConfig":
         if not d:
             return cls()
-        return cls(enabled=bool(d.get("enabled", True)))
+        return cls(
+            enabled=bool(d.get("enabled", True)),
+            uv_z_offset=float(d.get("uv_z_offset", 0.0)),
+            min_detection_rate=float(d.get("min_detection_rate", 0.85)),
+        )
 
 
 class AutofocusOperation(Operation):
-    """Performs autofocus calibration."""
+    """Performs autofocus calibration using iterative ArUco tag grids."""
 
     def __init__(
         self,
@@ -233,9 +205,9 @@ class AutofocusOperation(Operation):
             report_progress(1.0, "Autofocus disabled in config")
             return "Autofocus disabled in config"
 
-        report_progress(0.2, "Executing autofocus...")
+        report_progress(0.1, "Executing iterative ArUco autofocus...")
 
-        execute_autofocus(
+        success = execute_autofocus(
             has_homing=context.stage.has_homing(),
             get_autofocus_base=lambda: context.stage.get_position()[2],
             get_current_z=lambda: context.stage.get_position()[2],
@@ -246,5 +218,15 @@ class AutofocusOperation(Operation):
             on_warning=context.warning_callback,
             blue_only=self.blue_only,
             log=self.log,
+            projector=context.projector,
+            projector_size=context.projector.projector_size(),
+            min_detection_rate=self.config.min_detection_rate,
+            uv_z_offset=self.config.uv_z_offset,
+            is_aborted=lambda: self.is_aborted,
         )
+
+        if not success:
+            return "Autofocus failed or aborted"
+
         report_progress(1.0, "Autofocus complete")
+        return None

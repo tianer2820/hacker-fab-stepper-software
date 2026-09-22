@@ -4,6 +4,8 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
+
 # Add src to sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -81,7 +83,7 @@ class TestChipProject(unittest.TestCase):
         project.settings.tiling_enabled = False
 
         # Layer 1 has no overrides -> inherits project defaults
-        eff1 = project.active_layer.get_effective_settings(project.settings)
+        eff1 = project.settings.with_overrides(project.active_layer.overrides)
         self.assertEqual(eff1.exposure_time, 12000.0)
         self.assertFalse(eff1.tiling_enabled)
 
@@ -90,7 +92,7 @@ class TestChipProject(unittest.TestCase):
         l2.overrides.exposure_time = 4500.0
         l2.overrides.tiling_enabled = True
 
-        eff2 = l2.get_effective_settings(project.settings)
+        eff2 = project.settings.with_overrides(l2.overrides)
         self.assertEqual(eff2.exposure_time, 4500.0)
         self.assertTrue(eff2.tiling_enabled)
         # Inherits other non-overridden settings
@@ -133,35 +135,33 @@ class TestChipProject(unittest.TestCase):
 
     def test_layer_tile_caching(self):
         import tempfile
-        from PIL import Image
+        import cv2
+        import numpy as np
         project = ChipProject()
         layer = project.active_layer
 
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
             temp_path = f.name
-        img = Image.new("RGB", (200, 200), "white")
-        img.save(temp_path)
+        cv2.imwrite(temp_path, np.full((200, 200, 3), 255, dtype=np.uint8))
 
         try:
             layer.set_pattern_path(temp_path)
-            self.assertTrue(layer._pattern_cache_dirty)
-            self.assertTrue(layer._tile_cache_dirty)
+            self.assertEqual(layer._tile_cache, [])
+            self.assertEqual(layer._tile_coords, [])
 
-            tiles1 = layer.get_tiles(project.settings, (100, 100))
-            self.assertFalse(layer._pattern_cache_dirty)
-            self.assertFalse(layer._tile_cache_dirty)
+            tiles1, coords1 = layer.generate_tiles()
             self.assertEqual(len(tiles1), 1)
+            self.assertEqual(len(coords1), 1)
 
             # Second call returns cached instance
-            tiles2 = layer.get_tiles(project.settings, (100, 100))
+            tiles2, coords2 = layer.generate_tiles()
             self.assertIs(tiles1[0], tiles2[0])
 
-            # Modifying adjust invalidates tile cache
-            layer.set_image_adjust((5.0, 5.0, 0.0))
-            self.assertTrue(layer._tile_cache_dirty)
-            tiles3 = layer.get_tiles(project.settings, (100, 100))
-            self.assertFalse(layer._tile_cache_dirty)
-            self.assertIsNot(tiles1[0], tiles3[0])
+            # Modifying overrides invalidates tile cache
+            layer.update_overrides(exposure_time=5000.0)
+            self.assertEqual(layer._tile_cache, [])
+            tiles3, coords3 = layer.generate_tiles()
+            self.assertEqual(len(tiles3), 1)
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
@@ -227,15 +227,15 @@ class MockProjector(ProjectorController):
         self.shown = []
         self.cleared = False
 
-    def size(self):
+    def projector_size(self):
         return (1920, 1080)
 
-    def show(self, img):
-        self.shown.append(img)
-        self.cleared = False
-
-    def clear(self):
-        self.cleared = True
+    def update_display(self):
+        if self._displayed_image_cache is not None:
+            self.shown.append(self._displayed_image_cache)
+            self.cleared = False
+        else:
+            self.cleared = True
 
 
 class DummyOperation(Operation):
@@ -329,6 +329,8 @@ class TestHierarchicalOperations(unittest.TestCase):
         events = EventBus()
         project = ChipProject()
         layer = project.active_layer
+        layer._tile_cache = [np.zeros((1000, 2000, 3), dtype=np.uint8), np.zeros((1000, 2000, 3), dtype=np.uint8)]
+        layer._tile_coords = [(0.0, 0.0), (100.0, 0.0)]
         settings = PatterningSettings(
             exposure_time=10.0,
             tiling_enabled=True,
@@ -353,25 +355,33 @@ class TestHierarchicalOperations(unittest.TestCase):
 
         # Verify stage moves were recorded
         self.assertTrue(len(stage.moves) > 0)
-        # Verify projector color mode ended in DISABLE
-        self.assertEqual(projector.color_mode, ColorMode.DISABLE)
+        # Verify projector ended turned off
+        self.assertFalse(projector.is_on)
 
 
 class TestProjectorController(unittest.TestCase):
     def test_mode_transitions(self):
         proj = MockProjector()
-        self.assertEqual(proj.color_mode, ColorMode.DISABLE)
+        self.assertEqual(proj.color_mode, ColorMode.RED)
+        self.assertFalse(proj.is_on)
+
+        proj.set_color_mode(ColorMode.UV)
+        self.assertEqual(proj.color_mode, ColorMode.UV)
 
         proj.set_color_mode(ColorMode.RED)
         self.assertEqual(proj.color_mode, ColorMode.RED)
 
-        proj.set_color_mode(ColorMode.DISABLE)
-        self.assertEqual(proj.color_mode, ColorMode.DISABLE)
-        self.assertIsNone(proj.current_image)
+        # Turning on shows image, turning off blanks it
+        proj.set_on(True)
+        self.assertTrue(proj.is_on)
+
+        proj.set_on(False)
+        self.assertFalse(proj.is_on)
 
     def test_projector_subscribes_and_updates_from_project(self):
         import tempfile
-        from PIL import Image
+        import cv2
+        import numpy as np
 
         events = EventBus()
         proj = MockProjector()
@@ -382,16 +392,17 @@ class TestProjectorController(unittest.TestCase):
 
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
             temp_path = f.name
-        img = Image.new("RGB", (200, 200), "white")
-        img.save(temp_path)
+        cv2.imwrite(temp_path, np.full((200, 200, 3), 255, dtype=np.uint8))
 
         try:
             project.active_layer.set_pattern_path(temp_path)
+            project.active_layer.generate_tiles()
 
-            # Set color mode to Red
+            # Turn on projector and set color mode to Red
+            proj.set_on(True)
             proj.set_color_mode(ColorMode.RED)
             self.assertTrue(len(proj.shown) > 0)
-            self.assertIsNotNone(proj.current_image)
+            self.assertIsNotNone(proj._displayed_image_cache)
 
             # Switching active tile triggers update_display
             proj.shown.clear()
@@ -423,13 +434,10 @@ class TestUIInstantiation(unittest.TestCase):
         camera = get_camera({"type": "none"})
 
         class MockProjector(ProjectorController):
-            def size(self):
+            def projector_size(self):
                 return (1920, 1080)
 
-            def clear(self):
-                pass
-
-            def show(self, img):
+            def update_display(self):
                 pass
 
             def close(self):
@@ -457,6 +465,7 @@ class TestConsolidatedEvents(unittest.TestCase):
             # Stage
             "STAGE_POSITION_CHANGED",
             # Projector
+            "PROJECTOR_ON_OFF_CHANGED",
             "PROJECTOR_COLOR_MODE_CHANGED",
             "PROJECTOR_IMAGE_SOURCE_CHANGED",
             "PROJECTOR_IMAGE_CHANGED",
@@ -493,6 +502,7 @@ class TestConsolidatedEvents(unittest.TestCase):
         bridge.stage_position_changed.connect(lambda pos: signals_received.append("stage"))
         bridge.projector_color_mode_changed.connect(lambda mode: signals_received.append("proj_color"))
         bridge.projector_image_source_changed.connect(lambda src: signals_received.append("proj_src"))
+        bridge.projector_on_off_changed.connect(lambda on: signals_received.append(f"proj_on_{on}"))
         bridge.projector_image_changed.connect(lambda img: signals_received.append("projector_img"))
         bridge.camera_frame_ready.connect(lambda f: signals_received.append("camera"))
         bridge.warning_emitted.connect(lambda msg: signals_received.append(f"warn_{msg}"))
@@ -504,6 +514,8 @@ class TestConsolidatedEvents(unittest.TestCase):
         engine.event_bus.emit(Event.EXPOSURE_CONFIG_CHANGED)
         engine.event_bus.emit(Event.LAYER_CACHE_RECOMPUTED, None)
         engine.event_bus.emit(Event.STAGE_POSITION_CHANGED)
+        engine.event_bus.emit(Event.PROJECTOR_ON_OFF_CHANGED, True)
+        engine.event_bus.emit(Event.PROJECTOR_IMAGE_CHANGED, None)
         engine.projector.set_color_mode(ColorMode.RED)
         engine.projector.set_image_source(ProjectorImageSource.ACTIVE_LAYER)
         engine.event_bus.emit(Event.CAMERA_FRAME_READY, None)
@@ -515,6 +527,7 @@ class TestConsolidatedEvents(unittest.TestCase):
         self.assertIn("exposure_cfg", signals_received)
         self.assertIn("layer_recomputed", signals_received)
         self.assertIn("stage", signals_received)
+        self.assertIn("proj_on_True", signals_received)
         self.assertIn("proj_color", signals_received)
         self.assertIn("proj_src", signals_received)
         self.assertIn("projector_img", signals_received)
@@ -526,7 +539,8 @@ class TestChipProjectAndProjectorRefinement(unittest.TestCase):
     def test_chiplayer_fields_and_caching(self):
         from dataclasses import fields
         import tempfile
-        from PIL import Image
+        import cv2
+        import numpy as np
 
         layer = ChipLayer()
         # Verify exact field names
@@ -534,12 +548,10 @@ class TestChipProjectAndProjectorRefinement(unittest.TestCase):
         expected_fields = {
             "name",
             "pattern_path",
-            "image_adjust",
             "overrides",
             "_pattern_cache",
-            "_pattern_cache_dirty",
             "_tile_cache",
-            "_tile_cache_dirty",
+            "_tile_coords",
             "events",
             "_project",
         }
@@ -548,91 +560,84 @@ class TestChipProjectAndProjectorRefinement(unittest.TestCase):
         # Verify initial states
         self.assertEqual(layer.name, "Layer 1")
         self.assertIsNone(layer.pattern_path)
-        self.assertEqual(layer.image_adjust, (0.0, 0.0, 0.0))
         self.assertIsNone(layer._pattern_cache)
-        self.assertFalse(layer._pattern_cache_dirty)
         self.assertEqual(layer._tile_cache, [])
-        self.assertFalse(layer._tile_cache_dirty)
+        self.assertEqual(layer._tile_coords, [])
         self.assertIsNone(layer.events)
         self.assertIsNone(layer._project)
 
         # Test loading and caching with tiling enabled
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
             temp_path = f.name
-        img = Image.new("RGB", (4000, 3000), "white")
-        img.save(temp_path)
+        cv2.imwrite(temp_path, np.full((3000, 4000, 3), 255, dtype=np.uint8))
 
         try:
-            settings = PatterningSettings(
-                tiling_enabled=True,
-                tile_width=2000,
-                tile_height=1500,
-                overlap_x=200,
-                overlap_y=200,
-            )
-            layer.set_pattern_path(temp_path)
-            self.assertTrue(layer._pattern_cache_dirty)
-            self.assertTrue(layer._tile_cache_dirty)
+            project = ChipProject()
+            layer = project.active_layer
+            layer.overrides.tiling_enabled = True
+            layer.overrides.tile_width = 2000
+            layer.overrides.tile_height = 1500
+            layer.overrides.overlap_x = 200
+            layer.overrides.overlap_y = 200
 
-            tiles = layer.get_tiles(settings, (1920, 1080))
+            layer.set_pattern_path(temp_path)
+            self.assertEqual(layer._tile_cache, [])
+
+            tiles, coords = layer.generate_tiles()
             self.assertGreater(len(tiles), 1)
-            self.assertFalse(layer._tile_cache_dirty)
+            self.assertEqual(len(tiles), len(coords))
 
             # Slicing disabled -> 1 tile
-            settings.tiling_enabled = False
-            layer.mark_dirty()
-            single_tile = layer.get_tiles(settings, (1920, 1080))
+            layer.overrides.tiling_enabled = False
+            single_tile, single_coords = layer.generate_tiles(force=True)
             self.assertEqual(len(single_tile), 1)
+            self.assertEqual(single_coords, [(0.0, 0.0)])
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
 
     def test_chipproject_render_for_projector(self):
         import tempfile
-        from PIL import Image
+        import cv2
+        import numpy as np
 
         project = ChipProject()
+        proj = MockProjector()
+        proj.set_project(project)
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
             temp_path = f.name
-        img = Image.new("RGB", (200, 200), "white")
-        img.save(temp_path)
+        cv2.imwrite(temp_path, np.full((200, 200, 3), 255, dtype=np.uint8))
 
         try:
             project.active_layer.set_pattern_path(temp_path)
-
-            # DISABLE mode -> returns None
-            disabled = project.render_for_projector(
-                ColorMode.DISABLE, ProjectorImageSource.ACTIVE_LAYER, projector_size=(100, 100)
-            )
-            self.assertIsNone(disabled)
+            project.active_layer.generate_tiles()
+            proj.set_on(True)
+            proj.set_image_source(ProjectorImageSource.ACTIVE_LAYER)
 
             # RED mode -> non-empty image with red channel active
-            red_img = project.render_for_projector(
-                ColorMode.RED, ProjectorImageSource.ACTIVE_LAYER, projector_size=(100, 100)
-            )
+            proj.set_color_mode(ColorMode.RED)
+            red_img = proj._displayed_image_cache
             self.assertIsNotNone(red_img)
-            self.assertEqual(red_img.size, (100, 100))
-            r, g, b = red_img.split()[:3]
-            self.assertGreater(r.getextrema()[1], 0)
-            self.assertEqual(g.getextrema()[1], 0)
-            self.assertEqual(b.getextrema()[1], 0)
+            self.assertEqual(red_img.shape[:2], (200, 200))
+            self.assertGreater(np.max(red_img[:, :, 0]), 0)
+            self.assertEqual(np.max(red_img[:, :, 1]), 0)
+            self.assertEqual(np.max(red_img[:, :, 2]), 0)
 
             # UV mode -> non-empty image with blue channel active
-            uv_img = project.render_for_projector(
-                ColorMode.UV, ProjectorImageSource.ACTIVE_LAYER, projector_size=(100, 100)
-            )
+            proj.set_color_mode(ColorMode.UV)
+            uv_img = proj._displayed_image_cache
             self.assertIsNotNone(uv_img)
-            r, g, b = uv_img.split()[:3]
-            self.assertEqual(r.getextrema()[1], 0)
-            self.assertEqual(g.getextrema()[1], 0)
-            self.assertGreater(b.getextrema()[1], 0)
+            self.assertEqual(np.max(uv_img[:, :, 0]), 0)
+            self.assertEqual(np.max(uv_img[:, :, 1]), 0)
+            self.assertGreater(np.max(uv_img[:, :, 2]), 0)
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
 
     def test_exposure_config_change_does_not_trigger_tile_recompute(self):
         import tempfile
-        from PIL import Image
+        import cv2
+        import numpy as np
 
         stage = MockStage()
         camera = DummyCamera()
@@ -641,44 +646,44 @@ class TestChipProjectAndProjectorRefinement(unittest.TestCase):
 
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
             temp_path = f.name
-        img = Image.new("RGB", (200, 200), "white")
-        img.save(temp_path)
+        cv2.imwrite(temp_path, np.full((200, 200, 3), 255, dtype=np.uint8))
 
         try:
             layer = engine.project.active_layer
             layer.set_pattern_path(temp_path)
 
-            # Recompute tiles initially with force=True
-            tiles = layer.regenerate_tiles(engine.project.settings, (200, 200), force=True)
-            self.assertFalse(layer._tile_cache_dirty)
+            # Generate tiles initially with force=True
+            tiles, coords = layer.generate_tiles(force=True)
+            self.assertGreater(len(tiles), 0)
 
             # Track update_display calls on projector
             display_updates = []
             orig_update_display = projector.update_display
             projector.update_display = lambda: display_updates.append(True)
 
-            # Changing exposure settings must ONLY mark tiling cache dirty
+            # Changing exposure settings clears tiling cache
             engine.project.update_settings(pitch_x=50.0)
-            self.assertTrue(layer._tile_cache_dirty)
+            self.assertEqual(layer._tile_cache, [])
+            self.assertEqual(layer._tile_coords, [])
             # Projector should NOT have updated because it listens to LAYER_CACHE_RECOMPUTED
             self.assertEqual(len(display_updates), 0)
 
-            # layer.set_exposure_override should also only mark dirty
+            # layer.set_exposure_override should also clear cache
             layer.set_exposure_override(9999.0)
-            self.assertTrue(layer._tile_cache_dirty)
+            self.assertEqual(layer._tile_cache, [])
             self.assertEqual(len(display_updates), 0)
 
-            # Calling regenerate_tiles with force=False when dirty -> recomputes and emits LAYER_CACHE_RECOMPUTED
-            layer.regenerate_tiles(engine.project.settings, (200, 200), force=False)
-            self.assertFalse(layer._tile_cache_dirty)
+            # Calling generate_tiles with force=False when cache empty -> recomputes and emits LAYER_CACHE_RECOMPUTED
+            layer.generate_tiles(force=False)
+            self.assertGreater(len(layer._tile_cache), 0)
             self.assertEqual(len(display_updates), 1)
 
-            # Calling regenerate_tiles with force=False when clean -> skips recomputing and does not emit
-            layer.regenerate_tiles(engine.project.settings, (200, 200), force=False)
+            # Calling generate_tiles with force=False when cached -> skips recomputing and does not emit
+            layer.generate_tiles(force=False)
             self.assertEqual(len(display_updates), 1)
 
-            # Calling regenerate_tiles with force=True -> recomputes even when clean and emits
-            layer.regenerate_tiles(engine.project.settings, (200, 200), force=True)
+            # Calling generate_tiles with force=True -> recomputes even when cached and emits
+            layer.generate_tiles(force=True)
             self.assertEqual(len(display_updates), 2)
 
             projector.update_display = orig_update_display
@@ -703,7 +708,7 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
         op = ExposureOperation(layer_index=0, settings=engine.project.settings)
         op.execute(engine.context, lambda p, m: None)
 
-        self.assertEqual(engine.projector.color_mode, ColorMode.DISABLE)
+        self.assertFalse(engine.projector.is_on)
 
     def test_exposure_operation_disables_projector_even_if_previously_uv(self):
         engine = self._create_engine()
@@ -714,7 +719,7 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
         op = ExposureOperation(layer_index=0, settings=engine.project.settings)
         op.execute(engine.context, lambda p, m: None)
 
-        self.assertEqual(engine.projector.color_mode, ColorMode.DISABLE)
+        self.assertFalse(engine.projector.is_on)
 
     def test_tiled_exposure_operation_disables_projector_after_exposure(self):
         engine = self._create_engine()
@@ -727,7 +732,7 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
         op = TiledExposureOperation(layer_index=0, settings=engine.project.settings)
         op.execute(engine.context, lambda p, m: None)
 
-        self.assertEqual(engine.projector.color_mode, ColorMode.DISABLE)
+        self.assertFalse(engine.projector.is_on)
 
     def test_exposure_operation_preheats_tile_before_uv_mode(self):
         engine = self._create_engine()
@@ -740,26 +745,26 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
             return orig_get_tile(*args, **kwargs)
         layer.get_tile = spy_get_tile
 
-        orig_set_color = engine.projector.set_color_mode
-        def spy_set_color(mode):
-            call_order.append(f"set_color_{mode.value if hasattr(mode, 'value') else mode}")
-            return orig_set_color(mode)
-        engine.projector.set_color_mode = spy_set_color
+        orig_set_on = engine.projector.set_on
+        def spy_set_on(on):
+            call_order.append(f"set_on_{on}")
+            return orig_set_on(on)
+        engine.projector.set_on = spy_set_on
 
         engine.project.settings.exposure_time = 20.0
         op = ExposureOperation(layer_index=0, settings=engine.project.settings)
         op.execute(engine.context, lambda p, m: None)
 
-        # Ensure get_tile is called BEFORE set_color_uv
+        # Ensure get_tile is called BEFORE projector turns on
         self.assertIn("get_tile", call_order)
-        self.assertIn("set_color_uv", call_order)
-        self.assertIn("set_color_disable", call_order)
+        self.assertIn("set_on_True", call_order)
+        self.assertIn("set_on_False", call_order)
         get_tile_idx = call_order.index("get_tile")
-        uv_idx = call_order.index("set_color_uv")
-        disable_idx = call_order.index("set_color_disable")
-        self.assertLess(get_tile_idx, uv_idx, "Tile must be pre-heated before UV is enabled to prevent timing delay")
-        self.assertLess(uv_idx, disable_idx, "UV must be disabled after exposure finishes")
-        self.assertEqual(engine.projector.color_mode, ColorMode.DISABLE)
+        on_idx = call_order.index("set_on_True")
+        off_idx = call_order.index("set_on_False")
+        self.assertLess(get_tile_idx, on_idx, "Tile must be pre-heated before projector turns on")
+        self.assertLess(on_idx, off_idx, "Projector must be turned off after exposure finishes")
+        self.assertFalse(engine.projector.is_on)
 
     def test_chip_project_update_settings_invalidates_caches_and_emits_event(self):
         bus = EventBus()
@@ -769,13 +774,14 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
         project = ChipProject(events=bus)
         layer = project.active_layer
         layer._tile_cache = ["dummy_tile"]
-        layer._tile_cache_dirty = False
+        layer._tile_coords = [(0.0, 0.0)]
 
         project.update_settings(exposure_time=1234.0, tiling_enabled=True, tile_width=800)
         self.assertEqual(project.settings.exposure_time, 1234.0)
         self.assertTrue(project.settings.tiling_enabled)
         self.assertEqual(project.settings.tile_width, 800)
-        self.assertTrue(layer._tile_cache_dirty)
+        self.assertEqual(layer._tile_cache, [])
+        self.assertEqual(layer._tile_coords, [])
         self.assertEqual(len(events_received), 1)
 
     def test_workflow_panel_widgets_sync_and_regenerate(self):
@@ -812,22 +818,21 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
 
         # Load a temporary pattern to enable regeneration
         import tempfile
-        from PIL import Image
+        import cv2
+        import numpy as np
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tf:
             temp_path = tf.name
-            img = Image.new("RGB", (2000, 2000), (255, 255, 255))
-            img.save(temp_path)
+            cv2.imwrite(temp_path, np.full((2000, 2000, 3), 255, dtype=np.uint8))
 
         try:
             engine.project.active_layer.set_pattern_path(temp_path)
             engine.event_bus.emit(Event.PROJECT_CHANGED, engine.project)
             self.assertTrue(layer_panel.btn_regenerate_tiles.isEnabled())
 
-            dummy_tile = "old_dummy_tile"
+            dummy_tile = np.zeros((10, 10, 3), dtype=np.uint8)
             engine.project.active_layer._tile_cache = [dummy_tile]
-            engine.project.active_layer._tile_cache_dirty = False
             layer_panel.btn_regenerate_tiles.click()
-            self.assertNotIn(dummy_tile, engine.project.active_layer._tile_cache)
+            self.assertFalse(any(dummy_tile is t for t in engine.project.active_layer._tile_cache))
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
@@ -839,31 +844,30 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
         bus.add_listener(Event.EXPOSURE_CONFIG_CHANGED, lambda *args: events_received.append(True))
         bus.add_listener(Event.LAYER_CACHE_RECOMPUTED, lambda *args: recomputed_received.append(args[0]))
 
-        layer = ChipLayer(name="Test Layer", events=bus)
+        project = ChipProject(events=bus)
+        layer = project.active_layer
 
-        # 1. set_image_adjust emits EXPOSURE_CONFIG_CHANGED and marks dirty
-        layer.set_image_adjust((10.0, 20.0, 5.0))
-        self.assertEqual(len(events_received), 1)
-        self.assertTrue(layer._tile_cache_dirty)
-
-        # 2. set_exposure_override emits EXPOSURE_CONFIG_CHANGED and marks dirty
+        # 1. set_exposure_override emits EXPOSURE_CONFIG_CHANGED and clears cache
+        layer._tile_cache = ["dummy"]
         layer.set_exposure_override(3000.0)
-        self.assertEqual(len(events_received), 2)
-        self.assertTrue(layer._tile_cache_dirty)
+        self.assertEqual(len(events_received), 1)
+        self.assertEqual(layer._tile_cache, [])
 
-        # 3. set_tiling_override emits EXPOSURE_CONFIG_CHANGED and marks dirty
+        # 2. set_tiling_override emits EXPOSURE_CONFIG_CHANGED and clears cache
+        layer._tile_cache = ["dummy"]
         layer.set_tiling_override(True)
-        self.assertEqual(len(events_received), 3)
-        self.assertTrue(layer._tile_cache_dirty)
+        self.assertEqual(len(events_received), 2)
+        self.assertEqual(layer._tile_cache, [])
 
-        # 4. update_overrides emits EXPOSURE_CONFIG_CHANGED and marks dirty
+        # 3. update_overrides emits EXPOSURE_CONFIG_CHANGED and clears cache
+        layer._tile_cache = ["dummy"]
         layer.update_overrides(exposure_time=4000.0)
-        self.assertEqual(len(events_received), 4)
-        self.assertTrue(layer._tile_cache_dirty)
+        self.assertEqual(len(events_received), 3)
+        self.assertEqual(layer._tile_cache, [])
 
-        # 5. regenerate_tiles emits LAYER_CACHE_RECOMPUTED from chip layer
-        layer.regenerate_tiles()
-        self.assertEqual(len(events_received), 4)
+        # 4. generate_tiles emits LAYER_CACHE_RECOMPUTED from chip layer
+        layer.generate_tiles(force=True)
+        self.assertEqual(len(events_received), 3)
         self.assertEqual(len(recomputed_received), 1)
         self.assertIs(recomputed_received[0], layer)
 
@@ -873,7 +877,16 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
         actions = []
         engine = self._create_engine()
         layer = engine.project.active_layer
-        layer.get_tiling_path = lambda settings, start_pos: [(10.0, 20.0), (30.0, 40.0)]
+        layer.generate_tiles = lambda force=False: (
+            ["tile0", "tile1"],
+            [(10.0, 20.0), (30.0, 40.0)],
+        )
+
+        orig_set_on = engine.projector.set_on
+        def spy_set_on(on):
+            actions.append(("projector_on", on))
+            return orig_set_on(on)
+        engine.projector.set_on = spy_set_on
 
         orig_set_color = engine.projector.set_color_mode
         def spy_set_color(mode):
@@ -904,7 +917,7 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
             mock_af.side_effect = lambda ctx, prog: actions.append(("autofocus",))
             mock_exp.side_effect = lambda ctx, prog: actions.append(("exposure",))
 
-            engine.projector.set_color_mode(ColorMode.DISABLE)
+            engine.projector.set_on(False)
             actions.clear()
 
             op = TiledExposureOperation(layer_index=0, settings=engine.project.settings)
@@ -913,7 +926,7 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
 
         expected_sequence = [
             # Tile 0
-            ("projector_color", ColorMode.DISABLE),
+            ("projector_on", False),
             ("stage_move", {"x": 10.0, "y": 20.0}),
             ("select_tile", 0),
             ("projector_src", ProjectorImageSource.ACTIVE_LAYER),
@@ -921,7 +934,7 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
             ("autofocus",),
             ("exposure",),
             # Tile 1
-            ("projector_color", ColorMode.DISABLE),
+            ("projector_on", False),
             ("stage_move", {"x": 30.0, "y": 40.0}),
             ("select_tile", 1),
             ("projector_src", ProjectorImageSource.ACTIVE_LAYER),
@@ -929,7 +942,7 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
             ("autofocus",),
             ("exposure",),
             # Final restoration
-            ("projector_color", ColorMode.DISABLE),
+            ("projector_on", False),
         ]
         self.assertEqual(actions, expected_sequence)
 

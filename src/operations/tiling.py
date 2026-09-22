@@ -38,8 +38,8 @@ class TiledExposureOperation(Operation):
         # 1. Get the tiling path for the active layer
         pos = context.stage.get_position()
         start_pos = (pos[0], pos[1])
-        tiling_path = layer.get_tiling_path(self.settings, start_pos=start_pos)
-        total_tiles = len(tiling_path)
+        tiles, tile_coords = layer.generate_tiles()
+        total_tiles = len(tiles)
 
         if total_tiles == 0:
             report_progress(1.0, "No tiles to expose")
@@ -48,7 +48,7 @@ class TiledExposureOperation(Operation):
         report_progress(0.0, f"Beginning tiled exposure ({total_tiles} tiles)...")
 
         try:
-            for tile_idx, (tx, ty) in enumerate(tiling_path):
+            for tile_idx, (offset_x, offset_y) in enumerate(tile_coords):
                 if self.is_aborted:
                     break
 
@@ -56,9 +56,11 @@ class TiledExposureOperation(Operation):
                 pct_step = 1.0 / total_tiles
 
                 # Step 1: Set the projector to black
-                context.projector.set_color_mode(ColorMode.DISABLE)
+                context.projector.set_on(False)
 
                 # Step 2: Move to the position
+                tx = start_pos[0] + offset_x
+                ty = start_pos[1] + offset_y
                 report_progress(
                     pct_base,
                     f"Tile {tile_idx + 1}/{total_tiles} - Moving stage to ({tx:.1f}, {ty:.1f})...",
@@ -114,7 +116,7 @@ class TiledExposureOperation(Operation):
                 if err or self.is_aborted:
                     break
         finally:
-            context.projector.set_color_mode(ColorMode.DISABLE)
+            context.projector.set_on(False)
 
         if self.is_aborted:
             report_progress(1.0, "Tiled exposure aborted")

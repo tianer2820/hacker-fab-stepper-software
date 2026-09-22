@@ -52,7 +52,7 @@ class QtProjector(QMainWindow, ProjectorController, metaclass=QtProjectorMeta):
     """
 
     _sig_image_cache_changed = Signal(object)
-    _sig_update = Signal(object)
+    _sig_update = Signal()
 
     def __init__(self, title: str = "Projector", background_color: str = "#000000"):
         super().__init__()
@@ -79,7 +79,7 @@ class QtProjector(QMainWindow, ProjectorController, metaclass=QtProjectorMeta):
             self.resize(1920, 1080)
             self.showFullScreen()
 
-        self._sig_update.emit(None)
+        self._sig_update.emit()
 
     def projector_size(self) -> Tuple[int, int]:
         return (self.width(), self.height())

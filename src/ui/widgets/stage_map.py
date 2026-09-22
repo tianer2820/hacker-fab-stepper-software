@@ -251,11 +251,11 @@ class StageMapCanvas(QFrame):
 
         # Draw previous exposure footprints
         chip_project = self.parent_widget.engine.project
-        if chip_project and hasattr(chip_project, "exposure_history"):
+        if chip_project:
             painter.setPen(QPen(QColor("#f59e0b"), 1))
             painter.setBrush(QBrush(QColor(245, 158, 11, 80)))
-            pitch_x = getattr(chip_project.settings, "pitch_x", 983.0) / 1000.0
-            pitch_y = getattr(chip_project.settings, "pitch_y", 512.0) / 1000.0
+            pitch_x = chip_project.settings.pitch_x / 1000.0
+            pitch_y = chip_project.settings.pitch_y / 1000.0
             tile_w = max(4.0, pitch_x * scale)
             tile_h = max(3.0, pitch_y * scale)
 
