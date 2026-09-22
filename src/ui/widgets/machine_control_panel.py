@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -26,6 +27,7 @@ from operations import (
     AutofocusOperation,
     HomeOperation,
     JogOperation,
+    MaximizeImageSharpnessOperation,
     OpticsCalibrationOperation,
 )
 from ui.bridge import QtEngineBridge
@@ -51,6 +53,12 @@ class MachineControlPanelWidget(QWidget):
         main_layout.addWidget(self.tabs)
 
         # Tab 1: Manual Control
+        scroll_manual = QScrollArea()
+        scroll_manual.setWidgetResizable(True)
+        scroll_manual.setFrameShape(QScrollArea.NoFrame)
+        scroll_manual.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll_manual.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
         tab_manual = QWidget()
         manual_layout = QVBoxLayout(tab_manual)
         manual_layout.setContentsMargins(6, 6, 6, 6)
@@ -134,7 +142,28 @@ class MachineControlPanelWidget(QWidget):
         jog_layout.addLayout(grid)
         manual_layout.addWidget(jog_box)
 
-        # 3. Autofocus Group Box (split from alignment)
+        # 3. Maximize Image Sharpness Group Box
+        sharp_box = QGroupBox("Maximize Image Sharpness")
+        sharp_layout = QVBoxLayout(sharp_box)
+        sharp_layout.setContentsMargins(6, 6, 6, 6)
+        sharp_layout.setSpacing(6)
+
+        sharp_range_layout = QHBoxLayout()
+        sharp_range_layout.addWidget(QLabel("Z Search Range (±µm):"))
+        self.spin_sharp_z_range = QDoubleSpinBox()
+        self.spin_sharp_z_range.setRange(0.1, 1000.0)
+        self.spin_sharp_z_range.setDecimals(1)
+        self.spin_sharp_z_range.setSingleStep(1.0)
+        self.spin_sharp_z_range.setValue(20.0)
+        sharp_range_layout.addWidget(self.spin_sharp_z_range)
+        sharp_layout.addLayout(sharp_range_layout)
+
+        self.btn_maximize_sharpness = QPushButton("Maximize Image Sharpness")
+        self.btn_maximize_sharpness.clicked.connect(self._on_maximize_sharpness_clicked)
+        sharp_layout.addWidget(self.btn_maximize_sharpness)
+        manual_layout.addWidget(sharp_box)
+
+        # 4. Autofocus Group Box (split from alignment)
         af_box = QGroupBox("Autofocus")
         af_layout = QVBoxLayout(af_box)
         af_layout.setContentsMargins(6, 6, 6, 6)
@@ -243,10 +272,16 @@ class MachineControlPanelWidget(QWidget):
         proj_layout.addWidget(src_group_box)
         manual_layout.addWidget(proj_box)
         manual_layout.addStretch()
-
-        self.tabs.addTab(tab_manual, "Manual Control")
+        scroll_manual.setWidget(tab_manual)
+        self.tabs.addTab(scroll_manual, "Manual Control")
 
         # Tab 2: Optics Calibration
+        scroll_optics = QScrollArea()
+        scroll_optics.setWidgetResizable(True)
+        scroll_optics.setFrameShape(QScrollArea.NoFrame)
+        scroll_optics.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll_optics.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
         tab_optics = QWidget()
         optics_layout = QVBoxLayout(tab_optics)
         optics_layout.setContentsMargins(6, 6, 6, 6)
@@ -300,10 +335,16 @@ class MachineControlPanelWidget(QWidget):
 
         optics_layout.addWidget(cal_ctrl_box)
         optics_layout.addStretch()
-
-        self.tabs.addTab(tab_optics, "Optics Calibration")
+        scroll_optics.setWidget(tab_optics)
+        self.tabs.addTab(scroll_optics, "Optics Calibration")
 
         # Tab 3: Process Calibration (Placeholder)
+        scroll_proc = QScrollArea()
+        scroll_proc.setWidgetResizable(True)
+        scroll_proc.setFrameShape(QScrollArea.NoFrame)
+        scroll_proc.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll_proc.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
         tab_process = QWidget()
         proc_layout = QVBoxLayout(tab_process)
         proc_layout.setContentsMargins(6, 6, 6, 6)
@@ -326,8 +367,8 @@ class MachineControlPanelWidget(QWidget):
 
         proc_layout.addWidget(proc_box)
         proc_layout.addStretch()
-
-        self.tabs.addTab(tab_process, "Process Calibration")
+        scroll_proc.setWidget(tab_process)
+        self.tabs.addTab(scroll_proc, "Process Calibration")
 
         # Connect signals
         self.bridge.stage_position_changed.connect(self._on_pos_changed)
@@ -433,6 +474,13 @@ class MachineControlPanelWidget(QWidget):
         op = HomeOperation()
         self.bridge.start_operation(op)
 
+    def _on_maximize_sharpness_clicked(self):
+        op = MaximizeImageSharpnessOperation(
+            z_range=self.spin_sharp_z_range.value(),
+            blue_only=(self.engine.projector.color_mode == ColorMode.UV),
+        )
+        self.bridge.start_operation(op)
+
     def _on_autofocus_clicked(self):
         cfg = getattr(self.engine, "autofocus_config", None)
         if cfg is not None:
@@ -487,6 +535,8 @@ class MachineControlPanelWidget(QWidget):
             self.btn_z_pos,
             self.btn_z_neg,
             self.btn_home,
+            self.btn_maximize_sharpness,
+            self.spin_sharp_z_range,
             self.btn_autofocus,
             self.btn_align,
             self.btn_start_optics_cal,

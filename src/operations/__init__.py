@@ -1,6 +1,7 @@
 from .alignment import AlignmentConfig, AlignmentOperation
 from .autofocus import AutofocusConfig, AutofocusOperation
 from .exposure import ExposureOperation
+from .maximize_image_sharpness import MaximizeImageSharpnessOperation
 from .movement import HomeOperation, JogOperation
 from .optics_calibration import OpticsCalibrationOperation
 from .tiling import TiledExposureOperation
@@ -15,4 +16,7 @@ __all__ = [
     "AlignmentConfig",
     "ExposureOperation",
     "TiledExposureOperation",
+    "MaximizeImageSharpnessOperation",
 ]
+
+
