@@ -80,7 +80,7 @@ def execute_autofocus(
 
             # 2. Check tag detection
             frame = get_camera_image()
-            det_count, _, _ = detect_ar_tags(frame)
+            det_count, _, _ = detect_ar_tags(frame, flip_horizontal=True)
             detection_rate = det_count / total_tags if total_tags > 0 else 0.0
 
             # If moving to a finer grid (N > 2) and detection rate is below threshold, stop iteration
@@ -137,7 +137,7 @@ def execute_autofocus(
 
             # Verify detection rate at best focus
             frame_best = get_camera_image()
-            det_count_best, _, _ = detect_ar_tags(frame_best)
+            det_count_best, _, _ = detect_ar_tags(frame_best, flip_horizontal=True)
             rate_best = det_count_best / total_tags if total_tags > 0 else 0.0
 
             # If detection falls below threshold, do not progress to smaller tags

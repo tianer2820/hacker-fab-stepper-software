@@ -86,6 +86,7 @@ def generate_ar_tag_grid(
 def detect_ar_tags(
     camera_image: Optional[np.ndarray],
     dict_id: int = cv2.aruco.DICT_4X4_250,
+    flip_horizontal: bool = False,
 ) -> Tuple[int, list, Optional[np.ndarray]]:
     """Detects ArUco tags in the given camera frame (BGR or Grayscale).
     
@@ -106,6 +107,9 @@ def detect_ar_tags(
         gray = cv2.cvtColor(camera_image, cv2.COLOR_BGRA2GRAY)
     else:
         return 0, [], None
+
+    if flip_horizontal:
+        gray = cv2.flip(gray, 1)
 
     corners, ids, rejected = detector.detectMarkers(gray)
     count = len(ids) if ids is not None else 0

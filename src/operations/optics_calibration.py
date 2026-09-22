@@ -55,7 +55,7 @@ class OpticsCalibrationOperation(Operation):
 
             # 2. Check that AR tags are detected in Red illumination
             frame = context.camera.get_latest_frame()
-            detected, corners, ids = detect_ar_tags(frame)
+            detected, corners, ids = detect_ar_tags(frame, flip_horizontal=True)
             if detected == 0:
                 msg = (
                     "No ArUco tags detected in Red illumination! "
