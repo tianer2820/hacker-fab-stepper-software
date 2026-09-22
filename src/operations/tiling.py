@@ -1,4 +1,4 @@
-from typing import Callable, Optional
+from typing import Callable, Optional, Any
 
 from core.chip_project import PatterningSettings
 from core.events import ColorMode, ProjectorImageSource

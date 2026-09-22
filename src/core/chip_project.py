@@ -67,7 +67,7 @@ class PatterningSettings:
         )
 
     
-    def with_overrides(self, overrides: LayerSettingsOverride) -> PatterningSettings:
+    def with_overrides(self, overrides: "LayerSettingsOverride") -> "PatterningSettings":
         """Resolves effective settings for this layer by applying overrides on top of project defaults."""
         return PatterningSettings(
             exposure_time=overrides.exposure_time
