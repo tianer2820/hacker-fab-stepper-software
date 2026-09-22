@@ -3,9 +3,10 @@ import os
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import List, Optional, Tuple, Any
-from core.events import Event
-
-from PIL import Image
+from core.events import Event, EventBus
+from lib.tiling import split_image_into_tiles
+import cv2
+import numpy as np
 
 
 
@@ -65,6 +66,42 @@ class PatterningSettings:
             posterize_strength=d.get("posterize_strength", None),
         )
 
+    
+    def with_overrides(self, overrides: LayerSettingsOverride) -> PatterningSettings:
+        """Resolves effective settings for this layer by applying overrides on top of project defaults."""
+        return PatterningSettings(
+            exposure_time=overrides.exposure_time
+            if overrides.exposure_time is not None
+            else self.exposure_time,
+            tiling_enabled=overrides.tiling_enabled
+            if overrides.tiling_enabled is not None
+            else self.tiling_enabled,
+            tile_width=overrides.tile_width
+            if overrides.tile_width is not None
+            else self.tile_width,
+            tile_height=overrides.tile_height
+            if overrides.tile_height is not None
+            else self.tile_height,
+            overlap_x=overrides.overlap_x
+            if overrides.overlap_x is not None
+            else self.overlap_x,
+            overlap_y=overrides.overlap_y
+            if overrides.overlap_y is not None
+            else self.overlap_y,
+            pitch_x=overrides.pitch_x
+            if overrides.pitch_x is not None
+            else self.pitch_x,
+            pitch_y=overrides.pitch_y
+            if overrides.pitch_y is not None
+            else self.pitch_y,
+            border_size=overrides.border_size
+            if overrides.border_size is not None
+            else self.border_size,
+            posterize_strength=overrides.posterize_strength
+            if overrides.posterize_strength is not None
+            else self.posterize_strength,
+        )
+
 
 @dataclass
 class LayerSettingsOverride:
@@ -102,56 +139,46 @@ class LayerSettingsOverride:
         )
 
 
+
+
 @dataclass
 class ChipLayer:
     """A single layer in a ChipProject with its own pattern and optional overrides."""
 
     name: str = "Layer 1"
     pattern_path: Optional[str] = None
-    image_adjust: Tuple[float, float, float] = (0.0, 0.0, 0.0)  # (shift_x, shift_y, theta)
     overrides: LayerSettingsOverride = field(default_factory=LayerSettingsOverride)
 
     # the original pattern image
-    _pattern_cache: Optional[Image.Image] = field(default=None, repr=False, compare=False)
-    _pattern_cache_dirty: bool = field(default=False, repr=False, compare=False)
+    _pattern_cache: Optional[np.ndarray] = field(default=None, repr=False, compare=False)
 
     # sliced and rendered tiles. For tiling disabled layer, this contains a single tile (the full pattern)
     # the tiles are snake-ordered
-    _tile_cache: list[Image.Image] = field(default_factory=list, repr=False, compare=False)
-    _tile_cache_dirty: bool = field(default=False, repr=False, compare=False)
+    _tile_cache: list[np.ndarray] = field(default_factory=list, repr=False, compare=False)
+    _tile_coords: list[Tuple[float, float]] = field(default_factory=list, repr=False, compare=False)
 
     events: Optional[Any] = field(default=None, repr=False, compare=False)
-    _project: Optional[Any] = field(default=None, repr=False, compare=False)
+    _project: Optional["ChipProject"] = field(default=None, repr=False, compare=False)
 
     def set_pattern_path(self, path: Optional[str]):
         self.pattern_path = path
         self._pattern_cache = None
-        self._pattern_cache_dirty = True
-        self.mark_tiling_dirty()
-        if self.events is not None:
-            self.events.emit(Event.EXPOSURE_CONFIG_CHANGED)
-
-    def set_image_adjust(self, adjust: Tuple[float, float, float]):
-        self.image_adjust = adjust
-        self.mark_tiling_dirty()
-        if self.events is not None:
-            self.events.emit(Event.EXPOSURE_CONFIG_CHANGED)
-
-    def set_overrides(self, overrides: LayerSettingsOverride):
-        self.overrides = overrides
-        self.mark_tiling_dirty()
+        self._tile_cache = []
+        self._tile_coords = []
         if self.events is not None:
             self.events.emit(Event.EXPOSURE_CONFIG_CHANGED)
 
     def set_exposure_override(self, exposure_time: Optional[float]):
         self.overrides.exposure_time = exposure_time
-        self.mark_tiling_dirty()
+        self._tile_cache = []
+        self._tile_coords = []
         if self.events is not None:
             self.events.emit(Event.EXPOSURE_CONFIG_CHANGED)
 
     def set_tiling_override(self, tiling_enabled: Optional[bool]):
         self.overrides.tiling_enabled = tiling_enabled
-        self.mark_tiling_dirty()
+        self._tile_cache = []
+        self._tile_coords = []
         if self.events is not None:
             self.events.emit(Event.EXPOSURE_CONFIG_CHANGED)
 
@@ -159,202 +186,103 @@ class ChipLayer:
         for k, v in kwargs.items():
             if hasattr(self.overrides, k):
                 setattr(self.overrides, k, v)
-        self.mark_tiling_dirty()
+        self._tile_cache = []
+        self._tile_coords = []
         if self.events is not None:
             self.events.emit(Event.EXPOSURE_CONFIG_CHANGED)
 
-    def mark_tiling_dirty(self):
-        self._tile_cache_dirty = True
 
-    def mark_dirty(self):
-        self._pattern_cache_dirty = True
-        self._tile_cache_dirty = True
-        self._tile_cache = []
-
-    def regenerate_tiles(
+    def generate_tiles(
         self,
-        project_settings: Optional[PatterningSettings] = None,
-        projector_size: Tuple[int, int] = (1920, 1080),
         force: bool = False,
-    ) -> list[Image.Image]:
-        if not force and not self._tile_cache_dirty and len(self._tile_cache) > 0:
-            return self._tile_cache
+    ) -> tuple[list[np.ndarray], list[tuple[float, float]]]:
+        """
+        Call this method to generate the tile caches.
+        """
 
-        if project_settings is None:
-            if hasattr(self, "_project") and self._project is not None:
-                project_settings = getattr(self._project, "settings", PatterningSettings())
-            else:
-                project_settings = PatterningSettings()
+        if not force and self._tile_cache:
+            return self._tile_cache, self._tile_coords
 
-        if force:
-            self._tile_cache_dirty = True
+        assert self._project is not None
+        project_settings = self._project.settings
+
+        pattern = self.get_pattern_image()
+
+        # no image set
+        if pattern is None:
             self._tile_cache = []
+            self._tile_coords = []
+            if self.events is not None:
+                self.events.emit(Event.LAYER_CACHE_RECOMPUTED, self)
+            return self._tile_cache, self._tile_coords
 
-        tiles = self.get_tiles(project_settings, projector_size)
+
+        settings = project_settings.with_overrides(self.overrides)
+
+        if settings.tiling_enabled:
+            tiles, snake_coords = split_image_into_tiles(
+                pattern,
+                tile_width=settings.tile_width,
+                tile_height=settings.tile_height,
+                overlap_x=settings.overlap_x,
+                overlap_y=settings.overlap_y,
+            )
+            
+            self._tile_cache = tiles
+
+            tile_coords: list[Tuple[float, float]] = []
+            for x_idx, y_idx in snake_coords:
+                tx = settings.pitch_x * x_idx
+                ty = settings.pitch_y * y_idx
+                tile_coords.append((tx, ty))
+            self._tile_coords = tile_coords
+
+        else:
+            self._tile_cache = [pattern]
+            self._tile_coords = [(0.0, 0.0)]
+
+
         if self.events is not None:
             self.events.emit(Event.LAYER_CACHE_RECOMPUTED, self)
-        return tiles
+        return self._tile_cache, self._tile_coords
 
-    def get_pattern_image(self) -> Optional[Image.Image]:
-        if self._pattern_cache_dirty or self._pattern_cache is None:
+    def get_tile(
+        self,
+        index: int
+    ) -> Optional[tuple[np.ndarray, tuple[float, float]]]:
+        if not self._tile_cache:
+            return None
+        if 0 <= index < len(self._tile_cache):
+            return self._tile_cache[index], self._tile_coords[index]
+        return self._tile_cache[0], self._tile_coords[0]
+
+    def get_pattern_image(self) -> Optional[np.ndarray]:
+        if self._pattern_cache is None:
             if self.pattern_path and os.path.exists(self.pattern_path):
                 try:
-                    self._pattern_cache = Image.open(self.pattern_path)
+                    raw = cv2.imread(self.pattern_path, cv2.IMREAD_UNCHANGED)
+                    if raw is not None:
+                        if raw.ndim == 2:
+                            self._pattern_cache = cv2.cvtColor(raw, cv2.COLOR_GRAY2RGB)
+                        elif raw.shape[2] == 4:
+                            self._pattern_cache = cv2.cvtColor(raw, cv2.COLOR_BGRA2RGB)
+                        elif raw.shape[2] == 3:
+                            self._pattern_cache = cv2.cvtColor(raw, cv2.COLOR_BGR2RGB)
+                        else:
+                            self._pattern_cache = raw
+                    else:
+                        self._pattern_cache = None
                 except Exception as e:
                     print(f"Error loading pattern image from {self.pattern_path}: {e}")
                     self._pattern_cache = None
             else:
                 self._pattern_cache = None
-            self._pattern_cache_dirty = False
         return self._pattern_cache
-
-    def get_tiles(
-        self,
-        project_settings: PatterningSettings,
-        projector_size: Tuple[int, int],
-    ) -> list[Image.Image]:
-        """Returns the list of snake-ordered rendered tiles for this layer."""
-        if self._tile_cache_dirty or not self._tile_cache:
-            pattern = self.get_pattern_image()
-            if pattern is None:
-                self._tile_cache = []
-                self._tile_cache_dirty = False
-                return self._tile_cache
-
-            eff = self.get_effective_settings(project_settings)
-            from lib.img import ImageProcessSettings, process_img
-
-            if eff.tiling_enabled:
-                from lib.tiling import split_image_into_tiles
-
-                tiles, _, _ = split_image_into_tiles(
-                    pattern,
-                    tile_width=eff.tile_width,
-                    tile_height=eff.tile_height,
-                    overlap_x=eff.overlap_x,
-                    overlap_y=eff.overlap_y,
-                )
-                proc_settings = ImageProcessSettings(
-                    posterization=eff.posterize_strength,
-                    flatfield=None,
-                    color_channels=(True, True, True),
-                    size=projector_size,
-                    image_adjust=self.image_adjust,
-                    border_size=eff.border_size,
-                )
-                self._tile_cache = [process_img(t, proc_settings) for t in tiles]
-            else:
-                proc_settings = ImageProcessSettings(
-                    posterization=eff.posterize_strength,
-                    flatfield=None,
-                    color_channels=(True, True, True),
-                    size=projector_size,
-                    image_adjust=self.image_adjust,
-                    border_size=eff.border_size,
-                )
-                self._tile_cache = [process_img(pattern, proc_settings)]
-
-            self._tile_cache_dirty = False
-
-        return self._tile_cache
-
-    def get_tile(
-        self,
-        index: int,
-        project_settings: PatterningSettings,
-        projector_size: Tuple[int, int],
-    ) -> Optional[Image.Image]:
-        tiles = self.get_tiles(project_settings, projector_size)
-        if not tiles:
-            return None
-        if 0 <= index < len(tiles):
-            return tiles[index]
-        return tiles[0]
-
-    def get_tiling_path(
-        self,
-        project_settings: PatterningSettings,
-        start_pos: Tuple[float, float] = (0.0, 0.0),
-    ) -> List[Tuple[float, float]]:
-        """Calculates the list of stage coordinates for each tile in snake order."""
-        eff = self.get_effective_settings(project_settings)
-        if not eff.tiling_enabled:
-            return [(start_pos[0], start_pos[1])]
-
-        pattern = self.get_pattern_image()
-        if pattern is None:
-            return [(start_pos[0], start_pos[1])]
-
-        from lib.tiling import (
-            calculate_tile_position,
-            generate_snake_sequence,
-            split_image_into_tiles,
-        )
-
-        _, x_count, y_count = split_image_into_tiles(
-            pattern,
-            tile_width=eff.tile_width,
-            tile_height=eff.tile_height,
-            overlap_x=eff.overlap_x,
-            overlap_y=eff.overlap_y,
-        )
-
-        snake_coords = generate_snake_sequence(x_count, y_count)
-        path: List[Tuple[float, float]] = []
-        for x_idx, y_idx in snake_coords:
-            tx, ty = calculate_tile_position(
-                start_pos[0],
-                start_pos[1],
-                1,
-                1,
-                x_idx,
-                y_idx,
-                eff.pitch_x,
-                eff.pitch_y,
-            )
-            path.append((tx, ty))
-        return path
-
-    def get_effective_settings(self, project_settings: PatterningSettings) -> PatterningSettings:
-        """Resolves effective settings for this layer by applying overrides on top of project defaults."""
-        return PatterningSettings(
-            exposure_time=self.overrides.exposure_time
-            if self.overrides.exposure_time is not None
-            else project_settings.exposure_time,
-            tiling_enabled=self.overrides.tiling_enabled
-            if self.overrides.tiling_enabled is not None
-            else project_settings.tiling_enabled,
-            tile_width=self.overrides.tile_width
-            if self.overrides.tile_width is not None
-            else project_settings.tile_width,
-            tile_height=self.overrides.tile_height
-            if self.overrides.tile_height is not None
-            else project_settings.tile_height,
-            overlap_x=self.overrides.overlap_x
-            if self.overrides.overlap_x is not None
-            else project_settings.overlap_x,
-            overlap_y=self.overrides.overlap_y
-            if self.overrides.overlap_y is not None
-            else project_settings.overlap_y,
-            pitch_x=self.overrides.pitch_x
-            if self.overrides.pitch_x is not None
-            else project_settings.pitch_x,
-            pitch_y=self.overrides.pitch_y
-            if self.overrides.pitch_y is not None
-            else project_settings.pitch_y,
-            border_size=self.overrides.border_size
-            if self.overrides.border_size is not None
-            else project_settings.border_size,
-            posterize_strength=self.overrides.posterize_strength
-            if self.overrides.posterize_strength is not None
-            else project_settings.posterize_strength,
-        )
 
     def to_disk(self) -> dict:
         return {
             "name": self.name,
             "pattern_path": self.pattern_path,
-            "image_adjust": list(self.image_adjust),
             "overrides": self.overrides.to_disk(),
         }
 
@@ -362,14 +290,13 @@ class ChipLayer:
     def from_disk(cls, d: dict) -> "ChipLayer":
         name = d.get("name", "Layer")
         pattern_path = d.get("pattern_path", None)
-        image_adjust = tuple(d.get("image_adjust", (0.0, 0.0, 0.0)))
         overrides = LayerSettingsOverride.from_disk(d.get("overrides", {}))
         return cls(
             name=name,
             pattern_path=pattern_path,
-            image_adjust=image_adjust,
             overrides=overrides,
         )
+
 
 
 @dataclass
@@ -382,7 +309,7 @@ class ChipProject:
     active_layer_index: int = 0
     active_tile_index: int = 0
     exposure_history: List[ExposureRecord] = field(default_factory=list, repr=False, compare=False)
-    events: Optional[Any] = field(default=None, repr=False, compare=False)
+    events: Optional[EventBus] = field(default=None, repr=False, compare=False)
 
     def __post_init__(self):
         if not self.layers:
@@ -393,7 +320,7 @@ class ChipProject:
         if self.active_layer_index >= len(self.layers):
             self.active_layer_index = max(0, len(self.layers) - 1)
 
-    def set_events(self, events: Optional[Any]) -> None:
+    def set_eventbus(self, events: Optional[Any]) -> None:
         self.events = events
         for layer in self.layers:
             layer.events = events
@@ -402,6 +329,12 @@ class ChipProject:
     @property
     def active_layer(self) -> ChipLayer:
         return self.layers[self.active_layer_index]
+
+    @property
+    def active_tile(self) -> tuple[np.ndarray, tuple[float, float]] | None:
+        return self.active_layer.get_tile(self.active_tile_index)
+
+
 
     def add_layer(self, name: Optional[str] = None) -> ChipLayer:
         layer_num = len(self.layers) + 1
@@ -451,6 +384,8 @@ class ChipProject:
             self.events.emit(Event.ACTIVE_TILE_CHANGED, self.active_tile_index)
         return True
 
+
+
     def add_exposure_record(self, record: ExposureRecord) -> None:
         self.exposure_history.append(record)
         if self.events is not None:
@@ -463,76 +398,22 @@ class ChipProject:
             from core.events import Event
             self.events.emit(Event.EXPOSURE_HISTORY_CHANGED, self.exposure_history)
 
+
+
     def update_settings(self, **kwargs) -> None:
-        """Updates project settings, marks all layer tile caches dirty, and emits EXPOSURE_CONFIG_CHANGED."""
+        """Updates project settings, clears all layer tile caches, and emits EXPOSURE_CONFIG_CHANGED."""
         for k, v in kwargs.items():
             if hasattr(self.settings, k):
                 setattr(self.settings, k, v)
         for layer in self.layers:
-            layer.mark_tiling_dirty()
+            layer._tile_cache = []
+            layer._tile_coords = []
         if self.events is not None:
             self.events.emit(Event.EXPOSURE_CONFIG_CHANGED)
 
-    def get_active_layer_tile_count(self, projector_size: Tuple[int, int] = (1920, 1080)) -> int:
-        tiles = self.active_layer.get_tiles(self.settings, projector_size)
+    def get_active_layer_tile_count(self) -> int:
+        tiles, coords = self.active_layer.generate_tiles()
         return len(tiles)
-
-    def get_tiling_path(self, start_pos: Tuple[float, float] = (0.0, 0.0)) -> List[Tuple[float, float]]:
-        return self.active_layer.get_tiling_path(self.settings, start_pos)
-
-    def render_for_projector(
-        self,
-        color_mode: Any,
-        image_source: Any,
-        custom_path: Optional[str] = None,
-        projector_size: Tuple[int, int] = (1920, 1080),
-    ) -> Optional[Image.Image]:
-        """Renders the appropriate image frame for the projector."""
-        from core.events import ColorMode, ProjectorImageSource
-        from lib.img import select_channels
-
-        if color_mode == ColorMode.DISABLE:
-            return None
-
-        img: Optional[Image.Image] = None
-
-        if image_source == ProjectorImageSource.ACTIVE_LAYER:
-            tile = self.active_layer.get_tile(self.active_tile_index, self.settings, projector_size)
-            if tile is None:
-                return None
-            img = tile.copy()
-        elif image_source == ProjectorImageSource.CUSTOM_FILE:
-            if custom_path and os.path.exists(custom_path):
-                try:
-                    raw = Image.open(custom_path)
-                    from lib.img import ImageProcessSettings, process_img
-
-                    proc_settings = ImageProcessSettings(
-                        posterization=None,
-                        flatfield=None,
-                        color_channels=(True, True, True),
-                        size=projector_size,
-                        image_adjust=(0.0, 0.0, 0.0),
-                        border_size=0.0,
-                    )
-                    img = process_img(raw, proc_settings)
-                except Exception as e:
-                    print(f"Error loading custom image from {custom_path}: {e}")
-                    return None
-            else:
-                return None
-        elif image_source == ProjectorImageSource.SOLID:
-            img = Image.new("RGB", projector_size, (255, 255, 255))
-
-        if img is None:
-            return None
-
-        if color_mode == ColorMode.RED:
-            return select_channels(img, red=True, green=False, blue=False)
-        elif color_mode == ColorMode.UV:
-            return select_channels(img, red=False, green=False, blue=True)
-
-        return img
 
     def to_disk(self) -> dict:
         return {
