@@ -132,8 +132,9 @@ class MaximizeImageSharpnessOperation(Operation):
             top1, top2 = candidates[0], candidates[1]
 
             # The middle point should never be worse than both ends, if that happens, something is wrong
-            if s_mid <= s_low and s_mid <= s_high:
+            if s_mid < s_low and s_mid < s_high:
                 return "Failed to maximize image sharpness, middle point worse than both endpoints"
+
 
             # Standard unimodal case: top two points are either [z_low, z_mid] or [z_mid, z_high]
             new_z_low = min(top1[0], top2[0])
