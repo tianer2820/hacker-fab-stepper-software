@@ -133,4 +133,3 @@ class ActivityRibbonWidget(QFrame):
     def _on_abort_clicked(self):
         self.engine.abort_operation()
         self.set_status("Aborting operation...", is_busy=True)
-

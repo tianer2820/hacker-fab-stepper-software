@@ -194,6 +194,46 @@ class TestPatternScaling(unittest.TestCase):
         self.assertIn("OFF", preview_widget.mode_label.text())
         preview_widget.canvas.repaint()
 
+    def test_projector_preview_renders_top_left_unscaled(self):
+        stage = DummyStage()
+        projector = DummyProjector(size=(1280, 720))
+        camera = DummyCamera()
+        engine = StepperEngine(stage=stage, projector=projector, camera=camera)
+        bridge = QtEngineBridge(engine)
+
+        preview_widget = ProjectorPreviewWidget(engine, bridge)
+        preview_widget.canvas.resize(400, 300)
+
+        # Set image in projector
+        from core.events import ProjectorImageSource
+        test_pattern = np.zeros((80, 150, 3), dtype=np.uint8)
+        projector.set_generated_image(test_pattern)
+        projector.set_image_source(ProjectorImageSource.GENERATED)
+        projector.set_on(True)
+
+        self.assertIsNotNone(preview_widget.canvas._pixmap)
+        self.assertEqual(preview_widget.canvas._pixmap.width(), 150)
+        self.assertEqual(preview_widget.canvas._pixmap.height(), 80)
+
+        # Mock QPainter in projector_canvas to verify it draws projector boundary and image scaled at top-left
+        from unittest.mock import patch, MagicMock
+        with patch("ui.widgets.projector_preview.projector_canvas.QPainter") as mock_painter_cls:
+            mock_painter = MagicMock()
+            mock_painter_cls.return_value = mock_painter
+            preview_widget.canvas.paintEvent(None)
+            mock_painter.drawPixmap.assert_called_once()
+            target_rect, drawn_pixmap = mock_painter.drawPixmap.call_args[0]
+            
+            # Projector is 1280x720, canvas is 400x300, margin is 8
+            # avail_w = 384, avail_h = 284, scale = min(384/1280, 284/720) = 0.3
+            # rect_w = 384, rect_h = 216, rect_x = 8, rect_y = 42
+            self.assertEqual(target_rect.x(), 8)
+            self.assertEqual(target_rect.y(), 42)
+            # Image 150x80 is scaled by 0.3 -> 45x24
+            self.assertEqual(target_rect.width(), 45)
+            self.assertEqual(target_rect.height(), 24)
+            self.assertEqual(drawn_pixmap, preview_widget.canvas._pixmap)
+
 
 if __name__ == "__main__":
     unittest.main()

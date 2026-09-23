@@ -3,10 +3,8 @@ from typing import Optional
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QButtonGroup,
-    QCheckBox,
     QDoubleSpinBox,
     QFileDialog,
-    QFormLayout,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -15,7 +13,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -28,39 +25,27 @@ from operations import (
     HomeOperation,
     JogOperation,
     MaximizeImageSharpnessOperation,
-    OpticsCalibrationOperation,
 )
 from ui.bridge import QtEngineBridge
 
 
-class MachineControlPanelWidget(QWidget):
-    """Right dock panel: Machine motion control, autofocus, and calibration tabs."""
+class ManualControlTabWidget(QScrollArea):
+    """Tab 1: Machine motion, manual jog, sharpness, autofocus, and projector control."""
 
     def __init__(self, engine: StepperEngine, bridge: QtEngineBridge, parent: QWidget = None):
         super().__init__(parent)
         self.engine = engine
         self.bridge = bridge
 
+        self.setWidgetResizable(True)
+        self.setFrameShape(QScrollArea.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
         self.current_jog_step = 100.0  # Default 100 µm
-        self._latest_cal_offset: Optional[float] = None
 
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(4, 4, 4, 4)
-        main_layout.setSpacing(4)
-
-        # Tab Widget
-        self.tabs = QTabWidget(self)
-        main_layout.addWidget(self.tabs)
-
-        # Tab 1: Manual Control
-        scroll_manual = QScrollArea()
-        scroll_manual.setWidgetResizable(True)
-        scroll_manual.setFrameShape(QScrollArea.NoFrame)
-        scroll_manual.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll_manual.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-
-        tab_manual = QWidget()
-        manual_layout = QVBoxLayout(tab_manual)
+        container = QWidget()
+        manual_layout = QVBoxLayout(container)
         manual_layout.setContentsMargins(6, 6, 6, 6)
         manual_layout.setSpacing(8)
 
@@ -163,7 +148,7 @@ class MachineControlPanelWidget(QWidget):
         sharp_layout.addWidget(self.btn_maximize_sharpness)
         manual_layout.addWidget(sharp_box)
 
-        # 4. Autofocus Group Box (split from alignment)
+        # 4. Autofocus Group Box
         af_box = QGroupBox("Autofocus")
         af_layout = QVBoxLayout(af_box)
         af_layout.setContentsMargins(6, 6, 6, 6)
@@ -188,7 +173,7 @@ class MachineControlPanelWidget(QWidget):
         af_layout.addWidget(self.btn_autofocus)
         manual_layout.addWidget(af_box)
 
-        # 4. Alignment Group Box
+        # 5. Alignment Group Box
         align_box = QGroupBox("Alignment")
         align_layout = QVBoxLayout(align_box)
         align_layout.setContentsMargins(6, 6, 6, 6)
@@ -198,7 +183,7 @@ class MachineControlPanelWidget(QWidget):
         align_layout.addWidget(self.btn_align)
         manual_layout.addWidget(align_box)
 
-        # 5. Projector Illumination & Image Source Controls
+        # 6. Projector Illumination & Image Source Controls
         proj_box = QGroupBox("Projector Control")
         proj_layout = QVBoxLayout(proj_box)
         proj_layout.setContentsMargins(6, 6, 6, 6)
@@ -248,6 +233,7 @@ class MachineControlPanelWidget(QWidget):
         self.src_btn_group.addButton(self.radio_src_active)
         self.src_btn_group.addButton(self.radio_src_custom)
         self.src_btn_group.addButton(self.radio_src_solid)
+
         src_radio_row.addWidget(self.radio_src_active)
         src_radio_row.addWidget(self.radio_src_custom)
         src_radio_row.addWidget(self.radio_src_solid)
@@ -272,191 +258,8 @@ class MachineControlPanelWidget(QWidget):
         proj_layout.addWidget(src_group_box)
         manual_layout.addWidget(proj_box)
         manual_layout.addStretch()
-        scroll_manual.setWidget(tab_manual)
-        self.tabs.addTab(scroll_manual, "Manual Control")
 
-        # Tab 2: Optics Calibration
-        scroll_optics = QScrollArea()
-        scroll_optics.setWidgetResizable(True)
-        scroll_optics.setFrameShape(QScrollArea.NoFrame)
-        scroll_optics.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll_optics.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-
-        tab_optics = QWidget()
-        optics_layout = QVBoxLayout(tab_optics)
-        optics_layout.setContentsMargins(6, 6, 6, 6)
-        optics_layout.setSpacing(8)
-
-        info_box = QGroupBox("Calibration Procedure")
-        info_layout = QVBoxLayout(info_box)
-        info_lbl = QLabel(
-            "<b>Optics Chromatic Z Offset Calibration</b><br><br>"
-            "1. Place a bare silicon chip on the stage.<br>"
-            "2. Perform rough manual focus on the chip surface.<br>"
-            "3. Click <b>'Start Optics Calibration'</b> below.<br>"
-            "4. The system will project Red ArUco tags, verify detection, and find the optimal Red focal plane (Z_red).<br>"
-            "5. It will then switch to UV illumination and find the UV focal plane (Z_uv).<br>"
-            "6. The chromatic offset ΔZ = Z_uv - Z_red will be calculated and reported."
-        )
-        info_lbl.setWordWrap(True)
-        info_layout.addWidget(info_lbl)
-        optics_layout.addWidget(info_box)
-
-        cal_ctrl_box = QGroupBox("Optics Calibration Controls")
-        cal_ctrl_layout = QVBoxLayout(cal_ctrl_box)
-
-        self.btn_start_optics_cal = QPushButton("Start Optics Calibration")
-        self.btn_start_optics_cal.setStyleSheet("font-weight: bold; padding: 6px;")
-        self.btn_start_optics_cal.clicked.connect(self._on_start_optics_cal_clicked)
-        cal_ctrl_layout.addWidget(self.btn_start_optics_cal)
-
-        res_grid = QGridLayout()
-        res_grid.addWidget(QLabel("<b>Red Focus (Z_red):</b>"), 0, 0)
-        self.lbl_cal_red_z = QLabel("--")
-        self.lbl_cal_red_z.setStyleSheet("font-family: monospace; font-size: 13px;")
-        res_grid.addWidget(self.lbl_cal_red_z, 0, 1)
-
-        res_grid.addWidget(QLabel("<b>UV Focus (Z_uv):</b>"), 1, 0)
-        self.lbl_cal_uv_z = QLabel("--")
-        self.lbl_cal_uv_z.setStyleSheet("font-family: monospace; font-size: 13px;")
-        res_grid.addWidget(self.lbl_cal_uv_z, 1, 1)
-
-        res_grid.addWidget(QLabel("<b>UV-Red Offset (ΔZ):</b>"), 2, 0)
-        self.lbl_cal_offset_z = QLabel("--")
-        self.lbl_cal_offset_z.setStyleSheet("font-family: monospace; font-size: 13px; font-weight: bold; color: #2196F3;")
-        res_grid.addWidget(self.lbl_cal_offset_z, 2, 1)
-
-        cal_ctrl_layout.addLayout(res_grid)
-
-        self.btn_apply_cal_offset = QPushButton("Apply Offset to Autofocus Config")
-        self.btn_apply_cal_offset.setEnabled(False)
-        self.btn_apply_cal_offset.clicked.connect(self._on_apply_cal_offset_clicked)
-        cal_ctrl_layout.addWidget(self.btn_apply_cal_offset)
-
-        optics_layout.addWidget(cal_ctrl_box)
-        optics_layout.addStretch()
-        scroll_optics.setWidget(tab_optics)
-        self.tabs.addTab(scroll_optics, "Optics Calibration")
-
-        # Tab 3: Process Calibration (Placeholder)
-        scroll_proc = QScrollArea()
-        scroll_proc.setWidgetResizable(True)
-        scroll_proc.setFrameShape(QScrollArea.NoFrame)
-        scroll_proc.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll_proc.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-
-        tab_process = QWidget()
-        proc_layout = QVBoxLayout(tab_process)
-        proc_layout.setContentsMargins(6, 6, 6, 6)
-        proc_layout.setSpacing(8)
-
-        proc_box = QGroupBox("Process Calibration")
-        proc_box_layout = QVBoxLayout(proc_box)
-        proc_lbl = QLabel(
-            "<b>Exposure & Process Calibration Matrix</b><br><br>"
-            "This module will automate exposure dose matrix testing (FEM - Focus Exposure Matrix) "
-            "and photoresist process calibration across varying exposure times and Z focal planes.<br><br>"
-            "<i>Status: Coming Soon</i>"
-        )
-        proc_lbl.setWordWrap(True)
-        proc_box_layout.addWidget(proc_lbl)
-
-        btn_fem_placeholder = QPushButton("Generate FEM Array (Placeholder)")
-        btn_fem_placeholder.setEnabled(False)
-        proc_box_layout.addWidget(btn_fem_placeholder)
-
-        proc_layout.addWidget(proc_box)
-        proc_layout.addStretch()
-        scroll_proc.setWidget(tab_process)
-        self.tabs.addTab(scroll_proc, "Process Calibration")
-
-        # Connect signals
-        self.bridge.stage_position_changed.connect(self._on_pos_changed)
-        self.bridge.projector_on_off_changed.connect(self._sync_projector_on_off)
-        self.bridge.projector_color_mode_changed.connect(self._sync_color_mode)
-        self.bridge.projector_image_source_changed.connect(self._sync_image_source)
-        self.bridge.operation_started.connect(lambda *_: self._update_lock_state())
-        self.bridge.operation_finished.connect(self._on_operation_finished)
-        self.bridge.operation_aborted.connect(lambda *_: self._update_lock_state())
-        self._sync_projector_on_off(self.engine.projector.is_on)
-        self._update_lock_state()
-
-    def _on_image_source_toggled(self):
-        is_custom = self.radio_src_custom.isChecked()
-        self.txt_custom_file.setEnabled(is_custom)
-        self.btn_browse_custom.setEnabled(is_custom)
-        if is_custom:
-            path = self.txt_custom_file.text().strip() or None
-            self.engine.projector.set_image_source(ProjectorImageSource.CUSTOM_FILE, path)
-        elif self.radio_src_solid.isChecked():
-            self.engine.projector.set_image_source(ProjectorImageSource.SOLID)
-        else:
-            self.engine.projector.set_image_source(ProjectorImageSource.ACTIVE_LAYER)
-
-    def _on_browse_custom_clicked(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Select Image File", "", "Images (*.png *.jpg *.bmp *.tif)")
-        if path:
-            self.txt_custom_file.setText(path)
-            self.engine.projector.set_image_source(ProjectorImageSource.CUSTOM_FILE, path)
-
-    def _on_projector_power_clicked(self):
-        is_on = self.btn_projector_power.isChecked()
-        self.engine.projector.set_on(is_on)
-
-    def _sync_projector_on_off(self, is_on: bool):
-        self.btn_projector_power.blockSignals(True)
-        self.btn_projector_power.setChecked(is_on)
-        if is_on:
-            self.btn_projector_power.setText("Turn Projector Output OFF")
-            self.btn_projector_power.setStyleSheet("font-weight: bold; padding: 6px; background-color: #4CAF50; color: white;")
-        else:
-            self.btn_projector_power.setText("Turn Projector Output ON")
-            self.btn_projector_power.setStyleSheet("font-weight: bold; padding: 6px;")
-        self.btn_projector_power.blockSignals(False)
-
-    def _on_color_mode_toggled(self):
-        if self.radio_color_red.isChecked():
-            self.engine.projector.set_color_mode(ColorMode.RED)
-        elif self.radio_color_uv.isChecked():
-            self.engine.projector.set_color_mode(ColorMode.UV)
-
-    def _sync_color_mode(self, mode: ColorMode):
-        self.radio_color_red.blockSignals(True)
-        self.radio_color_uv.blockSignals(True)
-        if mode == ColorMode.RED:
-            self.radio_color_red.setChecked(True)
-        elif mode == ColorMode.UV:
-            self.radio_color_uv.setChecked(True)
-        self.radio_color_red.blockSignals(False)
-        self.radio_color_uv.blockSignals(False)
-
-    def _sync_image_source(self, src: ProjectorImageSource):
-        self.radio_src_active.blockSignals(True)
-        self.radio_src_custom.blockSignals(True)
-        self.radio_src_solid.blockSignals(True)
-        if src == ProjectorImageSource.CUSTOM_FILE:
-            self.radio_src_custom.setChecked(True)
-            self.txt_custom_file.setEnabled(True)
-            self.btn_browse_custom.setEnabled(True)
-        elif src == ProjectorImageSource.SOLID:
-            self.radio_src_solid.setChecked(True)
-            self.txt_custom_file.setEnabled(False)
-            self.btn_browse_custom.setEnabled(False)
-        elif src == ProjectorImageSource.ACTIVE_LAYER:
-            self.radio_src_active.setChecked(True)
-            self.txt_custom_file.setEnabled(False)
-            self.btn_browse_custom.setEnabled(False)
-        elif src == ProjectorImageSource.GENERATED:
-            self.src_btn_group.setExclusive(False)
-            self.radio_src_active.setChecked(False)
-            self.radio_src_custom.setChecked(False)
-            self.radio_src_solid.setChecked(False)
-            self.src_btn_group.setExclusive(True)
-            self.txt_custom_file.setEnabled(False)
-            self.btn_browse_custom.setEnabled(False)
-        self.radio_src_active.blockSignals(False)
-        self.radio_src_custom.blockSignals(False)
-        self.radio_src_solid.blockSignals(False)
+        self.setWidget(container)
 
     def _on_step_changed(self, checked: bool, val: float):
         if checked:
@@ -495,29 +298,82 @@ class MachineControlPanelWidget(QWidget):
         op = AlignmentOperation(config=getattr(self.engine, "alignment_config", None))
         self.bridge.start_operation(op)
 
-    def _on_start_optics_cal_clicked(self):
-        op = OpticsCalibrationOperation()
-        self.bridge.start_operation(op)
+    def _on_projector_power_clicked(self):
+        is_on = self.btn_projector_power.isChecked()
+        self.engine.projector.set_on(is_on)
 
-    def _on_apply_cal_offset_clicked(self):
-        if self._latest_cal_offset is not None:
-            self.spin_uv_offset.setValue(self._latest_cal_offset)
-            if hasattr(self.engine, "autofocus_config") and self.engine.autofocus_config is not None:
-                self.engine.autofocus_config.uv_z_offset = self._latest_cal_offset
+    def _sync_projector_on_off(self, is_on: bool):
+        self.btn_projector_power.blockSignals(True)
+        self.btn_projector_power.setChecked(is_on)
+        if is_on:
+            self.btn_projector_power.setText("Turn Projector Output OFF")
+            self.btn_projector_power.setStyleSheet("font-weight: bold; padding: 6px; background-color: #4CAF50; color: white;")
+        else:
+            self.btn_projector_power.setText("Turn Projector Output ON")
+            self.btn_projector_power.setStyleSheet("font-weight: bold; padding: 6px;")
+        self.btn_projector_power.blockSignals(False)
 
-    def _on_operation_finished(self, op_or_name=None, err=None):
-        self._update_lock_state()
-        from core.operation import Operation
-        op = op_or_name if isinstance(op_or_name, Operation) else getattr(self.engine.operations, "current_operation", None)
-        if isinstance(op, OpticsCalibrationOperation) and err is None:
-            if op.red_best_z is not None:
-                self.lbl_cal_red_z.setText(f"{op.red_best_z:.2f} µm")
-            if op.uv_best_z is not None:
-                self.lbl_cal_uv_z.setText(f"{op.uv_best_z:.2f} µm")
-            if op.uv_z_offset is not None:
-                self.lbl_cal_offset_z.setText(f"{op.uv_z_offset:+.2f} µm")
-                self._latest_cal_offset = op.uv_z_offset
-                self.btn_apply_cal_offset.setEnabled(True)
+    def _on_color_mode_toggled(self):
+        if self.radio_color_red.isChecked():
+            self.engine.projector.set_color_mode(ColorMode.RED)
+        elif self.radio_color_uv.isChecked():
+            self.engine.projector.set_color_mode(ColorMode.UV)
+
+    def _sync_color_mode(self, mode: ColorMode):
+        self.radio_color_red.blockSignals(True)
+        self.radio_color_uv.blockSignals(True)
+        if mode == ColorMode.RED:
+            self.radio_color_red.setChecked(True)
+        elif mode == ColorMode.UV:
+            self.radio_color_uv.setChecked(True)
+        self.radio_color_red.blockSignals(False)
+        self.radio_color_uv.blockSignals(False)
+
+    def _on_image_source_toggled(self):
+        is_custom = self.radio_src_custom.isChecked()
+        self.txt_custom_file.setEnabled(is_custom)
+        self.btn_browse_custom.setEnabled(is_custom)
+        if is_custom:
+            path = self.txt_custom_file.text().strip() or None
+            self.engine.projector.set_image_source(ProjectorImageSource.CUSTOM_FILE, path)
+        elif self.radio_src_solid.isChecked():
+            self.engine.projector.set_image_source(ProjectorImageSource.SOLID)
+        else:
+            self.engine.projector.set_image_source(ProjectorImageSource.ACTIVE_LAYER)
+
+    def _on_browse_custom_clicked(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Select Image File", "", "Images (*.png *.jpg *.bmp *.tif)")
+        if path:
+            self.txt_custom_file.setText(path)
+            self.engine.projector.set_image_source(ProjectorImageSource.CUSTOM_FILE, path)
+
+    def _sync_image_source(self, src: ProjectorImageSource):
+        self.radio_src_active.blockSignals(True)
+        self.radio_src_custom.blockSignals(True)
+        self.radio_src_solid.blockSignals(True)
+        if src == ProjectorImageSource.CUSTOM_FILE:
+            self.radio_src_custom.setChecked(True)
+            self.txt_custom_file.setEnabled(True)
+            self.btn_browse_custom.setEnabled(True)
+        elif src == ProjectorImageSource.SOLID:
+            self.radio_src_solid.setChecked(True)
+            self.txt_custom_file.setEnabled(False)
+            self.btn_browse_custom.setEnabled(False)
+        elif src == ProjectorImageSource.ACTIVE_LAYER:
+            self.radio_src_active.setChecked(True)
+            self.txt_custom_file.setEnabled(False)
+            self.btn_browse_custom.setEnabled(False)
+        elif src == ProjectorImageSource.GENERATED:
+            self.src_btn_group.setExclusive(False)
+            self.radio_src_active.setChecked(False)
+            self.radio_src_custom.setChecked(False)
+            self.radio_src_solid.setChecked(False)
+            self.src_btn_group.setExclusive(True)
+            self.txt_custom_file.setEnabled(False)
+            self.btn_browse_custom.setEnabled(False)
+        self.radio_src_active.blockSignals(False)
+        self.radio_src_custom.blockSignals(False)
+        self.radio_src_solid.blockSignals(False)
 
     def _on_pos_changed(self, coords: tuple):
         x, y, z = coords
@@ -525,8 +381,7 @@ class MachineControlPanelWidget(QWidget):
         self.lbl_pos_y.setText(f"{y:.1f}")
         self.lbl_pos_z.setText(f"{z:.1f}")
 
-    def _update_lock_state(self, *args):
-        is_busy = self.engine.operations.current_operation is not None
+    def update_lock_state(self, is_busy: bool):
         for btn in [
             self.btn_y_pos,
             self.btn_y_neg,
@@ -539,7 +394,6 @@ class MachineControlPanelWidget(QWidget):
             self.spin_sharp_z_range,
             self.btn_autofocus,
             self.btn_align,
-            self.btn_start_optics_cal,
             self.btn_projector_power,
             self.radio_color_red,
             self.radio_color_uv,
@@ -549,7 +403,3 @@ class MachineControlPanelWidget(QWidget):
             self.spin_uv_offset,
         ]:
             btn.setEnabled(not is_busy)
-        if is_busy:
-            self.btn_apply_cal_offset.setEnabled(False)
-        elif self._latest_cal_offset is not None:
-            self.btn_apply_cal_offset.setEnabled(True)
