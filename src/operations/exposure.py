@@ -25,6 +25,9 @@ class ExposureOperation(Operation):
         coords = context.stage.get_position() if context.stage else (0.0, 0.0, 0.0)
         report_progress(0.0, f"Preparing exposure for {layer.name}...")
 
+        # Turn off projector
+        context.projector.set_on(False)
+
         # Select layer and tile, and set projector image source to ACTIVE_LAYER
         context.project.select_layer(self.layer_index)
         if self.tile_index is not None:
