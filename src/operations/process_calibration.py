@@ -180,10 +180,10 @@ class ProcessCalibrationOperation(Operation):
                 # 3. Generate pattern fitting projector resolution with exposure length as title
                 report_progress(
                     pct_base + 0.55 * pct_step,
-                    f"Step {step_num}/{total_steps}: Generating pattern for {exp_s:g}s...",
+                    f"Step {step_num}/{total_steps}: Generating pattern for {exp_s:.4g}s...",
                 )
-                title = f"{exp_s:g}s"
-                sub_title = f"STEP: {step_num}/{total_steps}\nEXP: {exp_s:g}s"
+                title = f"{exp_s:.4g}s"
+                sub_title = f"STEP: {step_num}/{total_steps}\nEXP: {exp_s:.4g}s"
                 pattern_sq = generate_litho_target(
                     size=square_size,
                     main_text=title,
