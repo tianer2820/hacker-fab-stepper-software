@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 import cv2
 import numpy as np
 from typing import Optional, Tuple
@@ -87,7 +88,7 @@ def detect_ar_tags(
     camera_image: Optional[np.ndarray],
     dict_id: int = cv2.aruco.DICT_4X4_250,
     flip_horizontal: bool = False,
-) -> Tuple[int, list, Optional[np.ndarray]]:
+) -> Tuple[int, Sequence, Optional[np.ndarray]]:
     """Detects ArUco tags in the given camera frame (BGR or Grayscale).
     
     Returns:

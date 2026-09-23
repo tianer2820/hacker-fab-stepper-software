@@ -56,7 +56,11 @@ dlpc_enabled = false
 enabled = false
 
 [autofocus]
-enabled = false
+enabled = true
+# UV-Red Z focal offset in micrometers (chromatic aberration offset)
+uv_z_offset = 0.0
+# Minimum ArUco tag detection rate required to continue refinement (0.0 to 1.0)
+min_detection_rate = 0.5
 
 # This section configures alignment marker detection
 [alignment]

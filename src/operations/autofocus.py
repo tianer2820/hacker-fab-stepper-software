@@ -11,7 +11,7 @@ from operations.maximize_image_sharpness import MaximizeImageSharpnessOperation
 class AutofocusConfig:
     enabled: bool = True
     uv_z_offset: float = 0.0
-    min_detection_rate: float = 0.85
+    min_detection_rate: float = 0.5
 
     @classmethod
     def from_dict(cls, d: Optional[dict] = None) -> "AutofocusConfig":
@@ -20,7 +20,7 @@ class AutofocusConfig:
         return cls(
             enabled=bool(d.get("enabled", True)),
             uv_z_offset=float(d.get("uv_z_offset", 0.0)),
-            min_detection_rate=float(d.get("min_detection_rate", 0.85)),
+            min_detection_rate=float(d.get("min_detection_rate", 0.5)),
         )
 
 
@@ -94,7 +94,8 @@ class AutofocusOperation(Operation):
                 detection_rate = det_count / total_tags if total_tags > 0 else 0.0
 
                 # If detection rate is below threshold, stop iteration
-                if detection_rate < self.config.min_detection_rate:
+                # skip the check for the first iteration since the user alignment is expected to be blurry
+                if detection_rate < self.config.min_detection_rate and idx > 0:
                     print(
                         f"Grid {grid_n}x{grid_n} detection rate ({detection_rate*100:.1f}%) "
                         f"< {self.config.min_detection_rate*100:.1f}%. Stopping iteration."
@@ -102,15 +103,12 @@ class AutofocusOperation(Operation):
                     break
 
                 # 3. Determine search range & threshold for this grid level
-                if grid_n == 2:
-                    sweep_range = 100.0
-                    threshold = 10.0
-                elif grid_n == 4:
-                    sweep_range = 20.0
-                    threshold = 2.0
-                else:
-                    sweep_range = 4.0
-                    threshold = 0.5
+                step_configs = [
+                    (500, 10),
+                    (20, 2),
+                    (4, 0.5)
+                ]
+                sweep_range, threshold = step_configs[idx]
 
                 # 4. Maximize image sharpness via MaximizeImageSharpnessOperation
                 report_progress(progress_base + 0.05, f"Maximizing sharpness for {grid_n}x{grid_n} grid...")
