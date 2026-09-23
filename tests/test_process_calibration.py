@@ -3,12 +3,17 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 
 from camera.camera_module import DummyCamera
-from core.chip_project import PatterningSettings
 from core.engine import StepperEngine
 from core.events import ColorMode, ProjectorImageSource
 from core.operation import ExecutionContext
 from lib.gen_calibration_pattern import generate_litho_target
-from operations import AutofocusOperation, ExposureOperation, ProcessCalibrationConfig, ProcessCalibrationOperation
+from operations import (
+    AutofocusOperation,
+    ExposureOperation,
+    ExposureOperationConfig,
+    ProcessCalibrationConfig,
+    ProcessCalibrationOperation,
+)
 from operations.process_calibration import generate_spiral_offsets
 from projector import DummyProjector
 from stage_control.dummy_stage import DummyStage
@@ -58,8 +63,8 @@ class TestExposureOperationDirect(unittest.TestCase):
         projector.set_generated_image(dummy_img)
         projector.set_image_source(ProjectorImageSource.GENERATED)
 
-        settings = PatterningSettings(exposure_time=50.0)
-        op = ExposureOperation(layer_index=None, settings=settings)
+        config = ExposureOperationConfig(exposure_time=50.0)
+        op = ExposureOperation(layer_index=None, config=config)
 
         # Execute
         err = op.execute(engine.context, lambda p, m: None)

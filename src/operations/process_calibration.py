@@ -3,12 +3,11 @@ from typing import Callable, List, Optional, Tuple
 import cv2
 import numpy as np
 
-from core.chip_project import PatterningSettings
 from core.events import ProjectorImageSource
 from core.operation import ExecutionContext, Operation
 from lib.gen_calibration_pattern import generate_litho_target
 from operations.autofocus import AutofocusOperation
-from operations.exposure import ExposureOperation
+from operations.exposure import ExposureOperation, ExposureOperationConfig
 from operations.movement import JogOperation
 
 
@@ -210,8 +209,8 @@ class ProcessCalibrationOperation(Operation):
                     pct_base + 0.6 * pct_step,
                     f"Step {step_num}/{total_steps}: Exposing {exp_s:g}s ({int(duration_ms)} ms)...",
                 )
-                settings = PatterningSettings(exposure_time=duration_ms)
-                exp_op = ExposureOperation(layer_index=None, settings=settings)
+                exp_config = ExposureOperationConfig(exposure_time=duration_ms)
+                exp_op = ExposureOperation(layer_index=None, config=exp_config)
                 err = self._run_sub_op(
                     exp_op,
                     context,

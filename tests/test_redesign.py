@@ -25,6 +25,7 @@ from operations import (
     AlignmentConfig,
     AlignmentOperation,
     ExposureOperation,
+    ExposureOperationConfig,
     JogOperation,
     TiledExposureOperation,
 )
@@ -711,7 +712,10 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
         self.assertEqual(engine.projector.color_mode, ColorMode.RED)
 
         engine.project.settings.exposure_time = 10.0
-        op = ExposureOperation(layer_index=0, settings=engine.project.settings)
+        op = ExposureOperation(
+            layer_index=0,
+            config=ExposureOperationConfig(exposure_time=engine.project.settings.exposure_time),
+        )
         op.execute(engine.context, lambda p, m: None)
 
         self.assertFalse(engine.projector.is_on)
@@ -722,7 +726,10 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
         self.assertEqual(engine.projector.color_mode, ColorMode.UV)
 
         engine.project.settings.exposure_time = 10.0
-        op = ExposureOperation(layer_index=0, settings=engine.project.settings)
+        op = ExposureOperation(
+            layer_index=0,
+            config=ExposureOperationConfig(exposure_time=engine.project.settings.exposure_time),
+        )
         op.execute(engine.context, lambda p, m: None)
 
         self.assertFalse(engine.projector.is_on)
@@ -758,7 +765,10 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
         engine.projector.set_on = spy_set_on
 
         engine.project.settings.exposure_time = 20.0
-        op = ExposureOperation(layer_index=0, settings=engine.project.settings)
+        op = ExposureOperation(
+            layer_index=0,
+            config=ExposureOperationConfig(exposure_time=engine.project.settings.exposure_time),
+        )
         op.execute(engine.context, lambda p, m: None)
 
         # Ensure get_tile is called BEFORE projector turns on
@@ -767,7 +777,7 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
         self.assertIn("set_on_False", call_order)
         get_tile_idx = call_order.index("get_tile")
         on_idx = call_order.index("set_on_True")
-        off_idx = call_order.index("set_on_False")
+        off_idx = [i for i, x in enumerate(call_order) if x == "set_on_False"][-1]
         self.assertLess(get_tile_idx, on_idx, "Tile must be pre-heated before projector turns on")
         self.assertLess(on_idx, off_idx, "Projector must be turned off after exposure finishes")
         self.assertFalse(engine.projector.is_on)

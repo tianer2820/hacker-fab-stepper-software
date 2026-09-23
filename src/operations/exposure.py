@@ -1,23 +1,46 @@
 import time
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 
-from core.chip_project import PatterningSettings
 from core.events import ColorMode, Event, ProjectorImageSource
 from core.operation import ExecutionContext, Operation
+
+
+@dataclass
+class ExposureOperationConfig:
+    """Configuration for exposure operation."""
+
+    exposure_time: float = 8000.0  # ms
+
+    @classmethod
+    def from_dict(cls, d: Optional[dict] = None) -> "ExposureOperationConfig":
+        if not d:
+            return cls()
+        return cls(
+            exposure_time=float(d.get("exposure_time", 8000.0)),
+        )
 
 
 class ExposureOperation(Operation):
     """Exposes a single layer mask for a defined duration."""
 
-    def __init__(self, layer_index: Optional[int], settings: PatterningSettings, tile_index: Optional[int] = None):
+    def __init__(
+        self,
+        layer_index: Optional[int],
+        config: Optional[Union[ExposureOperationConfig, dict]] = None,
+        tile_index: Optional[int] = None,
+    ):
         super().__init__("Layer Exposure" if layer_index is not None else "Exposure")
         self.layer_index = layer_index
-        self.settings = settings
+        if isinstance(config, dict):
+            self.config = ExposureOperationConfig.from_dict(config)
+        else:
+            self.config = config or ExposureOperationConfig()
         self.tile_index = tile_index
 
     def execute(self, context: ExecutionContext, report_progress: Callable[[float, str], None]) -> Optional[str]:
-        duration_ms = self.settings.exposure_time
+        duration_ms = self.config.exposure_time
         if self.layer_index is not None:
             if context.project is None or self.layer_index >= len(context.project.layers):
                 return "Invalid project or layer index"

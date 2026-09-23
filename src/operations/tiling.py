@@ -4,7 +4,7 @@ from core.chip_project import PatterningSettings
 from core.events import ColorMode, ProjectorImageSource
 from core.operation import ExecutionContext, Operation
 from operations.autofocus import AutofocusOperation
-from operations.exposure import ExposureOperation
+from operations.exposure import ExposureOperation, ExposureOperationConfig
 from operations.movement import JogOperation
 
 
@@ -102,7 +102,7 @@ class TiledExposureOperation(Operation):
                 )
                 exp_op = ExposureOperation(
                     layer_index=self.layer_index,
-                    settings=self.settings,
+                    config=ExposureOperationConfig(exposure_time=self.settings.exposure_time),
                     tile_index=tile_idx,
                 )
                 err = self._run_sub_op(
