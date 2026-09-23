@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter
 from PySide6.QtWidgets import QMainWindow, QWidget
 
+from core.events import Event
 from projector import ProjectorController
 
 
@@ -34,11 +35,10 @@ class ProjectorCanvasWidget(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
+        painter.fillRect(self.rect(), self._bg_color)
         if self._is_on and self._qimage is not None and not self._qimage.isNull():
             # Exact 1:1 direct pixel draw without any interpolation or softening
             painter.drawImage(0, 0, self._qimage)
-        else:
-            painter.fillRect(self.rect(), self._bg_color)
 
 
 class QtProjectorMeta(type(QMainWindow), type(ProjectorController)):

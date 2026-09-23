@@ -18,6 +18,7 @@ from camera.camera_module import DummyCamera
 from stage_control.dummy_stage import DummyStage
 from ui.bridge import QtEngineBridge
 from ui.widgets.workflow_panel import WorkflowPanelWidget
+from ui.widgets.projector_preview import ProjectorPreviewWidget
 from PySide6.QtWidgets import QApplication
 
 
@@ -160,6 +161,38 @@ class TestPatternScaling(unittest.TestCase):
         self.assertIsNotNone(engine.project.active_layer._pattern_cache)
         self.assertEqual(engine.project.active_layer._pattern_cache.shape[1], 1280)
         self.assertEqual(engine.project.active_layer._pattern_cache.shape[0], 720)
+
+    def test_projector_preview_updates_immediately_without_mouse_move(self):
+        stage = DummyStage()
+        projector = DummyProjector(size=(1280, 720))
+        camera = DummyCamera()
+        engine = StepperEngine(stage=stage, projector=projector, camera=camera)
+        bridge = QtEngineBridge(engine)
+
+        preview_widget = ProjectorPreviewWidget(engine, bridge)
+        # Initially off, pixmap should be None and mode says OFF
+        self.assertIsNone(preview_widget.canvas._pixmap)
+        preview_widget.canvas.resize(320, 240)
+        # Verify paintEvent executes cleanly in OFF state
+        preview_widget.canvas.repaint()
+
+        # Load and generate tiles
+        engine.project.active_layer.set_pattern_path(self.test_img_path)
+        engine.project.active_layer.generate_tiles()
+
+        # Turn on projector
+        engine.projector.set_on(True)
+        # Preview widget should immediately have pixmap without any mouse events
+        self.assertIsNotNone(preview_widget.canvas._pixmap)
+        self.assertIn("ON", preview_widget.mode_label.text())
+        # Verify paintEvent executes cleanly in ON state (drawing image & frame)
+        preview_widget.canvas.repaint()
+
+        # Turn off projector
+        engine.projector.set_on(False)
+        self.assertIsNone(preview_widget.canvas._pixmap)
+        self.assertIn("OFF", preview_widget.mode_label.text())
+        preview_widget.canvas.repaint()
 
 
 if __name__ == "__main__":

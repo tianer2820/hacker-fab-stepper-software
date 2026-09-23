@@ -1,7 +1,7 @@
 from typing import Optional
 import numpy as np
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
+from PySide6.QtCore import QRect, Qt
+from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from core.engine import StepperEngine
@@ -39,6 +39,10 @@ class ProjectorPreviewWidget(QWidget):
         self.bridge.projector_color_mode_changed.connect(lambda *_: self._on_image_changed())
         self.bridge.projector_on_off_changed.connect(lambda *_: self._on_image_changed())
 
+
+        # Initial refresh
+        self._on_image_changed()
+
     def _on_image_changed(self, *args):
         is_on = self.engine.projector.is_on
         color_mode = self.engine.projector.color_mode
@@ -49,19 +53,18 @@ class ProjectorPreviewWidget(QWidget):
         else:
             self.mode_label.setText(f"Output: OFF ({mode_str} Illumination Ready)")
             self.mode_label.setStyleSheet("font-size: 11px; color: #888888;")
-        self.canvas.update()
+        self.canvas.refresh_image()
 
 
 class ProjectorCanvas(QWidget):
     def __init__(self, parent_view: ProjectorPreviewWidget):
-        super().__init__()
+        super().__init__(parent_view)
         self.parent_view = parent_view
-        self.setStyleSheet("background-color: #000000; border-radius: 4px;")
+        self.setStyleSheet("background-color: #141416; border-radius: 4px;")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self._pixmap: Optional[QPixmap] = None
 
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor("#000000"))
-
+    def refresh_image(self):
         img = (
             self.parent_view.engine.projector._displayed_image_cache
             if self.parent_view.engine.projector.is_on
@@ -80,16 +83,62 @@ class ProjectorCanvas(QWidget):
                 qimg = None
 
             if qimg is not None:
-                pixmap = QPixmap.fromImage(qimg)
-                scaled = pixmap.scaled(
-                    self.size(),
-                    Qt.KeepAspectRatio,
-                    Qt.SmoothTransformation,
-                )
-                x = (self.width() - scaled.width()) // 2
-                y = (self.height() - scaled.height()) // 2
-                painter.drawPixmap(x, y, scaled)
+                self._pixmap = QPixmap.fromImage(qimg)
+            else:
+                self._pixmap = None
         else:
-            painter.setPen(QColor("#444444"))
-            painter.drawText(self.rect(), Qt.AlignCenter, "No Output (Screen Off)")
+            self._pixmap = None
+
+        self.update()
+        self.repaint()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor("#141416"))
+
+        # Determine projector display dimensions
+        pw, ph = 1920, 1080
+        if hasattr(self.parent_view.engine, "projector") and self.parent_view.engine.projector is not None:
+            size = self.parent_view.engine.projector.projector_size()
+            if size and size[0] > 0 and size[1] > 0:
+                pw, ph = size
+
+        margin = 8
+        avail_w = max(1, self.width() - 2 * margin)
+        avail_h = max(1, self.height() - 2 * margin)
+        scale = min(avail_w / pw, avail_h / ph)
+        rect_w = max(1, int(pw * scale))
+        rect_h = max(1, int(ph * scale))
+        rect_x = (self.width() - rect_w) // 2
+        rect_y = (self.height() - rect_h) // 2
+        proj_rect = QRect(rect_x, rect_y, rect_w, rect_h)
+
+        # Fill projector area with black background
+        painter.fillRect(proj_rect, QColor("#000000"))
+
+        is_on = (
+            self.parent_view.engine.projector.is_on
+            if hasattr(self.parent_view.engine, "projector")
+            else False
+        )
+
+        if is_on and self._pixmap is not None and not self._pixmap.isNull():
+            img_draw_w = min(rect_w, max(1, int(self._pixmap.width() * scale)))
+            img_draw_h = min(rect_h, max(1, int(self._pixmap.height() * scale)))
+            scaled = self._pixmap.scaled(
+                img_draw_w,
+                img_draw_h,
+                Qt.IgnoreAspectRatio,
+                Qt.SmoothTransformation,
+            )
+            painter.drawPixmap(rect_x, rect_y, scaled)
+        else:
+            painter.setPen(QColor("#555555"))
+            painter.drawText(proj_rect, Qt.AlignCenter, "No Output (Screen Off)")
+
+        # Draw rectangular frame representing the projector area
+        frame_color = QColor("#38bdf8") if is_on else QColor("#52525b")
+        painter.setPen(QPen(frame_color, 1.5))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(proj_rect)
 

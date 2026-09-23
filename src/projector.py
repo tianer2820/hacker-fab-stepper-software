@@ -157,7 +157,8 @@ class ProjectorController(EngineModule, ABC):
 
     def _on_display_image_cache_changed(self):
         """Override this method to run custom logic when display image changed."""
-        pass
+        if self.event_bus is not None:
+            self.event_bus.emit(Event.PROJECTOR_IMAGE_CHANGED, self._displayed_image_cache)
 
     @abstractmethod
     def update_display(self):
