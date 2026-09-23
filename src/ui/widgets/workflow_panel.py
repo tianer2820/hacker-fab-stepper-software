@@ -357,6 +357,37 @@ class LayerSubpanelWidget(QTabWidget):
         mid_row.addStretch()
         layout.addLayout(mid_row)
 
+        # Pattern Scaling section
+        scale_box = QGroupBox("Pattern Scaling")
+        scale_layout = QVBoxLayout(scale_box)
+        scale_layout.setContentsMargins(6, 6, 6, 6)
+        scale_layout.setSpacing(6)
+
+        scale_row = QHBoxLayout()
+        scale_row.addWidget(QLabel("W:"))
+        self.spin_scale_w = QSpinBox()
+        self.spin_scale_w.setRange(-1, 100000)
+        self.spin_scale_w.setValue(-1)
+        self.spin_scale_w.setToolTip("Target pattern width in pixels (-1 to disable scaling)")
+        self.spin_scale_w.valueChanged.connect(self._on_scale_changed)
+        scale_row.addWidget(self.spin_scale_w)
+
+        scale_row.addWidget(QLabel("H:"))
+        self.spin_scale_h = QSpinBox()
+        self.spin_scale_h.setRange(-1, 100000)
+        self.spin_scale_h.setValue(-1)
+        self.spin_scale_h.setToolTip("Target pattern height in pixels (-1 to disable scaling)")
+        self.spin_scale_h.valueChanged.connect(self._on_scale_changed)
+        scale_row.addWidget(self.spin_scale_h)
+
+        self.btn_match_projector = QPushButton("Set to Projector Resolution")
+        self.btn_match_projector.clicked.connect(self._on_match_projector_clicked)
+        scale_row.addWidget(self.btn_match_projector)
+        scale_row.addStretch()
+
+        scale_layout.addLayout(scale_row)
+        layout.addWidget(scale_box)
+
         # Tiling preview & navigation section
         tiling_box = QGroupBox("Tiling & Tile Navigation")
         tiling_layout = QVBoxLayout(tiling_box)
@@ -401,7 +432,7 @@ class LayerSubpanelWidget(QTabWidget):
         preview_row.addWidget(self.lbl_tile_preview)
 
         preview_actions = QVBoxLayout()
-        self.btn_regenerate_tiles = QPushButton("Regenerate Tiling Patterns")
+        self.btn_regenerate_tiles = QPushButton("Generate Tiles")
         self.btn_regenerate_tiles.clicked.connect(self._on_regenerate_tiles_clicked)
         preview_actions.addWidget(self.btn_regenerate_tiles)
         preview_actions.addStretch()
@@ -489,7 +520,15 @@ class LayerSubpanelWidget(QTabWidget):
         else:
             self.lbl_tiling_status.setText("Tiling: Disabled (Single Pattern Mode)")
             self.lbl_tiling_details.setText("Standard single-shot exposure will be used.")
-            self.btn_regenerate_tiles.setEnabled(False)
+            self.btn_regenerate_tiles.setEnabled(bool(layer.pattern_path))
+
+        # Pattern scaling UI
+        self.spin_scale_w.blockSignals(True)
+        self.spin_scale_h.blockSignals(True)
+        self.spin_scale_w.setValue(layer.scale_w)
+        self.spin_scale_h.setValue(layer.scale_h)
+        self.spin_scale_w.blockSignals(False)
+        self.spin_scale_h.blockSignals(False)
 
         # Overrides UI
         self.chk_override_exp.blockSignals(True)
@@ -573,10 +612,25 @@ class LayerSubpanelWidget(QTabWidget):
         if cur < max_idx:
             self.engine.project.select_tile(cur + 1)
 
+    def _on_scale_changed(self):
+        layer = self.engine.project.active_layer
+        layer.scale_w = self.spin_scale_w.value()
+        layer.scale_h = self.spin_scale_h.value()
+        layer._pattern_cache = None
+        layer._tile_cache = []
+        layer._tile_coords = []
+
+    def _on_match_projector_clicked(self):
+        if hasattr(self.engine, "projector") and self.engine.projector is not None:
+            pw, ph = self.engine.projector.projector_size()
+            self.spin_scale_w.setValue(pw)
+            self.spin_scale_h.setValue(ph)
+            self.bridge.status_message.emit(f"Set scale size to projector resolution: {pw}x{ph}")
+
     def _on_regenerate_tiles_clicked(self):
         layer = self.engine.project.active_layer
         layer.generate_tiles(force=True)
-        self.bridge.status_message.emit("Regenerated tiling patterns for active layer.")
+        self.bridge.status_message.emit("Generated tiles for active layer.")
 
     def _load_thumbnail(self, path: str):
         if os.path.exists(path):

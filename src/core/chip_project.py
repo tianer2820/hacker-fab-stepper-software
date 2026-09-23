@@ -147,6 +147,8 @@ class ChipLayer:
 
     name: str = "Layer 1"
     pattern_path: Optional[str] = None
+    scale_w: int = -1
+    scale_h: int = -1
     overrides: LayerSettingsOverride = field(default_factory=LayerSettingsOverride)
 
     # the original pattern image
@@ -199,6 +201,11 @@ class ChipLayer:
         """
         Call this method to generate the tile caches.
         """
+
+        if force:
+            self._pattern_cache = None
+            self._tile_cache = []
+            self._tile_coords = []
 
         if not force and self._tile_cache:
             return self._tile_cache, self._tile_coords
@@ -263,13 +270,27 @@ class ChipLayer:
                     raw = cv2.imread(self.pattern_path, cv2.IMREAD_UNCHANGED)
                     if raw is not None:
                         if raw.ndim == 2:
-                            self._pattern_cache = cv2.cvtColor(raw, cv2.COLOR_GRAY2RGB)
+                            img = cv2.cvtColor(raw, cv2.COLOR_GRAY2RGB)
                         elif raw.shape[2] == 4:
-                            self._pattern_cache = cv2.cvtColor(raw, cv2.COLOR_BGRA2RGB)
+                            img = cv2.cvtColor(raw, cv2.COLOR_BGRA2RGB)
                         elif raw.shape[2] == 3:
-                            self._pattern_cache = cv2.cvtColor(raw, cv2.COLOR_BGR2RGB)
+                            img = cv2.cvtColor(raw, cv2.COLOR_BGR2RGB)
                         else:
-                            self._pattern_cache = raw
+                            img = raw
+
+                        # Scale right after image loading and store in _pattern_cache
+                        if self.scale_w > 0 and self.scale_h > 0:
+                            img = cv2.resize(img, (self.scale_w, self.scale_h), interpolation=cv2.INTER_LINEAR)
+                        elif self.scale_w > 0 and self.scale_h == -1:
+                            orig_h, orig_w = img.shape[:2]
+                            target_h = max(1, int(round(orig_h * (self.scale_w / orig_w))))
+                            img = cv2.resize(img, (self.scale_w, target_h), interpolation=cv2.INTER_LINEAR)
+                        elif self.scale_h > 0 and self.scale_w == -1:
+                            orig_h, orig_w = img.shape[:2]
+                            target_w = max(1, int(round(orig_w * (self.scale_h / orig_h))))
+                            img = cv2.resize(img, (target_w, self.scale_h), interpolation=cv2.INTER_LINEAR)
+
+                        self._pattern_cache = img
                     else:
                         self._pattern_cache = None
                 except Exception as e:
@@ -283,6 +304,8 @@ class ChipLayer:
         return {
             "name": self.name,
             "pattern_path": self.pattern_path,
+            "scale_w": self.scale_w,
+            "scale_h": self.scale_h,
             "overrides": self.overrides.to_disk(),
         }
 
@@ -290,10 +313,14 @@ class ChipLayer:
     def from_disk(cls, d: dict) -> "ChipLayer":
         name = d.get("name", "Layer")
         pattern_path = d.get("pattern_path", None)
+        scale_w = int(d.get("scale_w", -1))
+        scale_h = int(d.get("scale_h", -1))
         overrides = LayerSettingsOverride.from_disk(d.get("overrides", {}))
         return cls(
             name=name,
             pattern_path=pattern_path,
+            scale_w=scale_w,
+            scale_h=scale_h,
             overrides=overrides,
         )
 
