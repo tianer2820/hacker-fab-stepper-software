@@ -283,7 +283,7 @@ class TestOpticsCalibration(unittest.TestCase):
             delay_func=lambda _: None,
         )
 
-        op = OpticsCalibrationOperation(grid_n=2)
+        op = OpticsCalibrationOperation(grid_sizes=[2])
         err = op.execute(ctx, lambda p, m: None)
 
         self.assertIsNotNone(err)
@@ -327,7 +327,7 @@ class TestOpticsCalibration(unittest.TestCase):
             delay_func=lambda _: None,
         )
 
-        op = OpticsCalibrationOperation(grid_n=2, sweep_range=10.0, sweep_step=2.0)
+        op = OpticsCalibrationOperation(search_range=10.0, target_accuracy=2.0, grid_sizes=[2])
         progress_msgs = []
         err = op.execute(ctx, lambda p, m: progress_msgs.append(m))
 
@@ -378,6 +378,10 @@ class TestMachineControlPanelTabs(unittest.TestCase):
 
         # Check optics calibration controls
         self.assertTrue(hasattr(panel, "btn_start_optics_cal"))
+        self.assertTrue(hasattr(panel, "spin_cal_search_range"))
+        self.assertTrue(hasattr(panel, "spin_cal_target_accuracy"))
+        self.assertEqual(panel.spin_cal_search_range.value(), 500.0)
+        self.assertEqual(panel.spin_cal_target_accuracy.value(), 0.5)
         self.assertTrue(hasattr(panel, "btn_apply_cal_offset"))
         self.assertFalse(panel.btn_apply_cal_offset.isEnabled())
 

@@ -2,6 +2,7 @@ from typing import Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QDoubleSpinBox,
     QGridLayout,
     QGroupBox,
     QLabel,
@@ -55,6 +56,27 @@ class OpticsCalibrationTabWidget(QScrollArea):
         cal_ctrl_box = QGroupBox("Optics Calibration Controls")
         cal_ctrl_layout = QVBoxLayout(cal_ctrl_box)
 
+        param_grid = QGridLayout()
+        param_grid.addWidget(QLabel("Search Range:"), 0, 0)
+        self.spin_cal_search_range = QDoubleSpinBox()
+        self.spin_cal_search_range.setRange(1.0, 5000.0)
+        self.spin_cal_search_range.setDecimals(1)
+        self.spin_cal_search_range.setSingleStep(10.0)
+        self.spin_cal_search_range.setValue(500.0)
+        self.spin_cal_search_range.setSuffix(" µm")
+        param_grid.addWidget(self.spin_cal_search_range, 0, 1)
+
+        param_grid.addWidget(QLabel("Target Accuracy:"), 1, 0)
+        self.spin_cal_target_accuracy = QDoubleSpinBox()
+        self.spin_cal_target_accuracy.setRange(0.05, 50.0)
+        self.spin_cal_target_accuracy.setDecimals(2)
+        self.spin_cal_target_accuracy.setSingleStep(0.1)
+        self.spin_cal_target_accuracy.setValue(0.5)
+        self.spin_cal_target_accuracy.setSuffix(" µm")
+        param_grid.addWidget(self.spin_cal_target_accuracy, 1, 1)
+
+        cal_ctrl_layout.addLayout(param_grid)
+
         self.btn_start_optics_cal = QPushButton("Start Optics Calibration")
         self.btn_start_optics_cal.setStyleSheet("font-weight: bold; padding: 6px;")
         self.btn_start_optics_cal.clicked.connect(self._on_start_optics_cal_clicked)
@@ -100,7 +122,10 @@ class OpticsCalibrationTabWidget(QScrollArea):
         self._on_apply_callback = callback
 
     def _on_start_optics_cal_clicked(self):
-        op = OpticsCalibrationOperation()
+        op = OpticsCalibrationOperation(
+            search_range=self.spin_cal_search_range.value(),
+            target_accuracy=self.spin_cal_target_accuracy.value(),
+        )
         self.bridge.start_operation(op)
 
     def _on_apply_cal_offset_clicked(self):
@@ -125,6 +150,8 @@ class OpticsCalibrationTabWidget(QScrollArea):
 
     def update_lock_state(self, is_busy: bool):
         self.btn_start_optics_cal.setEnabled(not is_busy)
+        self.spin_cal_search_range.setEnabled(not is_busy)
+        self.spin_cal_target_accuracy.setEnabled(not is_busy)
         if is_busy:
             self.btn_apply_cal_offset.setEnabled(False)
         elif self._latest_cal_offset is not None:

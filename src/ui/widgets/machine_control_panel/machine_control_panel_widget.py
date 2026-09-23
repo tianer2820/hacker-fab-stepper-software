@@ -72,6 +72,8 @@ class MachineControlPanelWidget(QWidget):
         self.custom_file_row = self.manual_tab.custom_file_row
 
         self.btn_start_optics_cal = self.optics_tab.btn_start_optics_cal
+        self.spin_cal_search_range = self.optics_tab.spin_cal_search_range
+        self.spin_cal_target_accuracy = self.optics_tab.spin_cal_target_accuracy
         self.lbl_cal_red_z = self.optics_tab.lbl_cal_red_z
         self.lbl_cal_uv_z = self.optics_tab.lbl_cal_uv_z
         self.lbl_cal_offset_z = self.optics_tab.lbl_cal_offset_z
