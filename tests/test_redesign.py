@@ -1,8 +1,10 @@
+import io
 import os
 import sys
 import unittest
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
@@ -307,6 +309,54 @@ class TestOperationManager(unittest.TestCase):
         self.assertTrue(op.is_aborted)
         self.assertIn("AbortableOp", aborted_events)
 
+    def test_operation_failure_dispatches_error_and_prints(self):
+        failed_events = []
+        self.events.add_listener(
+            Event.OPERATION_FAILED,
+            lambda name, err: failed_events.append((name, err)),
+        )
+
+        class FailingOp(Operation):
+            def __init__(self):
+                super().__init__("FailingOp")
+
+            def execute(self, context, report_progress):
+                return "Something broke"
+
+        op = FailingOp()
+        error_callbacks = []
+        finished_callbacks = []
+
+        with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+            self.manager.start_operation(
+                op,
+                run_async_callback=lambda w: w(),
+                on_finished=lambda: finished_callbacks.append(True),
+                on_error=lambda err: error_callbacks.append(err),
+            )
+            stdout_val = mock_stdout.getvalue()
+
+        self.assertEqual(len(failed_events), 1)
+        self.assertEqual(failed_events[0], ("FailingOp", "Something broke"))
+        self.assertEqual(error_callbacks, ["Something broke"])
+        self.assertEqual(finished_callbacks, [True])
+        self.assertIn("[Operation Error]", stdout_val)
+        self.assertIn("Something broke", stdout_val)
+
+    def test_operation_abort_prints(self):
+        op = DummyOperation("AbortToPrint")
+
+        with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+            def mock_run_async(worker):
+                self.manager.abort_current()
+                worker()
+
+            self.manager.start_operation(op, run_async_callback=mock_run_async)
+            stdout_val = mock_stdout.getvalue()
+
+        self.assertIn("[Operation Aborted]", stdout_val)
+        self.assertIn("AbortToPrint", stdout_val)
+
     def test_alignment_operation(self):
         cfg = AlignmentConfig(
             enabled=True,
@@ -477,6 +527,7 @@ class TestConsolidatedEvents(unittest.TestCase):
             "OPERATION_PROGRESS",
             "OPERATION_FINISHED",
             "OPERATION_ABORTED",
+            "OPERATION_FAILED",
             # Warning
             "WARNING_MESSAGE",
         }

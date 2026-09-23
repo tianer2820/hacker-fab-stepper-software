@@ -117,7 +117,7 @@ class OpticsCalibrationOperation(Operation):
             projector.set_color_mode(target_mode)
             projector.set_image_source(ProjectorImageSource.GENERATED)
             projector.set_on(True)
-            context.delay_func(0.5)
+            context.delay_func(1.0)
 
             if self.is_aborted:
                 return "Optics calibration aborted"
@@ -143,7 +143,8 @@ class OpticsCalibrationOperation(Operation):
             if detection_rate < self.min_detection_rate and idx > 0:
                 print(
                     f"{mode_name} Grid {grid_n}x{grid_n} detection rate ({detection_rate*100:.1f}%) "
-                    f"< {self.min_detection_rate*100:.1f}%. Stopping iteration."
+                    f"< {self.min_detection_rate*100:.1f}%. Stopping iteration.",
+                    flush=True,
                 )
                 break
 
@@ -184,7 +185,7 @@ class OpticsCalibrationOperation(Operation):
                 return f"Optics calibration failed: {err}"
 
             # 5. Verify detection rate at best focus
-            context.delay_func(0.2)
+            context.delay_func(1.0)
             frame_best = context.camera.get_latest_frame()
             det_count_best, _, _ = self._detect_tags(frame_best)
             rate_best = det_count_best / total_tags if total_tags > 0 else 0.0
@@ -193,7 +194,8 @@ class OpticsCalibrationOperation(Operation):
             if rate_best < self.min_detection_rate:
                 print(
                     f"Post-focus {mode_name} {grid_n}x{grid_n} detection rate ({rate_best*100:.1f}%) "
-                    f"< {self.min_detection_rate*100:.1f}%. Halting further refinement."
+                    f"< {self.min_detection_rate*100:.1f}%. Halting further refinement.",
+                    flush=True,
                 )
                 break
 

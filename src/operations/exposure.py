@@ -43,7 +43,9 @@ class ExposureOperation(Operation):
         duration_ms = self.config.exposure_time
         if self.layer_index is not None:
             if context.project is None or self.layer_index >= len(context.project.layers):
-                return "Invalid project or layer index"
+                msg = "Invalid project or layer index"
+                report_progress(1.0, f"Exposure failed: {msg}")
+                return msg
             layer = context.project.layers[self.layer_index]
             layer_name = layer.name
         else:

@@ -59,6 +59,7 @@ class QtEngineBridge(QObject):
     operation_progress = Signal(float, str)
     operation_finished = Signal(str)
     operation_aborted = Signal(str)
+    operation_failed = Signal(str, str)
 
     # Warnings & Status
     warning_emitted = Signal(str)
@@ -160,6 +161,10 @@ class QtEngineBridge(QObject):
             Event.OPERATION_ABORTED,
             lambda name="", *args: self.operation_aborted.emit(str(name)),
         )
+        self.engine.event_bus.add_listener(
+            Event.OPERATION_FAILED,
+            lambda name="", err="", *args: self.operation_failed.emit(str(name), str(err)),
+        )
 
         # Warning
         self.engine.event_bus.add_listener(
@@ -182,7 +187,7 @@ class QtEngineBridge(QObject):
         )
 
     def _on_engine_warning(self, msg: str):
-        print(f"[Warning] {msg}")
+        print(f"[Warning] {msg}", flush=True)
         self.warning_emitted.emit(msg)
 
     def run_async(

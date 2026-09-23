@@ -126,6 +126,7 @@ class OpticsCalibrationTabWidget(QScrollArea):
             search_range=self.spin_cal_search_range.value(),
             target_accuracy=self.spin_cal_target_accuracy.value(),
         )
+        self._active_op = op
         self.bridge.start_operation(op)
 
     def _on_apply_cal_offset_clicked(self):
@@ -137,7 +138,7 @@ class OpticsCalibrationTabWidget(QScrollArea):
 
     def on_operation_finished(self, op_or_name=None, err=None):
         from core.operation import Operation
-        op = op_or_name if isinstance(op_or_name, Operation) else getattr(self.engine.operations, "current_operation", None)
+        op = op_or_name if isinstance(op_or_name, Operation) else getattr(self, "_active_op", None)
         if isinstance(op, OpticsCalibrationOperation) and err is None:
             if op.red_best_z is not None:
                 self.lbl_cal_red_z.setText(f"{op.red_best_z:.2f} µm")

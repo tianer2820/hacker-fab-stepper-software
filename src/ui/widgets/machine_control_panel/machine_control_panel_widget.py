@@ -93,7 +93,8 @@ class MachineControlPanelWidget(QWidget):
         self.bridge.projector_image_source_changed.connect(self.manual_tab._sync_image_source)
         self.bridge.operation_started.connect(lambda *_: self._update_lock_state())
         self.bridge.operation_finished.connect(self._on_operation_finished)
-        self.bridge.operation_aborted.connect(lambda *_: self._update_lock_state())
+        self.bridge.operation_aborted.connect(self._on_operation_aborted)
+        self.bridge.operation_failed.connect(self._on_operation_failed)
 
         self.manual_tab._sync_projector_on_off(self.engine.projector.is_on)
         self._update_lock_state()
@@ -118,6 +119,16 @@ class MachineControlPanelWidget(QWidget):
         self.spin_uv_offset.setValue(offset)
 
     def _on_operation_finished(self, op_or_name=None, err=None):
+        self.optics_tab.on_operation_finished(op_or_name, err)
+        self.process_tab.on_operation_finished(op_or_name, err)
+        self._update_lock_state()
+
+    def _on_operation_aborted(self, op_or_name=None):
+        self.optics_tab.on_operation_finished(op_or_name, "Operation aborted")
+        self.process_tab.on_operation_finished(op_or_name, "Operation aborted")
+        self._update_lock_state()
+
+    def _on_operation_failed(self, op_or_name=None, err=None):
         self.optics_tab.on_operation_finished(op_or_name, err)
         self.process_tab.on_operation_finished(op_or_name, err)
         self._update_lock_state()

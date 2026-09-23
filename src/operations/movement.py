@@ -18,8 +18,13 @@ class JogOperation(Operation):
         else:
             ok = context.stage.move_absolute(self.coords)
 
-        report_progress(1.0, "Move complete")
-        return None if ok else "Move failed"
+        if ok:
+            report_progress(1.0, "Move complete")
+            return None
+        else:
+            msg = f"Move failed: {self.coords}"
+            report_progress(1.0, msg)
+            return msg
 
 
 class HomeOperation(Operation):

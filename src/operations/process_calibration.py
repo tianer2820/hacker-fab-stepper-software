@@ -134,6 +134,7 @@ class ProcessCalibrationOperation(Operation):
 
         report_progress(0.0, f"Starting process calibration ({total_steps} steps)...")
 
+        last_error: Optional[str] = None
         try:
             for step_idx, (exp_s, (off_x, off_y)) in enumerate(zip(exposures, offsets)):
                 if self.is_aborted:
@@ -154,6 +155,7 @@ class ProcessCalibrationOperation(Operation):
                     jog_op = JogOperation({"x": target_x, "y": target_y}, relative=False)
                     err = self._run_sub_op(jog_op, context, lambda p, m: None)
                     if err or self.is_aborted:
+                        last_error = err
                         break
 
                 # 2. Autofocus
@@ -220,6 +222,7 @@ class ProcessCalibrationOperation(Operation):
                     ),
                 )
                 if err or self.is_aborted:
+                    last_error = err
                     break
 
         finally:
@@ -230,6 +233,10 @@ class ProcessCalibrationOperation(Operation):
         if self.is_aborted:
             report_progress(1.0, "Process calibration aborted")
             return "Process calibration aborted"
+        elif last_error is not None:
+            msg = f"Process calibration failed: {last_error}"
+            report_progress(1.0, msg)
+            return msg
         else:
             report_progress(1.0, "Process calibration complete")
             return None

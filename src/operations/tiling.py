@@ -47,6 +47,7 @@ class TiledExposureOperation(Operation):
 
         report_progress(0.0, f"Beginning tiled exposure ({total_tiles} tiles)...")
 
+        last_error: Optional[str] = None
         try:
             for tile_idx, (offset_x, offset_y) in enumerate(tile_coords):
                 if self.is_aborted:
@@ -68,6 +69,7 @@ class TiledExposureOperation(Operation):
                 jog_op = JogOperation({"x": tx, "y": ty}, relative=False)
                 err = self._run_sub_op(jog_op, context, lambda p, m: None)
                 if err or self.is_aborted:
+                    last_error = err
                     break
 
                 # Step 3: Set the active tile
@@ -93,6 +95,7 @@ class TiledExposureOperation(Operation):
                     af_op = AutofocusOperation(blue_only=False, config=self.autofocus_config)
                     err = self._run_sub_op(af_op, context, lambda p, m: None)
                     if err or self.is_aborted:
+                        last_error = err
                         break
 
                 # Step 6: Then, do an exposure
@@ -114,6 +117,7 @@ class TiledExposureOperation(Operation):
                     ),
                 )
                 if err or self.is_aborted:
+                    last_error = err
                     break
         finally:
             context.projector.set_on(False)
@@ -121,6 +125,10 @@ class TiledExposureOperation(Operation):
         if self.is_aborted:
             report_progress(1.0, "Tiled exposure aborted")
             return "Tiled exposure aborted"
+        elif last_error is not None:
+            msg = f"Tiled exposure failed: {last_error}"
+            report_progress(1.0, msg)
+            return msg
         else:
             report_progress(1.0, "Tiled exposure complete")
             return None

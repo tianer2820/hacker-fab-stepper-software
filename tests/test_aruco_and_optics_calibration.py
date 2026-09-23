@@ -240,8 +240,10 @@ class TestIterativeAutofocus(unittest.TestCase):
         def dynamic_frame():
             curr_z = stage.get_position()[2]
             dist = abs(curr_z - 50.0)
-            blur_k = max(1, int(dist) * 2 + 1)
-            return cv2.GaussianBlur(base_grid, (blur_k, blur_k), 0)
+            blur_k = min(51, max(1, int(dist) * 2 + 1))
+            val = max(0.05, 1.0 - dist / 550.0)
+            blurred = cv2.GaussianBlur(base_grid, (blur_k, blur_k), 0)
+            return (blurred * val).astype(np.uint8)
 
         cam = MagicMock()
         cam.get_latest_frame.side_effect = dynamic_frame

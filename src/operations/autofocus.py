@@ -86,7 +86,7 @@ class AutofocusOperation(Operation):
                 projector.set_color_mode(target_mode)
                 projector.set_image_source(ProjectorImageSource.GENERATED)
                 projector.set_on(True)
-                context.delay_func(0.5)
+                context.delay_func(1.0)
 
                 # 2. Check tag detection
                 frame = context.camera.get_latest_frame()
@@ -98,7 +98,8 @@ class AutofocusOperation(Operation):
                 if detection_rate < self.config.min_detection_rate and idx > 0:
                     print(
                         f"Grid {grid_n}x{grid_n} detection rate ({detection_rate*100:.1f}%) "
-                        f"< {self.config.min_detection_rate*100:.1f}%. Stopping iteration."
+                        f"< {self.config.min_detection_rate*100:.1f}%. Stopping iteration.",
+                        flush=True,
                     )
                     break
 
@@ -140,7 +141,7 @@ class AutofocusOperation(Operation):
                     best_overall_z = sharp_op.result.best_z
 
                 # 5. Verify detection rate at best focus
-                context.delay_func(0.2)
+                context.delay_func(1.0)
                 frame_best = context.camera.get_latest_frame()
                 det_count_best, _, _ = detect_ar_tags(frame_best, flip_horizontal=True)
                 rate_best = det_count_best / total_tags if total_tags > 0 else 0.0
@@ -149,7 +150,8 @@ class AutofocusOperation(Operation):
                 if rate_best < self.config.min_detection_rate:
                     print(
                         f"Post-focus {grid_n}x{grid_n} detection rate ({rate_best*100:.1f}%) "
-                        f"< {self.config.min_detection_rate*100:.1f}%. Halting further refinement."
+                        f"< {self.config.min_detection_rate*100:.1f}%. Halting further refinement.",
+                        flush=True,
                     )
                     break
 
@@ -161,7 +163,7 @@ class AutofocusOperation(Operation):
                     if context.warning_callback:
                         context.warning_callback(msg)
                     return msg
-                print(f"Applied UV-Red Z offset: {self.config.uv_z_offset:+.2f} µm (Z: {best_overall_z:.2f} -> {uv_focal_z:.2f} µm)")
+                print(f"Applied UV-Red Z offset: {self.config.uv_z_offset:+.2f} µm (Z: {best_overall_z:.2f} -> {uv_focal_z:.2f} µm)", flush=True)
 
             report_progress(1.0, "Autofocus complete")
             return None

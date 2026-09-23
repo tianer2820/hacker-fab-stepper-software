@@ -100,6 +100,7 @@ class ActivityRibbonWidget(QFrame):
         self.bridge.operation_progress.connect(self._on_operation_progress)
         self.bridge.operation_finished.connect(self._on_operation_finished)
         self.bridge.operation_aborted.connect(self._on_operation_aborted)
+        self.bridge.operation_failed.connect(self._on_operation_failed)
 
     def set_status(self, text: str, is_busy: bool = False, is_error: bool = False):
         self.status_label.setText(text)
@@ -129,6 +130,11 @@ class ActivityRibbonWidget(QFrame):
         self.abort_btn.setEnabled(self.engine.operations.current_operation is not None)
         self.progress_bar.setValue(0)
         self.set_status(f"Aborted: {name}", is_busy=False, is_error=True)
+
+    def _on_operation_failed(self, name: str, error: str):
+        self.abort_btn.setEnabled(self.engine.operations.current_operation is not None)
+        self.progress_bar.setValue(0)
+        self.set_status(f"Failed ({name}): {error}", is_busy=False, is_error=True)
 
     def _on_abort_clicked(self):
         self.engine.abort_operation()

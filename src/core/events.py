@@ -53,6 +53,7 @@ class Event(StrAutoEnum):
     OPERATION_PROGRESS = auto()  # Emitted during operation execution with progress fraction and status message
     OPERATION_FINISHED = auto()  # Emitted when an operation finishes successfully
     OPERATION_ABORTED = auto()  # Emitted when an operation is aborted or cancelled
+    OPERATION_FAILED = auto()  # Emitted when an operation terminates with an error
 
     # Warning
     WARNING_MESSAGE = auto()  # Emitted when a warning message or non-fatal issue occurs

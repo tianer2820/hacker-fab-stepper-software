@@ -123,12 +123,13 @@ class ProcessCalibrationTabWidget(QScrollArea):
             sweep_steps=self.spin_sweep_steps.value(),
             motion_distance=self.spin_motion_distance.value(),
         )
+        self._active_op = op
         self.lbl_status.setText("Status: Running calibration...")
         self.bridge.start_operation(op)
 
     def on_operation_finished(self, op_or_name=None, err=None):
         from core.operation import Operation
-        op = op_or_name if isinstance(op_or_name, Operation) else getattr(self.engine.operations, "current_operation", None)
+        op = op_or_name if isinstance(op_or_name, Operation) else getattr(self, "_active_op", None)
         if isinstance(op, ProcessCalibrationOperation) or op_or_name == "Process Calibration":
             if err is not None:
                 self.lbl_status.setText(f"Status: Failed - {err}")

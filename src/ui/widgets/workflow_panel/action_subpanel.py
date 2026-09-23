@@ -58,6 +58,7 @@ class ActionSubpanelWidget(QWidget):
         self.bridge.operation_started.connect(lambda *_: self._update_lock_state())
         self.bridge.operation_finished.connect(lambda *_: self._update_lock_state())
         self.bridge.operation_aborted.connect(lambda *_: self._update_lock_state())
+        self.bridge.operation_failed.connect(lambda *_: self._update_lock_state())
         self._refresh_dashboard()
         self._update_lock_state()
 

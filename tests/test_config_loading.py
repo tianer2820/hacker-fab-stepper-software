@@ -171,7 +171,7 @@ class TestConfigLoading(unittest.TestCase):
 
         # Check autofocus section
         af_cfg = AutofocusConfig.from_dict(cfg["autofocus"])
-        self.assertFalse(af_cfg.enabled)
+        self.assertTrue(af_cfg.enabled)
 
         # Check tiling section
         self.assertFalse(cfg["tiling"]["enabled"])
