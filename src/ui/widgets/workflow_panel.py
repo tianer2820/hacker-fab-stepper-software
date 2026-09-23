@@ -348,12 +348,31 @@ class LayerSubpanelWidget(QTabWidget):
         file_row.addWidget(self.lbl_pattern_file, stretch=1)
         layout.addLayout(file_row)
 
-        # Thumbnail preview
+        # Thumbnail preview & options
         mid_row = QHBoxLayout()
         self.lbl_thumb = QLabel("Thumbnail")
         self.lbl_thumb.setFixedSize(110, 80)
         self.lbl_thumb.setAlignment(Qt.AlignCenter)
         mid_row.addWidget(self.lbl_thumb)
+
+        opts_layout = QVBoxLayout()
+        thresh_row = QHBoxLayout()
+        thresh_row.addWidget(QLabel("Threshold:"))
+        self.spin_threshold = QSpinBox()
+        self.spin_threshold.setRange(-1, 255)
+        self.spin_threshold.setValue(50)
+        self.spin_threshold.setToolTip("Pattern binarization threshold (-1 to disable, 0-255)")
+        self.spin_threshold.valueChanged.connect(self._on_threshold_changed)
+        thresh_row.addWidget(self.spin_threshold)
+
+        self.lbl_threshold_hint = QLabel("(-1 to disable)")
+        self.lbl_threshold_hint.setStyleSheet("color: gray;")
+        thresh_row.addWidget(self.lbl_threshold_hint)
+        thresh_row.addStretch()
+
+        opts_layout.addLayout(thresh_row)
+        opts_layout.addStretch()
+        mid_row.addLayout(opts_layout)
         mid_row.addStretch()
         layout.addLayout(mid_row)
 
@@ -522,6 +541,11 @@ class LayerSubpanelWidget(QTabWidget):
             self.lbl_tiling_details.setText("Standard single-shot exposure will be used.")
             self.btn_regenerate_tiles.setEnabled(bool(layer.pattern_path))
 
+        # Pattern threshold UI
+        self.spin_threshold.blockSignals(True)
+        self.spin_threshold.setValue(layer.threshold)
+        self.spin_threshold.blockSignals(False)
+
         # Pattern scaling UI
         self.spin_scale_w.blockSignals(True)
         self.spin_scale_h.blockSignals(True)
@@ -612,6 +636,12 @@ class LayerSubpanelWidget(QTabWidget):
         if cur < max_idx:
             self.engine.project.select_tile(cur + 1)
 
+    def _on_threshold_changed(self):
+        layer = self.engine.project.active_layer
+        layer.set_threshold(self.spin_threshold.value())
+        if layer.pattern_path:
+            self._load_thumbnail(layer.pattern_path)
+
     def _on_scale_changed(self):
         layer = self.engine.project.active_layer
         layer.scale_w = self.spin_scale_w.value()
@@ -643,11 +673,19 @@ class LayerSubpanelWidget(QTabWidget):
                         raw = cv2.cvtColor(raw, cv2.COLOR_BGRA2RGB)
                     elif raw.shape[2] == 3:
                         raw = cv2.cvtColor(raw, cv2.COLOR_BGR2RGB)
+
+                    layer = self.engine.project.active_layer
+                    if layer.threshold != -1:
+                        mask = np.any(raw[..., :3] > layer.threshold, axis=-1)
+                        bw = np.zeros_like(raw)
+                        bw[mask] = 255
+                        raw = bw
+
                     ih, iw = raw.shape[:2]
                     scale = min(110 / max(1, iw), 80 / max(1, ih))
                     nw = max(1, int(iw * scale))
                     nh = max(1, int(ih * scale))
-                    thumb = cv2.resize(raw, (nw, nh), interpolation=cv2.INTER_LINEAR)
+                    thumb = cv2.resize(raw, (nw, nh), interpolation=cv2.INTER_NEAREST if layer.threshold != -1 else cv2.INTER_LINEAR)
                     contig = np.ascontiguousarray(thumb)
                     qimg = QImage(contig.data, nw, nh, 3 * nw, QImage.Format_RGB888)
                     self.lbl_thumb.setPixmap(QPixmap.fromImage(qimg))

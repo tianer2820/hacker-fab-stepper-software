@@ -550,6 +550,7 @@ class TestChipProjectAndProjectorRefinement(unittest.TestCase):
             "pattern_path",
             "scale_w",
             "scale_h",
+            "threshold",
             "overrides",
             "_pattern_cache",
             "_tile_cache",
@@ -564,6 +565,7 @@ class TestChipProjectAndProjectorRefinement(unittest.TestCase):
         self.assertIsNone(layer.pattern_path)
         self.assertEqual(layer.scale_w, -1)
         self.assertEqual(layer.scale_h, -1)
+        self.assertEqual(layer.threshold, 50)
         self.assertIsNone(layer._pattern_cache)
         self.assertEqual(layer._tile_cache, [])
         self.assertEqual(layer._tile_coords, [])

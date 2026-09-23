@@ -149,6 +149,7 @@ class ChipLayer:
     pattern_path: Optional[str] = None
     scale_w: int = -1
     scale_h: int = -1
+    threshold: int = 50
     overrides: LayerSettingsOverride = field(default_factory=LayerSettingsOverride)
 
     # the original pattern image
@@ -164,6 +165,14 @@ class ChipLayer:
 
     def set_pattern_path(self, path: Optional[str]):
         self.pattern_path = path
+        self._pattern_cache = None
+        self._tile_cache = []
+        self._tile_coords = []
+        if self.events is not None:
+            self.events.emit(Event.EXPOSURE_CONFIG_CHANGED)
+
+    def set_threshold(self, threshold: int):
+        self.threshold = threshold
         self._pattern_cache = None
         self._tile_cache = []
         self._tile_coords = []
@@ -278,17 +287,27 @@ class ChipLayer:
                         else:
                             img = raw
 
+                        # Thresholding to black and white image if enabled
+                        if self.threshold != -1:
+                            mask = np.any(img[..., :3] > self.threshold, axis=-1)
+                            bw = np.zeros_like(img)
+                            bw[mask] = 255
+                            img = bw
+
                         # Scale right after image loading and store in _pattern_cache
                         if self.scale_w > 0 and self.scale_h > 0:
-                            img = cv2.resize(img, (self.scale_w, self.scale_h), interpolation=cv2.INTER_LINEAR)
+                            interp = cv2.INTER_NEAREST if self.threshold != -1 else cv2.INTER_LINEAR
+                            img = cv2.resize(img, (self.scale_w, self.scale_h), interpolation=interp)
                         elif self.scale_w > 0 and self.scale_h == -1:
                             orig_h, orig_w = img.shape[:2]
                             target_h = max(1, int(round(orig_h * (self.scale_w / orig_w))))
-                            img = cv2.resize(img, (self.scale_w, target_h), interpolation=cv2.INTER_LINEAR)
+                            interp = cv2.INTER_NEAREST if self.threshold != -1 else cv2.INTER_LINEAR
+                            img = cv2.resize(img, (self.scale_w, target_h), interpolation=interp)
                         elif self.scale_h > 0 and self.scale_w == -1:
                             orig_h, orig_w = img.shape[:2]
                             target_w = max(1, int(round(orig_w * (self.scale_h / orig_h))))
-                            img = cv2.resize(img, (target_w, self.scale_h), interpolation=cv2.INTER_LINEAR)
+                            interp = cv2.INTER_NEAREST if self.threshold != -1 else cv2.INTER_LINEAR
+                            img = cv2.resize(img, (target_w, self.scale_h), interpolation=interp)
 
                         self._pattern_cache = img
                     else:
@@ -306,6 +325,7 @@ class ChipLayer:
             "pattern_path": self.pattern_path,
             "scale_w": self.scale_w,
             "scale_h": self.scale_h,
+            "threshold": self.threshold,
             "overrides": self.overrides.to_disk(),
         }
 
@@ -315,12 +335,14 @@ class ChipLayer:
         pattern_path = d.get("pattern_path", None)
         scale_w = int(d.get("scale_w", -1))
         scale_h = int(d.get("scale_h", -1))
+        threshold = int(d.get("threshold", 50))
         overrides = LayerSettingsOverride.from_disk(d.get("overrides", {}))
         return cls(
             name=name,
             pattern_path=pattern_path,
             scale_w=scale_w,
             scale_h=scale_h,
+            threshold=threshold,
             overrides=overrides,
         )
 
