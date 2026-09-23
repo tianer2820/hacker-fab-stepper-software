@@ -80,6 +80,11 @@ class MachineControlPanelWidget(QWidget):
         self.btn_apply_cal_offset = self.optics_tab.btn_apply_cal_offset
 
         self.btn_fem_placeholder = self.process_tab.btn_fem_placeholder
+        self.btn_start_process_cal = self.process_tab.btn_start_cal
+        self.spin_cal_min_exp = self.process_tab.spin_min_exposure
+        self.spin_cal_max_exp = self.process_tab.spin_max_exposure
+        self.spin_cal_sweep_steps = self.process_tab.spin_sweep_steps
+        self.spin_cal_motion_dist = self.process_tab.spin_motion_distance
 
         # Connect signals
         self.bridge.stage_position_changed.connect(self.manual_tab._on_pos_changed)
@@ -114,9 +119,11 @@ class MachineControlPanelWidget(QWidget):
 
     def _on_operation_finished(self, op_or_name=None, err=None):
         self.optics_tab.on_operation_finished(op_or_name, err)
+        self.process_tab.on_operation_finished(op_or_name, err)
         self._update_lock_state()
 
     def _update_lock_state(self, *args):
         is_busy = self.engine.operations.current_operation is not None
         self.manual_tab.update_lock_state(is_busy)
         self.optics_tab.update_lock_state(is_busy)
+        self.process_tab.update_lock_state(is_busy)

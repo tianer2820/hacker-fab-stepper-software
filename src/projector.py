@@ -125,7 +125,10 @@ class ProjectorController(EngineModule, ABC):
 
         # apply color mode
         if img is not None:
-            img = img.copy()
+            if img.ndim == 2:
+                img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+            else:
+                img = img.copy()
             if self.color_mode == ColorMode.RED:
                 img[:, :, 1:3] = 0
             elif self.color_mode == ColorMode.UV:

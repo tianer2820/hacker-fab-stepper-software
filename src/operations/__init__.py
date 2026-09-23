@@ -4,6 +4,7 @@ from .exposure import ExposureOperation
 from .maximize_image_sharpness import MaximizeImageSharpnessOperation
 from .movement import HomeOperation, JogOperation
 from .optics_calibration import OpticsCalibrationOperation
+from .process_calibration import ProcessCalibrationConfig, ProcessCalibrationOperation
 from .tiling import TiledExposureOperation
 
 __all__ = [
@@ -12,6 +13,8 @@ __all__ = [
     "AutofocusOperation",
     "AutofocusConfig",
     "OpticsCalibrationOperation",
+    "ProcessCalibrationOperation",
+    "ProcessCalibrationConfig",
     "AlignmentOperation",
     "AlignmentConfig",
     "ExposureOperation",
