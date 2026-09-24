@@ -1,3 +1,4 @@
+import random
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Optional, Tuple, Union
@@ -29,7 +30,7 @@ class MaximizeImageSharpnessOperation(Operation):
         z_range: Union[float, Tuple[float, float]] = 20.0,
         threshold: float = 0.5,
         max_iterations: int = 10,
-        settle_delay: float = 0.5,
+        settle_delay: float = 1,
         max_resamples: int = 3,
     ):
         super().__init__("Maximize Image Sharpness")
@@ -136,6 +137,12 @@ class MaximizeImageSharpnessOperation(Operation):
                     f"Resampling 3 points (attempt {resample_count}/{self.max_resamples})...",
                 )
 
+                center = (z_low + z_high) / 2.0
+                width = (z_high - z_low) * 1.2
+                z_low = center - width / 2.0
+                z_high = center + width / 2.0
+                z_mid = center + random.uniform(-0.1, 0.1) * width
+
                 s_low = measure(z_low, force=True)
                 if s_low is None:
                     return "Sharpness maximization aborted" if self.is_aborted else "Failed to move Z stage to lower limit"
@@ -158,7 +165,7 @@ class MaximizeImageSharpnessOperation(Operation):
                 (z_mid, s_mid),
                 (z_high, s_high),
             ]
-            candidates.sort(key=lambda p: p[1], reverse=True)
+            candidates.sort(key=lambda p: (p[1], abs(p[0] - z_mid)), reverse=True)
             top1, top2 = candidates[0], candidates[1]
 
 
