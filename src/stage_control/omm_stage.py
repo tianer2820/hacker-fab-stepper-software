@@ -73,11 +73,15 @@ class OMMStage(StageController):
         """Home all axes on the stage."""
         if self.omm is None:
             return False
-        res = self.omm.home()
-        if res == self.omm.serial.ReplyStatus.OK:
-            self._update_position()
-            return True
-        return False
+
+        axes = ["A", "B", "C"]
+        for axis in axes:
+            res = self.omm.home(axis)
+            if res != self.omm.serial.ReplyStatus.OK:
+                print(f"Error: Failed to home axis {axis}")
+                return False
+        self._update_position()
+        return True
 
     def move_relative(self, microns: dict[str, float]) -> bool:
         self._update_position()
