@@ -229,14 +229,11 @@ class ProcessCalibrationOperation(Operation):
                 )
                 if abs(z_off) > 1e-6 or total_z_steps > 1:
                     title = f"{exp_s:.4g}s | {z_off:+.2f}µm"
-                    sub_title = f"STEP: {step_num}/{total_steps}\nEXP: {exp_s:.4g}s | ΔZ: {z_off:+.2f}µm"
                 else:
                     title = f"{exp_s:.4g}s"
-                    sub_title = f"STEP: {step_num}/{total_steps}\nEXP: {exp_s:.4g}s"
                 pattern_sq = generate_litho_target(
                     size=square_size,
                     main_text=title,
-                    sub_text=sub_title,
                 )
 
                 # Fit pattern into projector canvas

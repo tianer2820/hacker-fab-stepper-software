@@ -5,7 +5,6 @@ import numpy as np
 def generate_litho_target(
     size: int = 1600,
     main_text: str = "RETICLE CAL #02",
-    sub_text: str = "DOSE: 110 mJ/cm2\nFOCUS: -0.10 um",
     min_size: float = 1.0,
     scale_ratio: float = 1.14,
 ) -> np.ndarray:
@@ -30,55 +29,59 @@ def generate_litho_target(
     # Negative tone right half
     canvas[header_h:size, mid_x:size] = 0
 
-    # Auto-fit main title text to fill the title block height (~70% of header height)
+    # Auto-fit main title text (supports multiple lines)
     font = cv2.FONT_HERSHEY_SIMPLEX
-    target_text_h = int(header_h * 0.9)
-    max_title_w = int(size * 0.75)
+    lines = main_text.split("\n") if main_text else [""]
+
+    target_line_h = int(header_h * 0.5)
+    target_total_h = int(header_h * 0.95)
+    max_title_w = size - 70
 
     # Iteratively fit font scale
     scale = 1.0
     thickness = 2
     for _ in range(4):
-        (tw, th), baseline = cv2.getTextSize(main_text, font, scale, thickness)
-        if th > 0 and tw > 0:
-            scale_y = target_text_h / th
-            scale_x = max_title_w / tw
-            scale *= min(scale_y, scale_x)
-            thickness = max(2, int(scale * 2.8))
+        sizes = [cv2.getTextSize(line, font, scale, thickness) for line in lines]
+        max_tw = max(max((sz[0][0] for sz in sizes), default=1), 1)
+        max_th = max(max((sz[0][1] for sz in sizes), default=1), 1)
+        max_baseline = max((sz[1] for sz in sizes), default=1)
+        line_height = int(max_th * 1.3)
+        total_h = (len(lines) - 1) * line_height + max_th + max_baseline
 
-    (tw, th), baseline = cv2.getTextSize(main_text, font, scale, thickness)
+        scale_factors = []
+        if max_th > 0:
+            scale_factors.append(target_line_h / max_th)
+        if max_tw > 0:
+            scale_factors.append(max_title_w / max_tw)
+        if total_h > 0:
+            scale_factors.append(target_total_h / total_h)
+
+        scale *= min(scale_factors)
+        thickness = max(1, int(scale * 2.8))
+
+    sizes = [cv2.getTextSize(line, font, scale, thickness) for line in lines]
+    max_th = max(max((sz[0][1] for sz in sizes), default=1), 1)
+    max_baseline = max((sz[1] for sz in sizes), default=1)
+    line_height = int(max_th * 1.3)
+    total_block_h = (len(lines) - 1) * line_height + max_th + max_baseline
+
+    start_top = (header_h - total_block_h) // 2
+    title_y_start = start_top + max_th
     title_x = 35
-    title_y = (header_h + th) // 2
-    cv2.putText(
-        canvas,
-        main_text,
-        (title_x, title_y),
-        font,
-        scale,
-        0,
-        thickness,
-        cv2.LINE_AA,
-    )
 
-    # Sub-text (top-right side)
-    sub_scale = header_h / 100
-    sub_thickness = max(1, int(sub_scale * 1.5))
-    sub_lines = sub_text.split("\n")
-    line_spacing = int(sub_scale * 25)
-    start_y = int(header_h * 0.05)
-
-    for i, line in enumerate(sub_lines):
-        ts = cv2.getTextSize(line, font, sub_scale, sub_thickness)[0]
-        cv2.putText(
-            canvas,
-            line,
-            (size - ts[0], start_y + (i+1) * line_spacing),
-            font,
-            sub_scale,
-            0,
-            sub_thickness,
-            cv2.LINE_AA,
-        )
+    for i, line in enumerate(lines):
+        if line:
+            title_y = title_y_start + i * line_height
+            cv2.putText(
+                canvas,
+                line,
+                (title_x, title_y),
+                font,
+                scale,
+                0,
+                thickness,
+                cv2.LINE_AA,
+            )
 
     # -------------------------------------------------------------
     # Vertical Budgeting (remaining 75% height)
@@ -249,8 +252,7 @@ if __name__ == "__main__":
     # Test execution: min_size=1 px, scale_ratio=1.14 (grows smoothly until fit)
     target = generate_litho_target(
         size=1600,
-        main_text="16S",
-        sub_text="AAA\nBBB",
+        main_text="16.12S | 0.1um",
         min_size=1.0,
         scale_ratio=1.1,
     )

@@ -50,6 +50,11 @@ class TestLithoTargetGeneration(unittest.TestCase):
         self.assertEqual(target.shape, (1080, 1080))
         self.assertEqual(target.dtype, np.uint8)
 
+    def test_generate_litho_target_multiline(self):
+        target = generate_litho_target(size=1080, main_text="LINE 1\nLINE 2\nLINE 3")
+        self.assertEqual(target.shape, (1080, 1080))
+        self.assertEqual(target.dtype, np.uint8)
+
 
 class TestExposureOperationDirect(unittest.TestCase):
     def test_exposure_operation_with_layer_index_none(self):
