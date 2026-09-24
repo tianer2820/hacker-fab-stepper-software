@@ -103,8 +103,8 @@ class StageMapCanvas(QFrame):
             min_x, max_x = bounds["x"]
             min_y, max_y = bounds["y"]
         else:
-            min_x, max_x = -15.0, 0.0
-            min_y, max_y = 0.0, 15.0
+            min_x, max_x = -15000.0, 0.0
+            min_y, max_y = 0.0, 15000.0
 
         span_x = max(1e-5, max_x - min_x)
         span_y = max(1e-5, max_y - min_y)
@@ -124,7 +124,7 @@ class StageMapCanvas(QFrame):
         return ox + (x - min_x) * scale, oy + (max_y - y) * scale
 
     def _from_screen(self, sx: float, sy: float, t) -> tuple:
-        """Screen pixel → stage mm."""
+        """Screen pixel → stage µm."""
         ox, oy, scale, min_x, max_x, min_y, max_y = t
         return (sx - ox) / scale + min_x, max_y - (sy - oy) / scale
 
@@ -141,8 +141,8 @@ class StageMapCanvas(QFrame):
             return
 
         ox, oy, scale, min_x, max_x, min_y, max_y = t
-        span_x = max_x - min_x
-        span_y = max_y - min_y
+        span_x = max(1e-5, max_x - min_x)
+        span_y = max(1e-5, max_y - min_y)
         box_w = span_x * scale
         box_h = span_y * scale
 
@@ -156,10 +156,10 @@ class StageMapCanvas(QFrame):
         if chip_project:
             painter.setPen(QPen(QColor("#f59e0b"), 1))
             painter.setBrush(QBrush(QColor(245, 158, 11, 80)))
-            pitch_x = chip_project.settings.pitch_x / 1000.0
-            pitch_y = chip_project.settings.pitch_y / 1000.0
-            tile_w = max(4.0, pitch_x * scale)
-            tile_h = max(3.0, pitch_y * scale)
+            pitch_x = chip_project.settings.pitch_x
+            pitch_y = chip_project.settings.pitch_y
+            tile_w = max(4.0, (pitch_x / span_x) * box_w)
+            tile_h = max(3.0, (pitch_y / span_y) * box_h)
 
             for exp in chip_project.exposure_history:
                 ex_x, ex_y = exp.coords[0], exp.coords[1]
