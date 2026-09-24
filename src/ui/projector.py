@@ -100,7 +100,7 @@ class QtProjector(QMainWindow, ProjectorController, metaclass=QtProjectorMeta):
         if image.ndim == 2:
             return QImage(contig.data, w, h, w, QImage.Format_Grayscale8)
         elif image.shape[2] == 3:
-            return QImage(contig.data, w, h, 3 * w, QImage.Format_RGB888)
+            return QImage(contig.data, w, h, 3 * w, QImage.Format_BGR888)
         elif image.shape[2] == 4:
             return QImage(contig.data, w, h, 4 * w, QImage.Format_RGBA8888)
         return QImage()

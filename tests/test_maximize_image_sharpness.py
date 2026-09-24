@@ -41,7 +41,6 @@ class TestMaximizeImageSharpness(unittest.TestCase):
             z_range=15.0,
             threshold=0.5,
             max_iterations=10,
-            blue_only=False,
             settle_delay=0.0,
         )
 

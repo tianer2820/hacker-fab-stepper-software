@@ -2,6 +2,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Optional, Tuple, Union
 
+from core.events import ColorMode
 from core.operation import ExecutionContext, Operation
 from lib.ar_tag import compute_focus_score
 
@@ -28,14 +29,12 @@ class MaximizeImageSharpnessOperation(Operation):
         z_range: Union[float, Tuple[float, float]] = 20.0,
         threshold: float = 0.5,
         max_iterations: int = 10,
-        blue_only: bool = False,
         settle_delay: float = 0.5,
     ):
         super().__init__("Maximize Image Sharpness")
         self.z_range = z_range
         self.threshold = threshold
         self.max_iterations = max_iterations
-        self.blue_only = blue_only
         self.settle_delay = settle_delay
         self.result: Optional[SharpnessOptimizationResult] = None
 
@@ -83,7 +82,7 @@ class MaximizeImageSharpnessOperation(Operation):
 
             context.delay_func(self.settle_delay)
             frame = context.camera.get_latest_frame()
-            score = compute_focus_score(frame, blue_only=self.blue_only)
+            score = compute_focus_score(frame)
             cache[key] = score
 
             if score > best_score:

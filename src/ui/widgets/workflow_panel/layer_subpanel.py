@@ -331,7 +331,7 @@ class LayerSubpanelWidget(QTabWidget):
             if contig.ndim == 2:
                 qimg = QImage(contig.data, nw, nh, nw, QImage.Format_Grayscale8)
             elif contig.shape[2] == 3:
-                qimg = QImage(contig.data, nw, nh, 3 * nw, QImage.Format_RGB888)
+                qimg = QImage(contig.data, nw, nh, 3 * nw, QImage.Format_BGR888)
             elif contig.shape[2] == 4:
                 qimg = QImage(contig.data, nw, nh, 4 * nw, QImage.Format_RGBA8888)
             else:
@@ -390,11 +390,9 @@ class LayerSubpanelWidget(QTabWidget):
                 raw = cv2.imread(path, cv2.IMREAD_UNCHANGED)
                 if raw is not None:
                     if raw.ndim == 2:
-                        raw = cv2.cvtColor(raw, cv2.COLOR_GRAY2RGB)
+                        raw = cv2.cvtColor(raw, cv2.COLOR_GRAY2BGR)
                     elif raw.shape[2] == 4:
-                        raw = cv2.cvtColor(raw, cv2.COLOR_BGRA2RGB)
-                    elif raw.shape[2] == 3:
-                        raw = cv2.cvtColor(raw, cv2.COLOR_BGR2RGB)
+                        raw = cv2.cvtColor(raw, cv2.COLOR_BGRA2BGR)
 
                     layer = self.engine.project.active_layer
                     if layer.threshold != -1:
@@ -409,7 +407,7 @@ class LayerSubpanelWidget(QTabWidget):
                     nh = max(1, int(ih * scale))
                     thumb = cv2.resize(raw, (nw, nh), interpolation=cv2.INTER_NEAREST if layer.threshold != -1 else cv2.INTER_LINEAR)
                     contig = np.ascontiguousarray(thumb)
-                    qimg = QImage(contig.data, nw, nh, 3 * nw, QImage.Format_RGB888)
+                    qimg = QImage(contig.data, nw, nh, 3 * nw, QImage.Format_BGR888)
                     self.lbl_thumb.setPixmap(QPixmap.fromImage(qimg))
                 else:
                     self.lbl_thumb.setText("Preview Error")

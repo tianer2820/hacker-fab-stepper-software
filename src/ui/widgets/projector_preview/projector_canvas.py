@@ -31,7 +31,7 @@ class ProjectorCanvas(QWidget):
             if img.ndim == 2:
                 qimg = QImage(contig.data, w, h, w, QImage.Format_Grayscale8)
             elif img.shape[2] == 3:
-                qimg = QImage(contig.data, w, h, 3 * w, QImage.Format_RGB888)
+                qimg = QImage(contig.data, w, h, 3 * w, QImage.Format_BGR888)
             elif img.shape[2] == 4:
                 qimg = QImage(contig.data, w, h, 4 * w, QImage.Format_RGBA8888)
             else:

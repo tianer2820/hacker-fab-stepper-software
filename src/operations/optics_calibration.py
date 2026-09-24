@@ -1,5 +1,6 @@
 from typing import Callable, Optional, Sequence, Tuple
 
+import cv2
 import numpy as np
 
 from core.events import ColorMode, ProjectorImageSource
@@ -83,8 +84,7 @@ class OpticsCalibrationOperation(Operation):
     def _run_focus_iterations(
         self,
         context: ExecutionContext,
-        target_mode: ColorMode,
-        blue_only: bool,
+        color_mode: ColorMode,
         progress_start: float,
         progress_end: float,
         report_progress: Callable[[float, str], None],
@@ -92,7 +92,7 @@ class OpticsCalibrationOperation(Operation):
     ) -> Optional[str]:
         projector = context.projector
         proj_size = projector.projector_size()
-        mode_name = "UV" if blue_only else "Red"
+        mode_name = "UV" if color_mode == ColorMode.UV else "Red"
         num_grids = len(self.grid_sizes)
         progress_span = progress_end - progress_start
 
@@ -104,17 +104,16 @@ class OpticsCalibrationOperation(Operation):
             step_base = progress_start + (idx / num_grids) * progress_span
             report_progress(
                 step_base,
-                f"Projecting {grid_n}x{grid_n} {mode_name} ArUco grid...",
+                f"Projecting {grid_n}x{grid_n} ArUco grid...",
             )
 
             # 1. Project generated ArUco grid
             grid_img = generate_ar_tag_grid(
                 grid_n=grid_n,
                 canvas_size=proj_size,
-                color_mode=target_mode,
             )
             projector.set_generated_image(grid_img)
-            projector.set_color_mode(target_mode)
+            projector.set_color_mode(color_mode)
             projector.set_image_source(ProjectorImageSource.GENERATED)
             projector.set_on(True)
             context.delay_func(1.0)
@@ -163,7 +162,6 @@ class OpticsCalibrationOperation(Operation):
             sharp_op = MaximizeImageSharpnessOperation(
                 z_range=sweep_range,
                 threshold=threshold,
-                blue_only=blue_only,
             )
             self._current_sub_op = sharp_op
             if self.is_aborted:
@@ -215,8 +213,7 @@ class OpticsCalibrationOperation(Operation):
             # 1. Optimize focus in Red light
             red_err = self._run_focus_iterations(
                 context=context,
-                target_mode=ColorMode.RED,
-                blue_only=False,
+                color_mode=ColorMode.RED,
                 progress_start=0.1,
                 progress_end=0.5,
                 report_progress=report_progress,
@@ -237,8 +234,7 @@ class OpticsCalibrationOperation(Operation):
             # 3. Optimize focus in UV light
             uv_err = self._run_focus_iterations(
                 context=context,
-                target_mode=ColorMode.UV,
-                blue_only=True,
+                color_mode=ColorMode.UV,
                 progress_start=0.55,
                 progress_end=0.95,
                 report_progress=report_progress,

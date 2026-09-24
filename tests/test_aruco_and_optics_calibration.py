@@ -44,28 +44,18 @@ class TestArUcoLib(unittest.TestCase):
         d = get_aruco_dict(cv2.aruco.DICT_4X4_50)
         self.assertIsNotNone(d)
 
-    def test_generate_ar_tag_grid_red_and_uv(self):
-        # Red grid
-        red_grid = generate_ar_tag_grid(2, canvas_size=(640, 480), color_mode=ColorMode.RED)
-        self.assertEqual(red_grid.shape, (480, 640, 3))
-        self.assertEqual(red_grid.dtype, np.uint8)
-        self.assertTrue(np.any(red_grid[:, :, 0] > 0))  # Red channel active
-        self.assertEqual(np.count_nonzero(red_grid[:, :, 1]), 0)  # Green zeroed
-        self.assertEqual(np.count_nonzero(red_grid[:, :, 2]), 0)  # Blue zeroed
-
-        # UV grid (blue channel in RGB)
-        uv_grid = generate_ar_tag_grid(2, canvas_size=(640, 480), color_mode=ColorMode.UV)
-        self.assertEqual(uv_grid.shape, (480, 640, 3))
-        self.assertEqual(np.count_nonzero(uv_grid[:, :, 0]), 0)
-        self.assertEqual(np.count_nonzero(uv_grid[:, :, 1]), 0)
-        self.assertTrue(np.any(uv_grid[:, :, 2] > 0))
+    def test_generate_ar_tag_grid(self):
+        grid = generate_ar_tag_grid(2, canvas_size=(640, 480))
+        self.assertEqual(grid.shape, (480, 640, 3))
+        self.assertEqual(grid.dtype, np.uint8)
+        self.assertTrue(np.any(grid[:, :, 0] > 0))
+        self.assertTrue(np.any(grid[:, :, 1] > 0))
+        self.assertTrue(np.any(grid[:, :, 2] > 0))
 
     def test_detect_ar_tags(self):
-        # Generate clean grid and detect
-        grid = generate_ar_tag_grid(2, canvas_size=(800, 600), color_mode=ColorMode.RED)
-        # Convert RGB to BGR for detector
-        bgr = cv2.cvtColor(grid, cv2.COLOR_RGB2BGR)
-        count, corners, ids = detect_ar_tags(bgr)
+        # Generate clean BGR grid and detect
+        grid = generate_ar_tag_grid(2, canvas_size=(800, 600))
+        count, corners, ids = detect_ar_tags(grid)
         self.assertEqual(count, 4)
         self.assertIsNotNone(ids)
         self.assertEqual(len(ids), 4)
@@ -83,15 +73,11 @@ class TestArUcoLib(unittest.TestCase):
         blank = np.zeros((100, 100, 3), dtype=np.uint8)
         self.assertEqual(compute_focus_score(blank), 0.0)
 
-        # Sharp edge has high variance in red
+        # Sharp edge has high focus score
         sharp = np.zeros((100, 100, 3), dtype=np.uint8)
-        sharp[:50, :, 2] = 255  # Red channel in BGR
-        score_red = compute_focus_score(sharp, blue_only=False)
-        self.assertGreater(score_red, 100.0)
-
-        # Blue-only score for red image should be 0
-        score_blue = compute_focus_score(sharp, blue_only=True)
-        self.assertEqual(score_blue, 0.0)
+        sharp[:50, :, 0] = 255
+        score = compute_focus_score(sharp)
+        self.assertGreater(score, 100.0)
 
 
 class TestProjectorGeneratedImageSource(unittest.TestCase):
@@ -192,7 +178,7 @@ class TestProjectorGeneratedImageSource(unittest.TestCase):
 
         # Rendering valid QImage
         img_arr = np.full((100, 100, 3), 200, dtype=np.uint8)
-        qimg = QImage(img_arr.data, 100, 100, 300, QImage.Format_RGB888)
+        qimg = QImage(img_arr.data, 100, 100, 300, QImage.Format_BGR888)
         canvas.set_qimage(qimg)
         self.assertIsNotNone(canvas._qimage)
         canvas.repaint()
@@ -232,10 +218,7 @@ class TestIterativeAutofocus(unittest.TestCase):
         proj = DummyProjector()
 
         # Dynamic frame that peaks at Z=50.0
-        base_grid = cv2.cvtColor(
-            generate_ar_tag_grid(2, canvas_size=(800, 600), color_mode=ColorMode.RED),
-            cv2.COLOR_RGB2BGR,
-        )
+        base_grid = generate_ar_tag_grid(2, canvas_size=(800, 600))
 
         def dynamic_frame():
             curr_z = stage.get_position()[2]
@@ -256,7 +239,7 @@ class TestIterativeAutofocus(unittest.TestCase):
         )
 
         cfg = AutofocusConfig(enabled=True, uv_z_offset=15.0, min_detection_rate=0.85)
-        op = AutofocusOperation(blue_only=False, config=cfg)
+        op = AutofocusOperation(config=cfg)
         progress_calls = []
         err = op.execute(ctx, lambda p, m: progress_calls.append((p, m)))
 
@@ -308,10 +291,7 @@ class TestOpticsCalibration(unittest.TestCase):
             curr_z = stage.get_position()[2]
             mode = proj.color_mode
             # Create ArUco tags image
-            frame = cv2.cvtColor(
-                generate_ar_tag_grid(2, canvas_size=(800, 600), color_mode=mode),
-                cv2.COLOR_RGB2BGR,
-            )
+            frame = generate_ar_tag_grid(2, canvas_size=(800, 600))
             # Add synthetic sharpness that peaks at 102 for RED and 110 for UV
             target_z = 102.0 if mode == ColorMode.RED else 110.0
             dist = abs(curr_z - target_z)

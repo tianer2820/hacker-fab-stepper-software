@@ -279,11 +279,11 @@ class ChipLayer:
                     raw = cv2.imread(self.pattern_path, cv2.IMREAD_UNCHANGED)
                     if raw is not None:
                         if raw.ndim == 2:
-                            img = cv2.cvtColor(raw, cv2.COLOR_GRAY2RGB)
+                            img = cv2.cvtColor(raw, cv2.COLOR_GRAY2BGR)
                         elif raw.shape[2] == 4:
-                            img = cv2.cvtColor(raw, cv2.COLOR_BGRA2RGB)
+                            img = cv2.cvtColor(raw, cv2.COLOR_BGRA2BGR)
                         elif raw.shape[2] == 3:
-                            img = cv2.cvtColor(raw, cv2.COLOR_BGR2RGB)
+                            img = raw
                         else:
                             img = raw
 

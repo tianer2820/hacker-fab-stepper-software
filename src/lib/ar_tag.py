@@ -15,7 +15,6 @@ def generate_ar_tag_grid(
     grid_n: int,
     canvas_size: Tuple[int, int] = (1920, 1080),
     dict_id: int = cv2.aruco.DICT_4X4_250,
-    color_mode: ColorMode = ColorMode.RED,
 ) -> np.ndarray:
     """Generates an N x N grid of ArUco tags centered on a canvas for projection.
     
@@ -23,10 +22,9 @@ def generate_ar_tag_grid(
         grid_n: Number of tags along each axis (e.g. 2 for 2x2, 4 for 4x4, 8 for 8x8).
         canvas_size: (width, height) of projector canvas.
         dict_id: OpenCV ArUco dictionary identifier.
-        color_mode: ColorMode.RED or ColorMode.UV (blue channel).
         
     Returns:
-        RGB numpy array of shape (height, width, 3) with dtype uint8.
+        BGR numpy array of shape (height, width, 3) with dtype uint8.
     """
     width, height = canvas_size
     grid_n = max(1, int(grid_n))
@@ -70,18 +68,12 @@ def generate_ar_tag_grid(
             marker_img = cv2.aruco.generateImageMarker(dictionary, idx, marker_sz)
             canvas[y1 + quiet : y1 + quiet + marker_sz, x1 + quiet : x1 + quiet + marker_sz] = marker_img
 
-    # Build 3-channel RGB image based on color mode
-    rgb = np.zeros((height, width, 3), dtype=np.uint8)
-    if color_mode == ColorMode.UV:
-        rgb[:, :, 2] = canvas  # Blue channel in RGB format (index 2)
-    elif color_mode == ColorMode.RED:
-        rgb[:, :, 0] = canvas  # Red channel in RGB format (index 0)
-    else:
-        rgb[:, :, 0] = canvas
-        rgb[:, :, 1] = canvas
-        rgb[:, :, 2] = canvas
-
-    return rgb
+    # Build 3-channel BGR image
+    bgr = np.zeros((height, width, 3), dtype=np.uint8)
+    bgr[:, :, 0] = canvas
+    bgr[:, :, 1] = canvas
+    bgr[:, :, 2] = canvas
+    return bgr
 
 
 def detect_ar_tags(
@@ -119,30 +111,23 @@ def detect_ar_tags(
 
 def compute_focus_score(
     camera_image: Optional[np.ndarray],
-    blue_only: bool = False,
     ddepth: int = cv2.CV_64F,
     kernel_size: int = 5,
 ) -> float:
-    """Calculates focus sharpness score via Laplacian variance on the active color channel."""
+    """Calculates focus sharpness score via Laplacian variance."""
     if camera_image is None or camera_image.size == 0:
         return 0.0
 
     img = camera_image.copy()
+    if img.shape[0] * 0.1 >= kernel_size and img.shape[1] * 0.1 >= kernel_size:
+        img = cv2.resize(img, None, fx=0.1, fy=0.1)
+
     if img.ndim == 3 and img.shape[2] >= 3:
-        if blue_only:
-            # Keep Blue (index 0 in BGR camera frame), zero Green and Red
-            img[:, :, 1] = 0
-            img[:, :, 2] = 0
-        else:
-            # Keep Red (index 2 in BGR camera frame), zero Blue and Green
-            img[:, :, 0] = 0
-            img[:, :, 1] = 0
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     elif img.ndim == 2:
         gray = img
     else:
         return 0.0
 
-    blurred = cv2.GaussianBlur(gray, (3, 3), 0)
-    lap = cv2.Laplacian(blurred, ddepth, ksize=kernel_size)
+    lap = cv2.Laplacian(gray, ddepth, ksize=kernel_size)
     return float(lap.var())

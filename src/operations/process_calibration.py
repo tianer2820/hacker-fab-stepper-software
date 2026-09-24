@@ -3,7 +3,7 @@ from typing import Callable, List, Optional, Tuple
 import cv2
 import numpy as np
 
-from core.events import ProjectorImageSource
+from core.events import ColorMode, ProjectorImageSource
 from core.operation import ExecutionContext, Operation
 from lib.gen_calibration_pattern import generate_litho_target
 from operations.autofocus import AutofocusOperation
@@ -164,7 +164,7 @@ class ProcessCalibrationOperation(Operation):
                     f"Step {step_num}/{total_steps}: Autofocusing...",
                 )
                 af_config = getattr(context, "autofocus_config", None)
-                af_op = AutofocusOperation(blue_only=False, config=af_config)
+                af_op = AutofocusOperation(config=af_config)
                 err = self._run_sub_op(
                     af_op,
                     context,
@@ -194,13 +194,13 @@ class ProcessCalibrationOperation(Operation):
                 # Fit pattern into projector canvas
                 canvas = np.zeros((ph, pw, 3), dtype=np.uint8)
                 if pattern_sq.ndim == 2:
-                    pattern_rgb = cv2.cvtColor(pattern_sq, cv2.COLOR_GRAY2RGB)
+                    pattern_bgr = cv2.cvtColor(pattern_sq, cv2.COLOR_GRAY2BGR)
                 else:
-                    pattern_rgb = pattern_sq
+                    pattern_bgr = pattern_sq
 
                 y_offset = (ph - square_size) // 2
                 x_offset = (pw - square_size) // 2
-                canvas[y_offset : y_offset + square_size, x_offset : x_offset + square_size] = pattern_rgb
+                canvas[y_offset : y_offset + square_size, x_offset : x_offset + square_size] = pattern_bgr
 
                 # 4. Set generated image and expose
                 projector.set_generated_image(canvas)

@@ -87,12 +87,12 @@ class TestPatternThreshold(unittest.TestCase):
         pattern = layer.get_pattern_image()
         self.assertIsNotNone(pattern)
 
-        # Should preserve raw RGB values
-        np.testing.assert_array_equal(pattern[0, 0], [51, 0, 0])
+        # Should preserve raw BGR values
+        np.testing.assert_array_equal(pattern[0, 0], [0, 0, 51])
         np.testing.assert_array_equal(pattern[0, 1], [0, 51, 0])
-        np.testing.assert_array_equal(pattern[0, 2], [0, 0, 51])
+        np.testing.assert_array_equal(pattern[0, 2], [51, 0, 0])
         np.testing.assert_array_equal(pattern[1, 0], [50, 50, 50])
-        np.testing.assert_array_equal(pattern[1, 1], [10, 20, 30])
+        np.testing.assert_array_equal(pattern[1, 1], [30, 20, 10])
         np.testing.assert_array_equal(pattern[1, 2], [0, 0, 0])
 
     def test_threshold_custom_value(self):

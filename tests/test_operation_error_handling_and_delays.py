@@ -111,7 +111,7 @@ class TestOperationErrorHandlingAndDelays(unittest.TestCase):
             mock_detect.side_effect = on_detect
 
             cfg = AutofocusConfig(enabled=True, min_detection_rate=0.9)
-            op = AutofocusOperation(blue_only=False, config=cfg)
+            op = AutofocusOperation(config=cfg)
             op.execute(ctx, lambda p, m: None)
 
         self.assertTrue(len(delays_before_detection) > 0)

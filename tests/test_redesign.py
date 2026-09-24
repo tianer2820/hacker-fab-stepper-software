@@ -672,22 +672,22 @@ class TestChipProjectAndProjectorRefinement(unittest.TestCase):
             proj.set_on(True)
             proj.set_image_source(ProjectorImageSource.ACTIVE_LAYER)
 
-            # RED mode -> non-empty image with red channel active
+            # RED mode -> non-empty image with red channel active (index 2 in BGR)
             proj.set_color_mode(ColorMode.RED)
             red_img = proj._displayed_image_cache
             self.assertIsNotNone(red_img)
             self.assertEqual(red_img.shape[:2], (200, 200))
-            self.assertGreater(np.max(red_img[:, :, 0]), 0)
+            self.assertEqual(np.max(red_img[:, :, 0]), 0)
             self.assertEqual(np.max(red_img[:, :, 1]), 0)
-            self.assertEqual(np.max(red_img[:, :, 2]), 0)
+            self.assertGreater(np.max(red_img[:, :, 2]), 0)
 
-            # UV mode -> non-empty image with blue channel active
+            # UV mode -> non-empty image with blue channel active (index 0 in BGR)
             proj.set_color_mode(ColorMode.UV)
             uv_img = proj._displayed_image_cache
             self.assertIsNotNone(uv_img)
-            self.assertEqual(np.max(uv_img[:, :, 0]), 0)
+            self.assertGreater(np.max(uv_img[:, :, 0]), 0)
             self.assertEqual(np.max(uv_img[:, :, 1]), 0)
-            self.assertGreater(np.max(uv_img[:, :, 2]), 0)
+            self.assertEqual(np.max(uv_img[:, :, 2]), 0)
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)

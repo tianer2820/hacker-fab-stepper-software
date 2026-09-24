@@ -130,9 +130,9 @@ class ProjectorController(EngineModule, ABC):
             else:
                 img = img.copy()
             if self.color_mode == ColorMode.RED:
-                img[:, :, 1:3] = 0
-            elif self.color_mode == ColorMode.UV:
                 img[:, :, 0:2] = 0
+            elif self.color_mode == ColorMode.UV:
+                img[:, :, 1:3] = 0
 
         self._displayed_image_cache = img
         self._on_display_image_cache_changed()

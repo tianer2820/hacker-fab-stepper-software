@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 from typing import Callable, Optional, Union
+import cv2
+import numpy as np
 
 from core.events import ColorMode, ProjectorImageSource
 from core.operation import ExecutionContext, Operation
@@ -29,12 +31,10 @@ class AutofocusOperation(Operation):
 
     def __init__(
         self,
-        blue_only: bool = False,
         log: bool = False,
         config: Optional[Union[AutofocusConfig, dict]] = None,
     ):
         super().__init__("Autofocus")
-        self.blue_only = blue_only
         self.log = log
         if isinstance(config, dict):
             self.config = AutofocusConfig.from_dict(config)
@@ -60,7 +60,6 @@ class AutofocusOperation(Operation):
         projector = context.projector
         assert projector is not None, "Projector not found"
         proj_size = projector.projector_size()
-        target_mode = ColorMode.UV if self.blue_only else ColorMode.RED
 
         best_overall_z = context.stage.get_position()[2]
 
@@ -80,10 +79,9 @@ class AutofocusOperation(Operation):
                 grid_img = generate_ar_tag_grid(
                     grid_n=grid_n,
                     canvas_size=proj_size,
-                    color_mode=target_mode,
                 )
                 projector.set_generated_image(grid_img)
-                projector.set_color_mode(target_mode)
+                projector.set_color_mode(ColorMode.RED)
                 projector.set_image_source(ProjectorImageSource.GENERATED)
                 projector.set_on(True)
                 context.delay_func(1.0)
@@ -116,7 +114,6 @@ class AutofocusOperation(Operation):
                 sharp_op = MaximizeImageSharpnessOperation(
                     z_range=sweep_range,
                     threshold=threshold,
-                    blue_only=self.blue_only,
                 )
                 self._current_sub_op = sharp_op
                 if self.is_aborted:
@@ -155,8 +152,8 @@ class AutofocusOperation(Operation):
                     )
                     break
 
-            # 6. Apply UV-Red Z offset if in red mode and offset is configured
-            if not self.blue_only and abs(self.config.uv_z_offset) > 1e-6:
+            # 6. Apply UV-Red Z offset if offset is configured
+            if abs(self.config.uv_z_offset) > 1e-6:
                 uv_focal_z = best_overall_z + self.config.uv_z_offset
                 if not context.stage.move_absolute({"z": uv_focal_z}):
                     msg = f"Failed to apply UV-Red Z offset to {uv_focal_z:.2f} µm"

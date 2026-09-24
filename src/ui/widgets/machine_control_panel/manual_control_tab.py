@@ -280,7 +280,6 @@ class ManualControlTabWidget(QScrollArea):
     def _on_maximize_sharpness_clicked(self):
         op = MaximizeImageSharpnessOperation(
             z_range=self.spin_sharp_z_range.value(),
-            blue_only=(self.engine.projector.color_mode == ColorMode.UV),
         )
         self.bridge.start_operation(op)
 
@@ -288,10 +287,7 @@ class ManualControlTabWidget(QScrollArea):
         cfg = getattr(self.engine, "autofocus_config", None)
         if cfg is not None:
             cfg.uv_z_offset = self.spin_uv_offset.value()
-        op = AutofocusOperation(
-            blue_only=(self.engine.projector.color_mode == ColorMode.UV),
-            config=cfg,
-        )
+        op = AutofocusOperation(config=cfg)
         self.bridge.start_operation(op)
 
     def _on_align_clicked(self):

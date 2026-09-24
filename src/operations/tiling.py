@@ -92,7 +92,7 @@ class TiledExposureOperation(Operation):
                         pct_base + 0.3 * pct_step,
                         f"Tile {tile_idx + 1}/{total_tiles} - Autofocusing...",
                     )
-                    af_op = AutofocusOperation(blue_only=False, config=self.autofocus_config)
+                    af_op = AutofocusOperation(config=self.autofocus_config)
                     err = self._run_sub_op(af_op, context, lambda p, m: None)
                     if err or self.is_aborted:
                         last_error = err
