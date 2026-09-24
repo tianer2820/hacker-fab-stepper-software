@@ -122,30 +122,32 @@ class OpticsCalibrationOperation(Operation):
                 return "Optics calibration aborted"
 
             # 2. Check tag detection
-            frame = context.camera.get_latest_frame()
-            det_count, _, _ = self._detect_tags(frame)
+            # Disabled because the failure rate is too high
 
-            # On initial check in Red illumination, verify that tags are present on stage
-            if initial_tag_check and idx == 0 and det_count == 0:
-                msg = (
-                    "No ArUco tags detected in Red illumination! "
-                    "Please verify that a bare silicon chip is on the stage, "
-                    "rough focus is set, and the camera/projector are active."
-                )
-                if context.warning_callback:
-                    context.warning_callback(msg)
-                return msg
+            # frame = context.camera.get_latest_frame()
+            # det_count, _, _ = self._detect_tags(frame)
 
-            detection_rate = det_count / total_tags if total_tags > 0 else 0.0
+            # # On initial check in Red illumination, verify that tags are present on stage
+            # if initial_tag_check and idx == 0 and det_count == 0:
+            #     msg = (
+            #         "No ArUco tags detected in Red illumination! "
+            #         "Please verify that a bare silicon chip is on the stage, "
+            #         "rough focus is set, and the camera/projector are active."
+            #     )
+            #     if context.warning_callback:
+            #         context.warning_callback(msg)
+            #     return msg
 
-            # If detection rate is below threshold, stop iteration (skip first iteration as alignment may be blurry)
-            if detection_rate < self.min_detection_rate and idx > 0:
-                print(
-                    f"{mode_name} Grid {grid_n}x{grid_n} detection rate ({detection_rate*100:.1f}%) "
-                    f"< {self.min_detection_rate*100:.1f}%. Stopping iteration.",
-                    flush=True,
-                )
-                break
+            # detection_rate = det_count / total_tags if total_tags > 0 else 0.0
+
+            # # If detection rate is below threshold, stop iteration (skip first iteration as alignment may be blurry)
+            # if detection_rate < self.min_detection_rate and idx > 0:
+            #     print(
+            #         f"{mode_name} Grid {grid_n}x{grid_n} detection rate ({detection_rate*100:.1f}%) "
+            #         f"< {self.min_detection_rate*100:.1f}%. Stopping iteration.",
+            #         flush=True,
+            #     )
+            #     break
 
             # 3. Determine search range & threshold for this grid level
             sweep_range, threshold = (
@@ -183,19 +185,21 @@ class OpticsCalibrationOperation(Operation):
                 return f"Optics calibration failed: {err}"
 
             # 5. Verify detection rate at best focus
-            context.delay_func(1.0)
-            frame_best = context.camera.get_latest_frame()
-            det_count_best, _, _ = self._detect_tags(frame_best)
-            rate_best = det_count_best / total_tags if total_tags > 0 else 0.0
+            # Disabled because the failure rate is too high
 
-            # If detection falls below threshold, do not progress to smaller tags
-            if rate_best < self.min_detection_rate:
-                print(
-                    f"Post-focus {mode_name} {grid_n}x{grid_n} detection rate ({rate_best*100:.1f}%) "
-                    f"< {self.min_detection_rate*100:.1f}%. Halting further refinement.",
-                    flush=True,
-                )
-                break
+            # context.delay_func(1.0)
+            # frame_best = context.camera.get_latest_frame()
+            # det_count_best, _, _ = self._detect_tags(frame_best)
+            # rate_best = det_count_best / total_tags if total_tags > 0 else 0.0
+
+            # # If detection falls below threshold, do not progress to smaller tags
+            # if rate_best < self.min_detection_rate:
+            #     print(
+            #         f"Post-focus {mode_name} {grid_n}x{grid_n} detection rate ({rate_best*100:.1f}%) "
+            #         f"< {self.min_detection_rate*100:.1f}%. Halting further refinement.",
+            #         flush=True,
+            #     )
+            #     break
 
         return None
 

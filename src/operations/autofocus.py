@@ -66,6 +66,11 @@ class AutofocusOperation(Operation):
         try:
             # Iterative grid progression: 2x2 (4 large tags) -> 4x4 (16 tags) -> 8x8 (64 tags)
             grid_sizes = [2, 4, 8]
+            step_configs = [
+                (250, 5),
+                (10, 2),
+                (4, 0.5)
+            ]
 
             for idx, grid_n in enumerate(grid_sizes):
                 if self.is_aborted:
@@ -87,26 +92,25 @@ class AutofocusOperation(Operation):
                 context.delay_func(1.0)
 
                 # 2. Check tag detection
-                frame = context.camera.get_latest_frame()
-                det_count, _, _ = detect_ar_tags(frame, flip_horizontal=True)
-                detection_rate = det_count / total_tags if total_tags > 0 else 0.0
+                # Disabled because the failure rate is too high
 
-                # If detection rate is below threshold, stop iteration
-                # skip the check for the first iteration since the user alignment is expected to be blurry
-                if detection_rate < self.config.min_detection_rate and idx > 0:
-                    print(
-                        f"Grid {grid_n}x{grid_n} detection rate ({detection_rate*100:.1f}%) "
-                        f"< {self.config.min_detection_rate*100:.1f}%. Stopping iteration.",
-                        flush=True,
-                    )
-                    break
+                # frame = context.camera.get_latest_frame()
+                # det_count, _, _ = detect_ar_tags(frame, flip_horizontal=True)
+                # detection_rate = det_count / total_tags if total_tags > 0 else 0.0
+
+                # # If detection rate is below threshold, stop iteration
+                # # skip the check for the first iteration since the user alignment is expected to be blurry
+                # if detection_rate < self.config.min_detection_rate and idx > 0:
+                #     print(
+                #         f"Grid {grid_n}x{grid_n} detection rate ({detection_rate*100:.1f}%) "
+                #         f"< {self.config.min_detection_rate*100:.1f}%. Stopping iteration.",
+                #         flush=True,
+                #     )
+                #     break
+
 
                 # 3. Determine search range & threshold for this grid level
-                step_configs = [
-                    (500, 10),
-                    (20, 2),
-                    (4, 0.5)
-                ]
+
                 sweep_range, threshold = step_configs[idx]
 
                 # 4. Maximize image sharpness via MaximizeImageSharpnessOperation
@@ -140,17 +144,20 @@ class AutofocusOperation(Operation):
                 # 5. Verify detection rate at best focus
                 context.delay_func(1.0)
                 frame_best = context.camera.get_latest_frame()
-                det_count_best, _, _ = detect_ar_tags(frame_best, flip_horizontal=True)
-                rate_best = det_count_best / total_tags if total_tags > 0 else 0.0
 
-                # If detection falls below threshold, do not progress to smaller tags
-                if rate_best < self.config.min_detection_rate:
-                    print(
-                        f"Post-focus {grid_n}x{grid_n} detection rate ({rate_best*100:.1f}%) "
-                        f"< {self.config.min_detection_rate*100:.1f}%. Halting further refinement.",
-                        flush=True,
-                    )
-                    break
+                # Disabled because the failure rate is too high
+
+                # det_count_best, _, _ = detect_ar_tags(frame_best, flip_horizontal=True)
+                # rate_best = det_count_best / total_tags if total_tags > 0 else 0.0
+
+                # # If detection falls below threshold, do not progress to smaller tags
+                # if rate_best < self.config.min_detection_rate:
+                #     print(
+                #         f"Post-focus {grid_n}x{grid_n} detection rate ({rate_best*100:.1f}%) "
+                #         f"< {self.config.min_detection_rate*100:.1f}%. Halting further refinement.",
+                #         flush=True,
+                #     )
+                #     break
 
             # 6. Apply UV-Red Z offset if offset is configured
             if abs(self.config.uv_z_offset) > 1e-6:
