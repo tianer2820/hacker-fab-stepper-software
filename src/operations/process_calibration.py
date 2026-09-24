@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Callable, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 import cv2
 import numpy as np
 
@@ -57,6 +57,10 @@ class ProcessCalibrationConfig:
     max_exposure: float = 5.0  # seconds
     sweep_steps: int = 5
     motion_distance: float = 1000.0  # µm
+    min_z_offset: float = 0.0  # µm
+    max_z_offset: float = 0.0  # µm
+    z_steps: int = 1
+    autofocus_config: Optional[Any] = None
 
 
 class ProcessCalibrationOperation(Operation):
@@ -64,9 +68,10 @@ class ProcessCalibrationOperation(Operation):
     
     At each position:
       1. Moves stage to spiral location (starting at center for step 0).
-      2. Performs autofocus.
-      3. Generates calibration pattern fitting the projector resolution with exposure length as title.
-      4. Sets generated pattern to projector and exposes for the configured duration.
+      2. Performs autofocus (using configured autofocus offset).
+      3. Applies Z sweep offset on top of the autofocus position.
+      4. Generates calibration pattern fitting the projector resolution with exposure length and Z offset as title.
+      5. Sets generated pattern to projector and exposes for the configured duration.
     """
 
     def __init__(
@@ -75,6 +80,10 @@ class ProcessCalibrationOperation(Operation):
         max_exposure: float = 5.0,
         sweep_steps: int = 5,
         motion_distance: float = 1000.0,
+        min_z_offset: float = 0.0,
+        max_z_offset: float = 0.0,
+        z_steps: int = 1,
+        autofocus_config: Optional[Any] = None,
         config: Optional[ProcessCalibrationConfig] = None,
     ):
         super().__init__("Process Calibration")
@@ -83,11 +92,19 @@ class ProcessCalibrationOperation(Operation):
             self.max_exposure = config.max_exposure
             self.sweep_steps = config.sweep_steps
             self.motion_distance = config.motion_distance
+            self.min_z_offset = config.min_z_offset
+            self.max_z_offset = config.max_z_offset
+            self.z_steps = config.z_steps
+            self.autofocus_config = config.autofocus_config or autofocus_config
         else:
             self.min_exposure = min_exposure
             self.max_exposure = max_exposure
             self.sweep_steps = sweep_steps
             self.motion_distance = motion_distance
+            self.min_z_offset = min_z_offset
+            self.max_z_offset = max_z_offset
+            self.z_steps = z_steps
+            self.autofocus_config = autofocus_config
 
         self._current_sub_op: Optional[Operation] = None
 
@@ -119,12 +136,23 @@ class ProcessCalibrationOperation(Operation):
         if projector is None or stage is None:
             return "Projector or stage not found in context"
 
-        total_steps = max(1, int(self.sweep_steps))
-        if total_steps == 1:
+        total_exp_steps = max(1, int(self.sweep_steps))
+        if total_exp_steps == 1:
             exposures = [float(self.min_exposure)]
         else:
-            exposures = [float(e) for e in np.linspace(self.min_exposure, self.max_exposure, total_steps)]
+            exposures = [float(e) for e in np.linspace(self.min_exposure, self.max_exposure, total_exp_steps)]
 
+        total_z_steps = max(1, int(self.z_steps))
+        if total_z_steps == 1:
+            z_offsets = [float(self.min_z_offset)]
+        else:
+            z_offsets = [float(z) for z in np.linspace(self.min_z_offset, self.max_z_offset, total_z_steps)]
+
+        # 2D Focus-Exposure Matrix combinations (exposure x z_offset)
+        pairs: List[Tuple[float, float]] = [
+            (exp, z_off) for exp in exposures for z_off in z_offsets
+        ]
+        total_steps = len(pairs)
         offsets = generate_spiral_offsets(total_steps, self.motion_distance)
 
         # Record starting position
@@ -132,11 +160,11 @@ class ProcessCalibrationOperation(Operation):
         pw, ph = projector.projector_size()
         square_size = min(pw, ph)
 
-        report_progress(0.0, f"Starting process calibration ({total_steps} steps)...")
+        report_progress(0.0, f"Starting process calibration ({total_steps} steps: {total_exp_steps} exp x {total_z_steps} z)...")
 
         last_error: Optional[str] = None
         try:
-            for step_idx, (exp_s, (off_x, off_y)) in enumerate(zip(exposures, offsets)):
+            for step_idx, ((exp_s, z_off), (off_x, off_y)) in enumerate(zip(pairs, offsets)):
                 if self.is_aborted:
                     break
 
@@ -163,7 +191,7 @@ class ProcessCalibrationOperation(Operation):
                     pct_base + 0.15 * pct_step,
                     f"Step {step_num}/{total_steps}: Autofocusing...",
                 )
-                af_config = getattr(context, "autofocus_config", None)
+                af_config = self.autofocus_config or getattr(context, "autofocus_config", None)
                 af_op = AutofocusOperation(config=af_config)
                 err = self._run_sub_op(
                     af_op,
@@ -178,13 +206,32 @@ class ProcessCalibrationOperation(Operation):
                         return f"Autofocus failed at step {step_num}: {err}"
                     break
 
-                # 3. Generate pattern fitting projector resolution with exposure length as title
+                # 3. Apply Z sweep offset on top of autofocus offset
+                if abs(z_off) > 1e-6:
+                    curr_pos = stage.get_position()
+                    target_z = curr_pos[2] + z_off
+                    report_progress(
+                        pct_base + 0.52 * pct_step,
+                        f"Step {step_num}/{total_steps}: Applying Z offset {z_off:+.2f} µm (Z: {curr_pos[2]:.2f} -> {target_z:.2f} µm)...",
+                    )
+                    if not stage.move_absolute({"z": target_z}):
+                        msg = f"Failed to apply Z offset {z_off:+.2f} µm at step {step_num}"
+                        if context.warning_callback:
+                            context.warning_callback(msg)
+                        return msg
+                    context.delay_func(1)
+
+                # 4. Generate pattern fitting projector resolution with exposure length and Z offset as title
                 report_progress(
                     pct_base + 0.55 * pct_step,
-                    f"Step {step_num}/{total_steps}: Generating pattern for {exp_s:.4g}s...",
+                    f"Step {step_num}/{total_steps}: Generating pattern for {exp_s:.4g}s, {z_off:+.2f}µm...",
                 )
-                title = f"{exp_s:.4g}s"
-                sub_title = f"STEP: {step_num}/{total_steps}\nEXP: {exp_s:.4g}s"
+                if abs(z_off) > 1e-6 or total_z_steps > 1:
+                    title = f"{exp_s:.4g}s | {z_off:+.2f}µm"
+                    sub_title = f"STEP: {step_num}/{total_steps}\nEXP: {exp_s:.4g}s | ΔZ: {z_off:+.2f}µm"
+                else:
+                    title = f"{exp_s:.4g}s"
+                    sub_title = f"STEP: {step_num}/{total_steps}\nEXP: {exp_s:.4g}s"
                 pattern_sq = generate_litho_target(
                     size=square_size,
                     main_text=title,
@@ -202,7 +249,7 @@ class ProcessCalibrationOperation(Operation):
                 x_offset = (pw - square_size) // 2
                 canvas[y_offset : y_offset + square_size, x_offset : x_offset + square_size] = pattern_bgr
 
-                # 4. Set generated image and expose
+                # 5. Set generated image and expose
                 projector.set_generated_image(canvas)
                 projector.set_image_source(ProjectorImageSource.GENERATED)
 

@@ -84,6 +84,9 @@ class MachineControlPanelWidget(QWidget):
         self.spin_cal_min_exp = self.process_tab.spin_min_exposure
         self.spin_cal_max_exp = self.process_tab.spin_max_exposure
         self.spin_cal_sweep_steps = self.process_tab.spin_sweep_steps
+        self.spin_cal_min_z = self.process_tab.spin_min_z_offset
+        self.spin_cal_max_z = self.process_tab.spin_max_z_offset
+        self.spin_cal_z_steps = self.process_tab.spin_z_steps
         self.spin_cal_motion_dist = self.process_tab.spin_motion_distance
 
         # Connect signals

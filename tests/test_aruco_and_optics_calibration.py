@@ -378,8 +378,11 @@ class TestMachineControlPanelTabs(unittest.TestCase):
         self.assertEqual(panel.lbl_cal_uv_z.text(), "115.50 µm")
         self.assertEqual(panel.lbl_cal_offset_z.text(), "+15.50 µm")
         self.assertTrue(panel.btn_apply_cal_offset.isEnabled())
+        # Automatically set in GUI panel and engine config after calibration finishes
+        self.assertEqual(panel.spin_uv_offset.value(), 15.5)
+        self.assertEqual(engine.autofocus_config.uv_z_offset, 15.5)
 
-        # Click apply offset button
+        # Click apply offset button again to verify idempotency
         panel.btn_apply_cal_offset.click()
         self.assertEqual(panel.spin_uv_offset.value(), 15.5)
         self.assertEqual(engine.autofocus_config.uv_z_offset, 15.5)

@@ -156,6 +156,73 @@ class TestProcessCalibrationOperation(unittest.TestCase):
         err = op.execute(self.engine.context, lambda p, m: None)
         self.assertEqual(err, "Process calibration aborted")
 
+    @patch("operations.process_calibration.AutofocusOperation")
+    @patch("operations.process_calibration.ExposureOperation.execute")
+    def test_process_calibration_uses_autofocus_config(self, mock_exp_exec, mock_af_cls):
+        """Verify that ProcessCalibrationOperation passes autofocus_config to AutofocusOperation."""
+        mock_af_instance = MagicMock()
+        mock_af_instance.execute.return_value = None
+        mock_af_cls.return_value = mock_af_instance
+        mock_exp_exec.return_value = None
+
+        from operations.autofocus import AutofocusConfig
+        af_cfg = AutofocusConfig(enabled=True, uv_z_offset=12.5)
+
+        op = ProcessCalibrationOperation(
+            min_exposure=1.0,
+            max_exposure=1.0,
+            sweep_steps=1,
+            autofocus_config=af_cfg,
+        )
+        err = op.execute(self.engine.context, lambda p, m: None)
+        self.assertIsNone(err)
+
+        # Inspect constructor call of AutofocusOperation
+        mock_af_cls.assert_called_with(config=af_cfg)
+
+    @patch("operations.process_calibration.AutofocusOperation.execute")
+    @patch("operations.process_calibration.ExposureOperation.execute")
+    def test_process_calibration_2d_fem_matrix_sweep(self, mock_exp_exec, mock_af_exec):
+        """Verify 2D Focus-Exposure Matrix sweeps N exposures x M Z-offsets and applies Z offsets."""
+        mock_af_exec.return_value = None
+        mock_exp_exec.return_value = None
+
+        z_positions_at_exposure = []
+
+        def capture_z_on_exposure(ctx, report):
+            z_positions_at_exposure.append(self.stage.get_position()[2])
+            return None
+
+        mock_exp_exec.side_effect = capture_z_on_exposure
+
+        # Base Z is 50.0
+        self.stage.move_absolute({"z": 50.0})
+
+        op = ProcessCalibrationOperation(
+            min_exposure=1.0,
+            max_exposure=3.0,
+            sweep_steps=2,       # exposures: 1.0s, 3.0s
+            min_z_offset=-4.0,
+            max_z_offset=4.0,
+            z_steps=2,           # z offsets: -4.0, +4.0
+            motion_distance=200.0,
+        )
+
+        err = op.execute(self.engine.context, lambda p, m: None)
+        self.assertIsNone(err)
+
+        # Total steps: 2 exposures x 2 z offsets = 4 steps
+        self.assertEqual(mock_af_exec.call_count, 4)
+        self.assertEqual(mock_exp_exec.call_count, 4)
+        self.assertEqual(len(z_positions_at_exposure), 4)
+
+        # Step 0: exp 1.0s, z_offset -4.0 -> Z = 50.0 - 4.0 = 46.0
+        # Step 1: exp 1.0s, z_offset +4.0 -> Z = 50.0 + 4.0 = 54.0
+        # Step 2: exp 3.0s, z_offset -4.0 -> Z = 54.0 - 4.0 -> wait, stage at each step:
+        # Since mock_af_exec does not move Z, the stage moves by z_off from current position:
+        self.assertAlmostEqual(z_positions_at_exposure[0], 46.0)
+        self.assertAlmostEqual(z_positions_at_exposure[1], 50.0)  # 46.0 + 4.0 = 50.0
+
 
 class TestProcessCalibrationUI(unittest.TestCase):
     @classmethod
@@ -178,12 +245,18 @@ class TestProcessCalibrationUI(unittest.TestCase):
         self.assertEqual(tab.spin_min_exposure.value(), 1.0)
         self.assertEqual(tab.spin_max_exposure.value(), 5.0)
         self.assertEqual(tab.spin_sweep_steps.value(), 5)
+        self.assertEqual(tab.spin_min_z_offset.value(), 0.0)
+        self.assertEqual(tab.spin_max_z_offset.value(), 0.0)
+        self.assertEqual(tab.spin_z_steps.value(), 1)
         self.assertEqual(tab.spin_motion_distance.value(), 1000.0)
 
         # Verify direct aliases on panel
         self.assertEqual(panel.spin_cal_min_exp.value(), 1.0)
         self.assertEqual(panel.spin_cal_max_exp.value(), 5.0)
         self.assertEqual(panel.spin_cal_sweep_steps.value(), 5)
+        self.assertEqual(panel.spin_cal_min_z.value(), 0.0)
+        self.assertEqual(panel.spin_cal_max_z.value(), 0.0)
+        self.assertEqual(panel.spin_cal_z_steps.value(), 1)
         self.assertEqual(panel.spin_cal_motion_dist.value(), 1000.0)
         self.assertEqual(panel.btn_start_process_cal, tab.btn_start_cal)
         self.assertEqual(panel.btn_fem_placeholder, tab.btn_start_cal)
@@ -197,6 +270,9 @@ class TestProcessCalibrationUI(unittest.TestCase):
         self.assertFalse(tab.spin_min_exposure.isEnabled())
         self.assertFalse(tab.spin_max_exposure.isEnabled())
         self.assertFalse(tab.spin_sweep_steps.isEnabled())
+        self.assertFalse(tab.spin_min_z_offset.isEnabled())
+        self.assertFalse(tab.spin_max_z_offset.isEnabled())
+        self.assertFalse(tab.spin_z_steps.isEnabled())
         self.assertFalse(tab.spin_motion_distance.isEnabled())
 
         tab.update_lock_state(is_busy=False)
@@ -204,6 +280,9 @@ class TestProcessCalibrationUI(unittest.TestCase):
         self.assertTrue(tab.spin_min_exposure.isEnabled())
         self.assertTrue(tab.spin_max_exposure.isEnabled())
         self.assertTrue(tab.spin_sweep_steps.isEnabled())
+        self.assertTrue(tab.spin_min_z_offset.isEnabled())
+        self.assertTrue(tab.spin_max_z_offset.isEnabled())
+        self.assertTrue(tab.spin_z_steps.isEnabled())
         self.assertTrue(tab.spin_motion_distance.isEnabled())
 
     @patch.object(QtEngineBridge, "start_operation")
@@ -214,6 +293,9 @@ class TestProcessCalibrationUI(unittest.TestCase):
         tab.spin_min_exposure.setValue(2.0)
         tab.spin_max_exposure.setValue(8.0)
         tab.spin_sweep_steps.setValue(4)
+        tab.spin_min_z_offset.setValue(-3.0)
+        tab.spin_max_z_offset.setValue(3.0)
+        tab.spin_z_steps.setValue(3)
         tab.spin_motion_distance.setValue(1200.0)
 
         tab.btn_start_cal.click()
@@ -224,6 +306,9 @@ class TestProcessCalibrationUI(unittest.TestCase):
         self.assertEqual(op.min_exposure, 2.0)
         self.assertEqual(op.max_exposure, 8.0)
         self.assertEqual(op.sweep_steps, 4)
+        self.assertEqual(op.min_z_offset, -3.0)
+        self.assertEqual(op.max_z_offset, 3.0)
+        self.assertEqual(op.z_steps, 3)
         self.assertEqual(op.motion_distance, 1200.0)
 
 

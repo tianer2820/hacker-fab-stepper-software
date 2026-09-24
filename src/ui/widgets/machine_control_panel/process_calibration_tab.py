@@ -40,11 +40,10 @@ class ProcessCalibrationTabWidget(QScrollArea):
         info_box = QGroupBox("Process Calibration Procedure")
         info_layout = QVBoxLayout(info_box)
         info_lbl = QLabel(
-            "<b>Exposure Sweep Matrix (FEM)</b><br><br>"
+            "<b>Focus-Exposure Matrix (FEM)</b><br><br>"
             "1. Focus at the initial substrate position.<br>"
-            "2. Sweep exposure duration from Min to Max over the configured steps.<br>"
-            "3. At each step, autofocus is performed, the calibration reticle pattern is generated "
-            "with the exposure time in the title and projected, and exposure is executed.<br>"
+            "2. Sweep exposure duration and Z offset from Min to Max over the configured steps.<br>"
+            "3. At each step, autofocus is performed (using the UV-Red autofocus offset), the additional Z sweep offset is applied, and the calibration reticle pattern is exposed.<br>"
             "4. The stage automatically steps outward in a 2D spiral pattern from the center."
         )
         info_lbl.setWordWrap(True)
@@ -77,23 +76,51 @@ class ProcessCalibrationTabWidget(QScrollArea):
         self.spin_max_exposure.setSuffix(" s")
         param_grid.addWidget(self.spin_max_exposure, 1, 1)
 
-        # Sweep Steps
-        param_grid.addWidget(QLabel("Sweep Steps:"), 2, 0)
+        # Sweep Steps (Exposure steps)
+        param_grid.addWidget(QLabel("Exposure Steps:"), 2, 0)
         self.spin_sweep_steps = QSpinBox()
         self.spin_sweep_steps.setRange(1, 100)
         self.spin_sweep_steps.setSingleStep(1)
         self.spin_sweep_steps.setValue(5)
         param_grid.addWidget(self.spin_sweep_steps, 2, 1)
 
+        # Min Z Offset
+        param_grid.addWidget(QLabel("Min Z Offset:"), 3, 0)
+        self.spin_min_z_offset = QDoubleSpinBox()
+        self.spin_min_z_offset.setRange(-1000.0, 1000.0)
+        self.spin_min_z_offset.setDecimals(2)
+        self.spin_min_z_offset.setSingleStep(1.0)
+        self.spin_min_z_offset.setValue(0.0)
+        self.spin_min_z_offset.setSuffix(" µm")
+        param_grid.addWidget(self.spin_min_z_offset, 3, 1)
+
+        # Max Z Offset
+        param_grid.addWidget(QLabel("Max Z Offset:"), 4, 0)
+        self.spin_max_z_offset = QDoubleSpinBox()
+        self.spin_max_z_offset.setRange(-1000.0, 1000.0)
+        self.spin_max_z_offset.setDecimals(2)
+        self.spin_max_z_offset.setSingleStep(1.0)
+        self.spin_max_z_offset.setValue(0.0)
+        self.spin_max_z_offset.setSuffix(" µm")
+        param_grid.addWidget(self.spin_max_z_offset, 4, 1)
+
+        # Z Steps
+        param_grid.addWidget(QLabel("Z Steps:"), 5, 0)
+        self.spin_z_steps = QSpinBox()
+        self.spin_z_steps.setRange(1, 100)
+        self.spin_z_steps.setSingleStep(1)
+        self.spin_z_steps.setValue(1)
+        param_grid.addWidget(self.spin_z_steps, 5, 1)
+
         # Motion Distance (pitch / step distance)
-        param_grid.addWidget(QLabel("Motion Distance:"), 3, 0)
+        param_grid.addWidget(QLabel("Motion Distance:"), 6, 0)
         self.spin_motion_distance = QDoubleSpinBox()
         self.spin_motion_distance.setRange(10.0, 50000.0)
         self.spin_motion_distance.setDecimals(1)
         self.spin_motion_distance.setSingleStep(100.0)
         self.spin_motion_distance.setValue(1000.0)
         self.spin_motion_distance.setSuffix(" µm")
-        param_grid.addWidget(self.spin_motion_distance, 3, 1)
+        param_grid.addWidget(self.spin_motion_distance, 6, 1)
 
         ctrl_layout.addLayout(param_grid)
 
@@ -122,6 +149,10 @@ class ProcessCalibrationTabWidget(QScrollArea):
             max_exposure=self.spin_max_exposure.value(),
             sweep_steps=self.spin_sweep_steps.value(),
             motion_distance=self.spin_motion_distance.value(),
+            min_z_offset=self.spin_min_z_offset.value(),
+            max_z_offset=self.spin_max_z_offset.value(),
+            z_steps=self.spin_z_steps.value(),
+            autofocus_config=getattr(self.engine, "autofocus_config", None),
         )
         self._active_op = op
         self.lbl_status.setText("Status: Running calibration...")
@@ -141,4 +172,7 @@ class ProcessCalibrationTabWidget(QScrollArea):
         self.spin_min_exposure.setEnabled(not is_busy)
         self.spin_max_exposure.setEnabled(not is_busy)
         self.spin_sweep_steps.setEnabled(not is_busy)
+        self.spin_min_z_offset.setEnabled(not is_busy)
+        self.spin_max_z_offset.setEnabled(not is_busy)
+        self.spin_z_steps.setEnabled(not is_busy)
         self.spin_motion_distance.setEnabled(not is_busy)

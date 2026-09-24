@@ -131,7 +131,10 @@ class OpticsCalibrationTabWidget(QScrollArea):
 
     def _on_apply_cal_offset_clicked(self):
         if self._latest_cal_offset is not None:
-            if hasattr(self.engine, "autofocus_config") and self.engine.autofocus_config is not None:
+            if hasattr(self.engine, "autofocus_config"):
+                if self.engine.autofocus_config is None:
+                    from operations.autofocus import AutofocusConfig
+                    self.engine.autofocus_config = AutofocusConfig()
                 self.engine.autofocus_config.uv_z_offset = self._latest_cal_offset
             if self._on_apply_callback:
                 self._on_apply_callback(self._latest_cal_offset)
@@ -139,6 +142,10 @@ class OpticsCalibrationTabWidget(QScrollArea):
     def on_operation_finished(self, op_or_name=None, err=None):
         from core.operation import Operation
         op = op_or_name if isinstance(op_or_name, Operation) else getattr(self, "_active_op", None)
+        if not isinstance(op, Operation) and hasattr(self.engine, "operations"):
+            current = self.engine.operations.current_operation
+            if isinstance(current, OpticsCalibrationOperation):
+                op = current
         if isinstance(op, OpticsCalibrationOperation) and err is None:
             if op.red_best_z is not None:
                 self.lbl_cal_red_z.setText(f"{op.red_best_z:.2f} µm")
@@ -148,6 +155,7 @@ class OpticsCalibrationTabWidget(QScrollArea):
                 self.lbl_cal_offset_z.setText(f"{op.uv_z_offset:+.2f} µm")
                 self._latest_cal_offset = op.uv_z_offset
                 self.btn_apply_cal_offset.setEnabled(True)
+                self._on_apply_cal_offset_clicked()
 
     def update_lock_state(self, is_busy: bool):
         self.btn_start_optics_cal.setEnabled(not is_busy)
