@@ -203,7 +203,8 @@ class ProcessCalibrationOperation(Operation):
                 )
                 if err or self.is_aborted:
                     if err:
-                        return f"Autofocus failed at step {step_num}: {err}"
+                        print(f"Autofocus failed at step {step_num}: {err}, skipping to next step")
+                        continue
                     break
 
                 # 3. Apply Z sweep offset on top of autofocus offset
