@@ -127,63 +127,7 @@ class ManualControlTabWidget(QScrollArea):
         jog_layout.addLayout(grid)
         manual_layout.addWidget(jog_box)
 
-        # 3. Maximize Image Sharpness Group Box
-        sharp_box = QGroupBox("Maximize Image Sharpness")
-        sharp_layout = QVBoxLayout(sharp_box)
-        sharp_layout.setContentsMargins(6, 6, 6, 6)
-        sharp_layout.setSpacing(6)
-
-        sharp_range_layout = QHBoxLayout()
-        sharp_range_layout.addWidget(QLabel("Z Search Range (±µm):"))
-        self.spin_sharp_z_range = QDoubleSpinBox()
-        self.spin_sharp_z_range.setRange(0.1, 1000.0)
-        self.spin_sharp_z_range.setDecimals(1)
-        self.spin_sharp_z_range.setSingleStep(1.0)
-        self.spin_sharp_z_range.setValue(20.0)
-        sharp_range_layout.addWidget(self.spin_sharp_z_range)
-        sharp_layout.addLayout(sharp_range_layout)
-
-        self.btn_maximize_sharpness = QPushButton("Maximize Image Sharpness")
-        self.btn_maximize_sharpness.clicked.connect(self._on_maximize_sharpness_clicked)
-        sharp_layout.addWidget(self.btn_maximize_sharpness)
-        manual_layout.addWidget(sharp_box)
-
-        # 4. Autofocus Group Box
-        af_box = QGroupBox("Autofocus")
-        af_layout = QVBoxLayout(af_box)
-        af_layout.setContentsMargins(6, 6, 6, 6)
-        af_layout.setSpacing(6)
-
-        af_offset_layout = QHBoxLayout()
-        af_offset_layout.addWidget(QLabel("UV-Red Z Offset (µm):"))
-        self.spin_uv_offset = QDoubleSpinBox()
-        self.spin_uv_offset.setRange(-1000.0, 1000.0)
-        self.spin_uv_offset.setDecimals(2)
-        self.spin_uv_offset.setSingleStep(1.0)
-        init_offset = 0.0
-        if hasattr(self.engine, "autofocus_config") and self.engine.autofocus_config is not None:
-            init_offset = getattr(self.engine.autofocus_config, "uv_z_offset", 0.0)
-        self.spin_uv_offset.setValue(init_offset)
-        self.spin_uv_offset.valueChanged.connect(self._on_uv_offset_changed)
-        af_offset_layout.addWidget(self.spin_uv_offset)
-        af_layout.addLayout(af_offset_layout)
-
-        self.btn_autofocus = QPushButton("Run Autofocus")
-        self.btn_autofocus.clicked.connect(self._on_autofocus_clicked)
-        af_layout.addWidget(self.btn_autofocus)
-        manual_layout.addWidget(af_box)
-
-        # 5. Alignment Group Box
-        align_box = QGroupBox("Alignment")
-        align_layout = QVBoxLayout(align_box)
-        align_layout.setContentsMargins(6, 6, 6, 6)
-
-        self.btn_align = QPushButton("Align to Marks")
-        self.btn_align.clicked.connect(self._on_align_clicked)
-        align_layout.addWidget(self.btn_align)
-        manual_layout.addWidget(align_box)
-
-        # 6. Projector Illumination & Image Source Controls
+        # 3. Projector Illumination & Image Source Controls
         proj_box = QGroupBox("Projector Control")
         proj_layout = QVBoxLayout(proj_box)
         proj_layout.setContentsMargins(6, 6, 6, 6)
@@ -257,6 +201,63 @@ class ManualControlTabWidget(QScrollArea):
 
         proj_layout.addWidget(src_group_box)
         manual_layout.addWidget(proj_box)
+
+        # 4. Maximize Image Sharpness Group Box
+        sharp_box = QGroupBox("Maximize Image Sharpness")
+        sharp_layout = QVBoxLayout(sharp_box)
+        sharp_layout.setContentsMargins(6, 6, 6, 6)
+        sharp_layout.setSpacing(6)
+
+        sharp_range_layout = QHBoxLayout()
+        sharp_range_layout.addWidget(QLabel("Z Search Range (±µm):"))
+        self.spin_sharp_z_range = QDoubleSpinBox()
+        self.spin_sharp_z_range.setRange(0.1, 1000.0)
+        self.spin_sharp_z_range.setDecimals(1)
+        self.spin_sharp_z_range.setSingleStep(1.0)
+        self.spin_sharp_z_range.setValue(20.0)
+        sharp_range_layout.addWidget(self.spin_sharp_z_range)
+        sharp_layout.addLayout(sharp_range_layout)
+
+        self.btn_maximize_sharpness = QPushButton("Maximize Image Sharpness")
+        self.btn_maximize_sharpness.clicked.connect(self._on_maximize_sharpness_clicked)
+        sharp_layout.addWidget(self.btn_maximize_sharpness)
+        manual_layout.addWidget(sharp_box)
+
+        # 5. Autofocus Group Box
+        af_box = QGroupBox("Autofocus")
+        af_layout = QVBoxLayout(af_box)
+        af_layout.setContentsMargins(6, 6, 6, 6)
+        af_layout.setSpacing(6)
+
+        af_offset_layout = QHBoxLayout()
+        af_offset_layout.addWidget(QLabel("UV-Red Z Offset (µm):"))
+        self.spin_uv_offset = QDoubleSpinBox()
+        self.spin_uv_offset.setRange(-1000.0, 1000.0)
+        self.spin_uv_offset.setDecimals(2)
+        self.spin_uv_offset.setSingleStep(1.0)
+        init_offset = 0.0
+        if hasattr(self.engine, "autofocus_config") and self.engine.autofocus_config is not None:
+            init_offset = getattr(self.engine.autofocus_config, "uv_z_offset", 0.0)
+        self.spin_uv_offset.setValue(init_offset)
+        self.spin_uv_offset.valueChanged.connect(self._on_uv_offset_changed)
+        af_offset_layout.addWidget(self.spin_uv_offset)
+        af_layout.addLayout(af_offset_layout)
+
+        self.btn_autofocus = QPushButton("Run Autofocus")
+        self.btn_autofocus.clicked.connect(self._on_autofocus_clicked)
+        af_layout.addWidget(self.btn_autofocus)
+        manual_layout.addWidget(af_box)
+
+        # 6. Alignment Group Box
+        align_box = QGroupBox("Alignment")
+        align_layout = QVBoxLayout(align_box)
+        align_layout.setContentsMargins(6, 6, 6, 6)
+
+        self.btn_align = QPushButton("Align to Marks")
+        self.btn_align.clicked.connect(self._on_align_clicked)
+        align_layout.addWidget(self.btn_align)
+        manual_layout.addWidget(align_box)
+
         manual_layout.addStretch()
 
         self.setWidget(container)
