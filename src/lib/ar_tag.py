@@ -112,15 +112,15 @@ def detect_ar_tags(
 def compute_focus_score(
     camera_image: Optional[np.ndarray],
     ddepth: int = cv2.CV_64F,
-    kernel_size: int = 5,
+    kernel_size: int = 9,
 ) -> float:
-    """Calculates focus sharpness score via Laplacian variance."""
+    """Calculates focus sharpness score via Sobel gradient magnitude variance."""
     if camera_image is None or camera_image.size == 0:
         return 0.0
 
     img = camera_image.copy()
-    if img.shape[0] * 0.1 >= kernel_size and img.shape[1] * 0.1 >= kernel_size:
-        img = cv2.resize(img, None, fx=0.1, fy=0.1)
+    if img.shape[0] * 0.5 >= kernel_size and img.shape[1] * 0.5 >= kernel_size:
+        img = cv2.resize(img, None, fx=0.5, fy=0.5)
 
     if img.ndim == 3 and img.shape[2] >= 3:
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -129,5 +129,10 @@ def compute_focus_score(
     else:
         return 0.0
 
-    lap = cv2.Laplacian(gray, ddepth, ksize=kernel_size)
-    return float(lap.var())
+    if gray.shape[0] < kernel_size or gray.shape[1] < kernel_size:
+        return 0.0
+
+    sobel_x = cv2.Sobel(gray, ddepth, 1, 0, ksize=kernel_size)
+    sobel_y = cv2.Sobel(gray, ddepth, 0, 1, ksize=kernel_size)
+    magnitude = np.hypot(sobel_x, sobel_y)
+    return float(magnitude.var())
