@@ -114,9 +114,30 @@ class ProjectorController(EngineModule, ABC):
 
         elif self.image_source == ProjectorImageSource.CUSTOM_FILE:
             if self.custom_image_path is not None:
-                img = cv2.imread(self.custom_image_path)
-                if img is None:
+                loaded_img = cv2.imread(self.custom_image_path)
+                if loaded_img is None:
                     print("Failed to load custom image")
+                else:
+                    proj_w, proj_h = self.projector_size()
+                    img_h, img_w = loaded_img.shape[:2]
+                    if proj_w > 0 and proj_h > 0 and img_w > 0 and img_h > 0:
+                        scale = min(proj_w / img_w, proj_h / img_h)
+                        new_w = max(1, int(round(img_w * scale)))
+                        new_h = max(1, int(round(img_h * scale)))
+                        interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+                        resized = cv2.resize(loaded_img, (new_w, new_h), interpolation=interp)
+
+                        if resized.ndim == 2:
+                            canvas = np.zeros((proj_h, proj_w), dtype=resized.dtype)
+                        else:
+                            canvas = np.zeros((proj_h, proj_w, resized.shape[2]), dtype=resized.dtype)
+
+                        x_offset = (proj_w - new_w) // 2
+                        y_offset = (proj_h - new_h) // 2
+                        canvas[y_offset : y_offset + new_h, x_offset : x_offset + new_w] = resized
+                        img = canvas
+                    else:
+                        img = loaded_img
 
         elif self.image_source == ProjectorImageSource.ACTIVE_LAYER and self.project is not None:
             tile = self.project.active_tile
