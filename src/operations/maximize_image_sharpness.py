@@ -30,12 +30,14 @@ class MaximizeImageSharpnessOperation(Operation):
         threshold: float = 0.5,
         max_iterations: int = 10,
         settle_delay: float = 0.5,
+        max_resamples: int = 3,
     ):
         super().__init__("Maximize Image Sharpness")
         self.z_range = z_range
         self.threshold = threshold
         self.max_iterations = max_iterations
         self.settle_delay = settle_delay
+        self.max_resamples = int(max_resamples)
         self.result: Optional[SharpnessOptimizationResult] = None
 
     def execute(self, context: ExecutionContext, report_progress: Callable[[float, str], None]) -> Optional[str]:
@@ -65,10 +67,10 @@ class MaximizeImageSharpnessOperation(Operation):
         best_z = current_z
         best_score = -1.0
 
-        def measure(z_target: float) -> Optional[float]:
+        def measure(z_target: float, force: bool = False) -> Optional[float]:
             nonlocal best_z, best_score
             key = round(float(z_target), 4)
-            if key in cache:
+            if not force and key in cache:
                 return cache[key]
 
             if self.is_aborted:
@@ -85,9 +87,10 @@ class MaximizeImageSharpnessOperation(Operation):
             score = compute_focus_score(frame)
             cache[key] = score
 
-            if score > best_score:
-                best_score = score
-                best_z = z_target
+            if cache:
+                best_k = max(cache, key=lambda k: cache[k])
+                best_score = cache[best_k]
+                best_z = best_k
 
             return score
 
@@ -120,6 +123,34 @@ class MaximizeImageSharpnessOperation(Operation):
 
             iterations += 1
 
+            # If the middle point is worse than both endpoints, resample the three points
+            resample_count = 0
+            while s_mid < s_low and s_mid < s_high:
+                if resample_count >= self.max_resamples:
+                    return "Failed to maximize image sharpness, middle point worse than both endpoints"
+
+                resample_count += 1
+                report_progress(
+                    min(1.0, iterations / max(1, self.max_iterations)),
+                    f"Middle point score ({s_mid:.2f}) worse than endpoints ({s_low:.2f}, {s_high:.2f}). "
+                    f"Resampling 3 points (attempt {resample_count}/{self.max_resamples})...",
+                )
+
+                s_low = measure(z_low, force=True)
+                if s_low is None:
+                    return "Sharpness maximization aborted" if self.is_aborted else "Failed to move Z stage to lower limit"
+
+                s_mid = measure(z_mid, force=True)
+                if s_mid is None:
+                    return "Sharpness maximization aborted" if self.is_aborted else "Failed to move Z stage to middle position"
+
+                s_high = measure(z_high, force=True)
+                if s_high is None:
+                    return "Sharpness maximization aborted" if self.is_aborted else "Failed to move Z stage to upper limit"
+
+                if self.is_aborted:
+                    return "Sharpness maximization aborted"
+
             # We have three points: (z_low, s_low), (z_mid, s_mid), (z_high, s_high)
             # Select the two highest-scoring points to form the next search bracket
             candidates = [
@@ -129,10 +160,6 @@ class MaximizeImageSharpnessOperation(Operation):
             ]
             candidates.sort(key=lambda p: p[1], reverse=True)
             top1, top2 = candidates[0], candidates[1]
-
-            # The middle point should never be worse than both ends, if that happens, something is wrong
-            if s_mid < s_low and s_mid < s_high:
-                return "Failed to maximize image sharpness, middle point worse than both endpoints"
 
 
             # Standard unimodal case: top two points are either [z_low, z_mid] or [z_mid, z_high]

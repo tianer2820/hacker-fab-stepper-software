@@ -192,6 +192,99 @@ class TestMaximizeImageSharpness(unittest.TestCase):
         self.assertIsNotNone(err)
         self.assertIn("aborted", err)
 
+    def test_middle_point_worse_resamples_and_recovers(self):
+        """Verify that when the middle point is initially worse than both ends,
+        it resamples the 3 points and recovers when subsequent samples are valid.
+        """
+        stage = DummyStage(initial_position=(0.0, 0.0, 50.0))
+        peak_z = 50.0
+        mid_call_count = 0
+
+        cam = MagicMock()
+
+        def frame_with_initial_mid_glitch():
+            nonlocal mid_call_count
+            curr_z = stage.get_position()[2]
+            img = np.zeros((10, 10, 3), dtype=np.uint8)
+
+            # First time measuring the middle point (curr_z ~ 50.0), return a glitched low sharpness frame
+            if abs(curr_z - 50.0) < 0.1 and mid_call_count == 0:
+                mid_call_count += 1
+                return img  # score 0.0
+
+            val = int(max(10.0, 255.0 - abs(curr_z - peak_z) * 15.0))
+            img[:5, :, 2] = val
+            return img
+
+        cam.get_latest_frame.side_effect = frame_with_initial_mid_glitch
+
+        ctx = ExecutionContext(
+            stage=stage,
+            projector=MagicMock(),
+            camera=cam,
+            delay_func=lambda _: None,
+        )
+
+        op = MaximizeImageSharpnessOperation(
+            z_range=10.0,
+            threshold=0.5,
+            max_iterations=10,
+            settle_delay=0.0,
+            max_resamples=3,
+        )
+
+        progress_messages = []
+        err = op.execute(ctx, lambda p, m: progress_messages.append(m))
+
+        self.assertIsNone(err)
+        self.assertIsNotNone(op.result)
+        assert op.result is not None
+        self.assertTrue(op.result.converged)
+        self.assertAlmostEqual(op.result.best_z, peak_z, delta=0.5)
+        # Verify that resampling occurred
+        resample_msgs = [m for m in progress_messages if "Resampling 3 points" in m]
+        self.assertGreaterEqual(len(resample_msgs), 1)
+
+    def test_middle_point_worse_exceeds_max_resamples_fails(self):
+        """Verify that if the middle point remains worse than both endpoints after
+        max_resamples retries, the operation fails with the expected error.
+        """
+        stage = DummyStage(initial_position=(0.0, 0.0, 50.0))
+
+        cam = MagicMock()
+
+        def inverted_curve_frame():
+            curr_z = stage.get_position()[2]
+            img = np.zeros((10, 10, 3), dtype=np.uint8)
+            # Center is worse (val = 20), ends are better (val = 150)
+            val = int(20.0 + abs(curr_z - 50.0) * 13.0)
+            img[:5, :, 2] = val
+            return img
+
+        cam.get_latest_frame.side_effect = inverted_curve_frame
+
+        ctx = ExecutionContext(
+            stage=stage,
+            projector=MagicMock(),
+            camera=cam,
+            delay_func=lambda _: None,
+        )
+
+        op = MaximizeImageSharpnessOperation(
+            z_range=10.0,
+            threshold=0.5,
+            max_iterations=5,
+            settle_delay=0.0,
+            max_resamples=2,
+        )
+
+        progress_messages = []
+        err = op.execute(ctx, lambda p, m: progress_messages.append(m))
+
+        self.assertIsNotNone(err)
+        self.assertIn("middle point worse than both endpoints", err)
+        resample_msgs = [m for m in progress_messages if "Resampling 3 points" in m]
+        self.assertEqual(len(resample_msgs), 2)
 
     def test_machine_control_panel_sharpness_widget(self):
         """Verify MachineControlPanelWidget contains sharpness controls and triggers operation."""
