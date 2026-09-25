@@ -200,6 +200,20 @@ class ManualControlTabWidget(QScrollArea):
         self.radio_src_solid.toggled.connect(self._on_image_source_toggled)
 
         proj_layout.addWidget(src_group_box)
+
+        # Projector Brightness
+        brightness_layout = QHBoxLayout()
+        brightness_layout.addWidget(QLabel("Brightness:"))
+        self.spin_projector_brightness = QDoubleSpinBox()
+        self.spin_projector_brightness.setRange(0.0, 1.0)
+        self.spin_projector_brightness.setDecimals(2)
+        self.spin_projector_brightness.setSingleStep(0.05)
+        init_brightness = getattr(self.engine.projector, "brightness", 1.0)
+        self.spin_projector_brightness.setValue(init_brightness)
+        self.spin_projector_brightness.valueChanged.connect(self._on_brightness_changed)
+        brightness_layout.addWidget(self.spin_projector_brightness)
+        proj_layout.addLayout(brightness_layout)
+
         manual_layout.addWidget(proj_box)
 
         # 4. Maximize Image Sharpness Group Box
@@ -372,6 +386,14 @@ class ManualControlTabWidget(QScrollArea):
         self.radio_src_custom.blockSignals(False)
         self.radio_src_solid.blockSignals(False)
 
+    def _on_brightness_changed(self, val: float):
+        self.engine.projector.set_brightness(val)
+
+    def _sync_brightness(self, val: float):
+        self.spin_projector_brightness.blockSignals(True)
+        self.spin_projector_brightness.setValue(val)
+        self.spin_projector_brightness.blockSignals(False)
+
     def _on_pos_changed(self, coords: tuple):
         x, y, z = coords
         self.lbl_pos_x.setText(f"{x:.1f}")
@@ -397,6 +419,7 @@ class ManualControlTabWidget(QScrollArea):
             self.radio_src_active,
             self.radio_src_custom,
             self.radio_src_solid,
+            self.spin_projector_brightness,
             self.spin_uv_offset,
         ]:
             btn.setEnabled(not is_busy)

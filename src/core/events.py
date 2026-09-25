@@ -43,6 +43,7 @@ class Event(StrAutoEnum):
     PROJECTOR_ON_OFF_CHANGED = auto()  # Emitted when projector illumination is toggled on/off
     PROJECTOR_COLOR_MODE_CHANGED = auto()  # Emitted when the projector color mode changes
     PROJECTOR_IMAGE_SOURCE_CHANGED = auto()  # Emitted when the projector image source changes
+    PROJECTOR_BRIGHTNESS_CHANGED = auto()  # Emitted when projector brightness changes
     PROJECTOR_IMAGE_CHANGED = auto()  # Emitted exclusively by the projector when displayed image changes
 
     # Camera

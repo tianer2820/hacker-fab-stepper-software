@@ -23,6 +23,7 @@ class ProjectorController(EngineModule, ABC):
         # modes & configs
         self.color_mode: ColorMode = ColorMode.RED
         self.image_source: ProjectorImageSource = ProjectorImageSource.ACTIVE_LAYER
+        self.brightness: float = 1.0
         self.is_on: bool = False
         self.custom_image_path: Optional[str] = None
         self.generated_image: Optional[np.ndarray] = None
@@ -94,6 +95,14 @@ class ProjectorController(EngineModule, ABC):
             self._recompute_image()
             self.update_display()
 
+    def set_brightness(self, brightness: float):
+        """Sets the projector image brightness multiplier (clamped to [0.0, 1.0])."""
+        self.brightness = max(0.0, min(1.0, float(brightness)))
+        if self.event_bus is not None:
+            self.event_bus.emit(Event.PROJECTOR_BRIGHTNESS_CHANGED, self.brightness)
+        self._recompute_image()
+        self.update_display()
+
 
 
 
@@ -154,6 +163,10 @@ class ProjectorController(EngineModule, ABC):
                 img[:, :, 0:2] = 0
             elif self.color_mode == ColorMode.UV:
                 img[:, :, 1:3] = 0
+
+            # apply brightness adjustment
+            if self.brightness < 1.0:
+                img = np.clip(np.round(img.astype(np.float32) * self.brightness), 0, 255).astype(img.dtype)
 
         self._displayed_image_cache = img
         self._on_display_image_cache_changed()

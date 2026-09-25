@@ -94,12 +94,14 @@ class MachineControlPanelWidget(QWidget):
         self.bridge.projector_on_off_changed.connect(self.manual_tab._sync_projector_on_off)
         self.bridge.projector_color_mode_changed.connect(self.manual_tab._sync_color_mode)
         self.bridge.projector_image_source_changed.connect(self.manual_tab._sync_image_source)
+        self.bridge.projector_brightness_changed.connect(self.manual_tab._sync_brightness)
         self.bridge.operation_started.connect(lambda *_: self._update_lock_state())
         self.bridge.operation_finished.connect(self._on_operation_finished)
         self.bridge.operation_aborted.connect(self._on_operation_aborted)
         self.bridge.operation_failed.connect(self._on_operation_failed)
 
         self.manual_tab._sync_projector_on_off(self.engine.projector.is_on)
+        self.manual_tab._sync_brightness(self.engine.projector.brightness)
         self._update_lock_state()
 
     @property

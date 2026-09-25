@@ -519,6 +519,7 @@ class TestConsolidatedEvents(unittest.TestCase):
             "PROJECTOR_ON_OFF_CHANGED",
             "PROJECTOR_COLOR_MODE_CHANGED",
             "PROJECTOR_IMAGE_SOURCE_CHANGED",
+            "PROJECTOR_BRIGHTNESS_CHANGED",
             "PROJECTOR_IMAGE_CHANGED",
             # Camera
             "CAMERA_FRAME_READY",
@@ -554,6 +555,7 @@ class TestConsolidatedEvents(unittest.TestCase):
         bridge.stage_position_changed.connect(lambda pos: signals_received.append("stage"))
         bridge.projector_color_mode_changed.connect(lambda mode: signals_received.append("proj_color"))
         bridge.projector_image_source_changed.connect(lambda src: signals_received.append("proj_src"))
+        bridge.projector_brightness_changed.connect(lambda b: signals_received.append(f"proj_brightness_{b}"))
         bridge.projector_on_off_changed.connect(lambda on: signals_received.append(f"proj_on_{on}"))
         bridge.projector_image_changed.connect(lambda img: signals_received.append("projector_img"))
         bridge.camera_frame_ready.connect(lambda f: signals_received.append("camera"))
@@ -570,6 +572,7 @@ class TestConsolidatedEvents(unittest.TestCase):
         engine.event_bus.emit(Event.PROJECTOR_IMAGE_CHANGED, None)
         engine.projector.set_color_mode(ColorMode.RED)
         engine.projector.set_image_source(ProjectorImageSource.ACTIVE_LAYER)
+        engine.projector.set_brightness(0.5)
         engine.event_bus.emit(Event.CAMERA_FRAME_READY, None)
         engine.event_bus.emit(Event.WARNING_MESSAGE, "Test warning")
 
@@ -582,6 +585,7 @@ class TestConsolidatedEvents(unittest.TestCase):
         self.assertIn("proj_on_True", signals_received)
         self.assertIn("proj_color", signals_received)
         self.assertIn("proj_src", signals_received)
+        self.assertIn("proj_brightness_0.5", signals_received)
         self.assertIn("projector_img", signals_received)
         self.assertIn("camera", signals_received)
         self.assertIn("warn_Test warning", signals_received)

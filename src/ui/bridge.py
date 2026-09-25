@@ -49,6 +49,7 @@ class QtEngineBridge(QObject):
     projector_on_off_changed = Signal(bool)
     projector_color_mode_changed = Signal(object)
     projector_image_source_changed = Signal(object)
+    projector_brightness_changed = Signal(float)
     projector_image_changed = Signal(object)
 
     # Camera
@@ -129,6 +130,12 @@ class QtEngineBridge(QObject):
             Event.PROJECTOR_IMAGE_SOURCE_CHANGED,
             lambda src=None, *args: self.projector_image_source_changed.emit(
                 src if src is not None else self.engine.projector.image_source
+            ),
+        )
+        self.engine.event_bus.add_listener(
+            Event.PROJECTOR_BRIGHTNESS_CHANGED,
+            lambda val=1.0, *args: self.projector_brightness_changed.emit(
+                float(val) if val is not None else self.engine.projector.brightness
             ),
         )
         self.engine.event_bus.add_listener(
