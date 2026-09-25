@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 from core.engine import StepperEngine
 from ui.bridge import QtEngineBridge
 from .manual_control_tab import ManualControlTabWidget
+from .ml_data_collection_tab import MLDataCollectionTabWidget
 from .optics_calibration_tab import OpticsCalibrationTabWidget
 from .process_calibration_tab import ProcessCalibrationTabWidget
 
@@ -41,6 +42,10 @@ class MachineControlPanelWidget(QWidget):
         # Tab 3: Process Calibration
         self.process_tab = ProcessCalibrationTabWidget(self.engine, self.bridge, self)
         self.tabs.addTab(self.process_tab, "Process Calibration")
+
+        # Tab 4: ML Data Collection
+        self.ml_tab = MLDataCollectionTabWidget(self.engine, self.bridge, self)
+        self.tabs.addTab(self.ml_tab, "ML Data Collection")
 
         # Direct references for backwards compatibility with tests and callers
         self.lbl_pos_x = self.manual_tab.lbl_pos_x
@@ -126,16 +131,19 @@ class MachineControlPanelWidget(QWidget):
     def _on_operation_finished(self, op_or_name=None, err=None):
         self.optics_tab.on_operation_finished(op_or_name, err)
         self.process_tab.on_operation_finished(op_or_name, err)
+        self.ml_tab.on_operation_finished(op_or_name, err)
         self._update_lock_state()
 
     def _on_operation_aborted(self, op_or_name=None):
         self.optics_tab.on_operation_finished(op_or_name, "Operation aborted")
         self.process_tab.on_operation_finished(op_or_name, "Operation aborted")
+        self.ml_tab.on_operation_finished(op_or_name, "Operation aborted")
         self._update_lock_state()
 
     def _on_operation_failed(self, op_or_name=None, err=None):
         self.optics_tab.on_operation_finished(op_or_name, err)
         self.process_tab.on_operation_finished(op_or_name, err)
+        self.ml_tab.on_operation_finished(op_or_name, err)
         self._update_lock_state()
 
     def _update_lock_state(self, *args):
@@ -143,3 +151,4 @@ class MachineControlPanelWidget(QWidget):
         self.manual_tab.update_lock_state(is_busy)
         self.optics_tab.update_lock_state(is_busy)
         self.process_tab.update_lock_state(is_busy)
+        self.ml_tab.update_lock_state(is_busy)

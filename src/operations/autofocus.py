@@ -41,6 +41,7 @@ class AutofocusOperation(Operation):
         else:
             self.config = config or AutofocusConfig()
         self._current_sub_op: Optional[Operation] = None
+        self.best_red_z: Optional[float] = None
 
     def abort(self):
         super().abort()
@@ -158,6 +159,8 @@ class AutofocusOperation(Operation):
                 #         flush=True,
                 #     )
                 #     break
+
+            self.best_red_z = float(best_overall_z)
 
             # 6. Apply UV-Red Z offset if offset is configured
             if abs(self.config.uv_z_offset) > 1e-6:
