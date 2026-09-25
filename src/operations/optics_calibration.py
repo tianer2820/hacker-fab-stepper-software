@@ -30,7 +30,7 @@ class OpticsCalibrationOperation(Operation):
         search_range: float = 500.0,
         target_accuracy: float = 0.5,
         min_detection_rate: float = 0.5,
-        grid_sizes: Sequence[int] = (2, 4, 8),
+        grid_sizes: Sequence[int] = (2, 4),
         step_configs: Optional[Sequence[Tuple[float, float]]] = None,
     ):
         super().__init__("Optics Calibration")

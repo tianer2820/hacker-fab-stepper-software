@@ -138,7 +138,6 @@ class MLDataCollectionOperation(Operation):
             projector.set_on(True)
 
             context.delay_func(self.config.stabilization_delay)
-            context.delay_func(2)
 
             if self.is_aborted:
                 return "ML data collection aborted"
@@ -224,7 +223,11 @@ class MLDataCollectionOperation(Operation):
                 )
                 if err or self.is_aborted:
                     if err:
-                        print(f"Autofocus failed at step {step_num}: {err}, using fallback Z", flush=True)
+                        print(f"Autofocus failed at step {step_num}: {err}, skipping", flush=True)
+                        continue
+                    else:
+                        print(f"ML data collection aborted during autofocus", flush=True)
+                        return "ML data collection aborted during autofocus"
 
                 # Determine red focus Z to return to after exposure
                 if af_op.best_red_z is not None:
