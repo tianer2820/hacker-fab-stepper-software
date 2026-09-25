@@ -138,6 +138,7 @@ class MLDataCollectionOperation(Operation):
             projector.set_on(True)
 
             context.delay_func(self.config.stabilization_delay)
+            context.delay_func(2)
 
             if self.is_aborted:
                 return "ML data collection aborted"

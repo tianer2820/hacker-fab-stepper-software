@@ -66,11 +66,10 @@ class AutofocusOperation(Operation):
 
         try:
             # Iterative grid progression: 2x2 (4 large tags) -> 4x4 (16 tags) -> 8x8 (64 tags)
-            grid_sizes = [2, 4, 8]
+            grid_sizes = [2, 4]
             step_configs = [
                 (250, 5),
-                (10, 2),
-                (4, 0.5)
+                (10, 0.5),
             ]
 
             for idx, grid_n in enumerate(grid_sizes):
