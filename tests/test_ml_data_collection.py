@@ -226,6 +226,51 @@ class TestMLDataCollectionOperation(unittest.TestCase):
         self.assertEqual(master["total_patterns_collected"], 2)
         self.assertIn("homography_matrix", master)
 
+    def test_photo_capture_averages_30_frames(self):
+        config = MLDataCollectionConfig(
+            total_patterns=1,
+            pattern_gap=500.0,
+            target_scale_pct=8.0,
+            scale_jitter_pct=1.0,
+            marker_count=2,
+            exposure_time=0.1,
+            stabilization_delay=0.0,
+            save_directory=self.test_dir,
+            grid_n=2,
+        )
+        op = MLDataCollectionOperation(config=config)
+
+        # First call is ArUco calibration frame (must have valid ArUco tags)
+        cal_frame = self.camera._latest_frame.copy()
+        h, w = cal_frame.shape[:2]
+
+        frame_counter = [0]
+
+        def dynamic_get_frame():
+            idx = frame_counter[0]
+            frame_counter[0] += 1
+            if idx == 0:
+                return cal_frame
+            # Subsequent frames return constant value equal to idx (from 1 to 30)
+            val = idx
+            return np.full((h, w, 3), fill_value=val, dtype=np.uint8)
+
+        self.camera.get_latest_frame = dynamic_get_frame
+
+        with patch.object(op, "_run_sub_op", return_value=None):
+            err = op.execute(self.context, lambda p, m: None)
+            self.assertIsNone(err)
+
+        # 1 call for calibration + 30 calls for pattern photo = 31 total calls
+        self.assertEqual(frame_counter[0], 31)
+
+        # Verify averaged image: mean of integers 1..30 is 15.5, which rounds to 16
+        saved_img_path = os.path.join(self.test_dir, "pattern_0001.png")
+        saved_img = cv2.imread(saved_img_path)
+        self.assertIsNotNone(saved_img)
+        expected_val = int(np.round(np.mean(list(range(1, 31)))))
+        self.assertTrue(np.all(saved_img == expected_val))
+
 
 class TestMLDataCollectionTabWidget(unittest.TestCase):
     def setUp(self):

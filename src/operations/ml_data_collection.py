@@ -296,10 +296,25 @@ class MLDataCollectionOperation(Operation):
                 if self.is_aborted:
                     break
 
-                # 2.8 Capture photo
-                captured_frame = camera.get_latest_frame()
-                if captured_frame is None:
-                    return f"Failed to capture camera frame at step {step_num}"
+                # 2.8 Capture photo (average 30 frames to reduce noise)
+                report_progress(
+                    base_pct + 0.84 * step_pct_span,
+                    f"Pattern {step_num}/{total_steps}: Capturing and averaging frames...",
+                )
+                captured_frames = []
+                for _ in range(30):
+                    if self.is_aborted:
+                        break
+                    frame = camera.get_latest_frame()
+                    if frame is None:
+                        return f"Failed to capture camera frame at step {step_num}"
+                    captured_frames.append(frame)
+                    context.delay_func(0.033)
+
+                if self.is_aborted:
+                    break
+
+                captured_frame = np.mean(captured_frames, axis=0).round().astype(np.uint8)
 
                 cam_h, cam_w = captured_frame.shape[:2]
 
