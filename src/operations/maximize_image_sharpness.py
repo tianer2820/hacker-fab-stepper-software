@@ -21,8 +21,9 @@ class SharpnessOptimizationResult:
 class MaximizeImageSharpnessOperation(Operation):
     """Operation that maximizes image sharpness along the Z-axis without modifying the projector.
 
-    Uses an iterative 3-point search (similar to binary/ternary search) that evaluates the bottom,
-    middle, and top Z positions, selecting the two sharpest points to form the next sub-range.
+    Uses the Golden Section / Fibonacci Search method. Given the endpoints A and B,
+    it samples x1 and x2 dividing the range into three segments, updating the search interval
+    based on comparing sharpness scores.
     """
 
     def __init__(
@@ -95,27 +96,29 @@ class MaximizeImageSharpnessOperation(Operation):
 
             return score
 
-        # Initial sampling of bottom, middle, top
-        z_mid = (z_low + z_high) / 2.0
+        # Golden ratio conjugate constant: (sqrt(5) - 1) / 2
+        inv_phi = (5.0**0.5 - 1.0) / 2.0
 
-        s_low = measure(z_low)
-        if s_low is None:
-            return "Sharpness maximization aborted" if self.is_aborted else "Failed to move Z stage to lower limit"
+        a = z_low
+        b = z_high
 
-        s_mid = measure(z_mid)
-        if s_mid is None:
-            return "Sharpness maximization aborted" if self.is_aborted else "Failed to move Z stage to middle position"
+        # Sample x1 and x2 between a and b, dividing the range into three segments
+        x1 = a + (1.0 - inv_phi) * (b - a)
+        x2 = a + inv_phi * (b - a)
 
-        s_high = measure(z_high)
-        if s_high is None:
-            return "Sharpness maximization aborted" if self.is_aborted else "Failed to move Z stage to upper limit"
+        s1 = measure(x1)
+        if s1 is None:
+            return "Sharpness maximization aborted" if self.is_aborted else f"Failed to move Z stage to {x1:.3f} µm"
+
+        s2 = measure(x2)
+        if s2 is None:
+            return "Sharpness maximization aborted" if self.is_aborted else f"Failed to move Z stage to {x2:.3f} µm"
 
         iterations = 0
         converged = False
 
         while iterations < self.max_iterations:
-            interval_width = z_high - z_low
-            if interval_width <= self.threshold:
+            if (b - a) <= self.threshold:
                 converged = True
                 break
 
@@ -124,76 +127,33 @@ class MaximizeImageSharpnessOperation(Operation):
 
             iterations += 1
 
-            # If the middle point is worse than both endpoints, resample the three points
-            resample_count = 0
-            while s_mid < s_low and s_mid < s_high:
-                if resample_count >= self.max_resamples:
-                    return "Failed to maximize image sharpness, middle point worse than both endpoints"
-
-                resample_count += 1
-                report_progress(
-                    min(1.0, iterations / max(1, self.max_iterations)),
-                    f"Middle point score ({s_mid:.2f}) worse than endpoints ({s_low:.2f}, {s_high:.2f}). "
-                    f"Resampling 3 points (attempt {resample_count}/{self.max_resamples})...",
-                )
-
-                center = (z_low + z_high) / 2.0
-                width = (z_high - z_low) * 1.2
-                z_low = center - width / 2.0
-                z_high = center + width / 2.0
-                z_mid = center + random.uniform(-0.1, 0.1) * width
-
-                s_low = measure(z_low, force=True)
-                if s_low is None:
-                    return "Sharpness maximization aborted" if self.is_aborted else "Failed to move Z stage to lower limit"
-
-                s_mid = measure(z_mid, force=True)
-                if s_mid is None:
-                    return "Sharpness maximization aborted" if self.is_aborted else "Failed to move Z stage to middle position"
-
-                s_high = measure(z_high, force=True)
-                if s_high is None:
-                    return "Sharpness maximization aborted" if self.is_aborted else "Failed to move Z stage to upper limit"
-
-                if self.is_aborted:
-                    return "Sharpness maximization aborted"
-
-            # We have three points: (z_low, s_low), (z_mid, s_mid), (z_high, s_high)
-            # Select the two highest-scoring points to form the next search bracket
-            candidates = [
-                (z_low, s_low),
-                (z_mid, s_mid),
-                (z_high, s_high),
-            ]
-            candidates.sort(key=lambda p: (p[1], abs(p[0] - z_mid)), reverse=True)
-            top1, top2 = candidates[0], candidates[1]
-
-
-            # Standard unimodal case: top two points are either [z_low, z_mid] or [z_mid, z_high]
-            new_z_low = min(top1[0], top2[0])
-            new_z_high = max(top1[0], top2[0])
-
-            # Update scores for the new endpoints (already measured and cached)
-            s_low = cache[round(new_z_low, 4)]
-            s_high = cache[round(new_z_high, 4)]
-            z_low, z_high = new_z_low, new_z_high
-
-            # Check convergence after contraction
-            if (z_high - z_low) <= self.threshold:
-                converged = True
-                break
-
-            # Compute new middle point and sample
-            z_mid = (z_low + z_high) / 2.0
-            s_mid = measure(z_mid)
-            if s_mid is None:
-                return "Sharpness maximization aborted" if self.is_aborted else "Failed to move Z stage"
+            if s1 < s2:
+                # The maximum point cannot be between a and x1, so set a to x1
+                a = x1
+                x1 = x2
+                s1 = s2
+                x2 = a + inv_phi * (b - a)
+                s2 = measure(x2)
+                if s2 is None:
+                    return "Sharpness maximization aborted" if self.is_aborted else f"Failed to move Z stage to {x2:.3f} µm"
+            else:
+                # The maximum point cannot be between x2 and b, so set b to x2
+                b = x2
+                x2 = x1
+                s2 = s1
+                x1 = a + (1.0 - inv_phi) * (b - a)
+                s1 = measure(x1)
+                if s1 is None:
+                    return "Sharpness maximization aborted" if self.is_aborted else f"Failed to move Z stage to {x1:.3f} µm"
 
             progress = min(1.0, iterations / max(1, self.max_iterations))
             report_progress(
                 progress,
-                f"Iter {iterations}/{self.max_iterations}: Z range [{z_low:.2f}, {z_high:.2f}], best score {best_score:.2f}",
+                f"Iter {iterations}/{self.max_iterations}: Z range [{a:.2f}, {b:.2f}], best score {best_score:.2f}",
             )
+
+        if (b - a) <= self.threshold:
+            converged = True
 
         # Finally, reposition stage to the global best Z position found
         if not context.stage.move_absolute({"z": best_z}):
