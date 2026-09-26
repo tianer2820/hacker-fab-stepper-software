@@ -285,6 +285,8 @@ class MLDataCollectionOperation(Operation):
                     if loaded_img is None:
                         return f"Failed to load image: {selected_image_path}"
                     pattern_canvas = cv2.resize(loaded_img, (pw, ph), interpolation=cv2.INTER_LINEAR)
+                    pattern_canvas = cv2.cvtColor(pattern_canvas, cv2.COLOR_BGR2GRAY)
+                    pattern_canvas = cv2.threshold(pattern_canvas, 20, 255, cv2.THRESH_BINARY)[1]
                 else:
                     report_progress(
                         base_pct + 0.45 * step_pct_span,
