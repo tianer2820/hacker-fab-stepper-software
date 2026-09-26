@@ -164,8 +164,8 @@ class ProjectorController(EngineModule, ABC):
             elif self.color_mode == ColorMode.UV:
                 img[:, :, 1:3] = 0
 
-            # apply brightness adjustment
-            if self.brightness < 1.0:
+            # Apply brightness adjustment for red only
+            if self.color_mode == ColorMode.RED and self.brightness < 1.0:
                 img = np.clip(np.round(img.astype(np.float32) * self.brightness), 0, 255).astype(img.dtype)
 
         self._displayed_image_cache = img

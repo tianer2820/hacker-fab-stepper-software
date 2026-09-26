@@ -72,8 +72,8 @@ class ExposureOperation(Operation):
 
         context.projector.set_color_mode(ColorMode.UV)
 
-        # sleep 1 sec to allow other events process so exposure time is accurate
-        context.delay_func(1)
+        # sleep 3 sec to allow other events process so exposure time is accurate
+        context.delay_func(3)
         # Turn on projector output and wait for display to render before starting timer
         context.projector.set_on(True)
         context.projector.wait_for_display(timeout=2.0)
