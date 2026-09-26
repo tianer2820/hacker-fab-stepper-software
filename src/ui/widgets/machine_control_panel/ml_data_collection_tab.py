@@ -3,6 +3,7 @@ from typing import Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QDoubleSpinBox,
     QFileDialog,
     QGridLayout,
@@ -11,6 +12,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QRadioButton,
     QScrollArea,
     QSpinBox,
     QVBoxLayout,
@@ -18,7 +20,11 @@ from PySide6.QtWidgets import (
 )
 
 from core.engine import StepperEngine
-from operations.ml_data_collection import MLDataCollectionConfig, MLDataCollectionOperation
+from operations.ml_data_collection import (
+    MLDataCollectionConfig,
+    MLDataCollectionOperation,
+    PatternSource,
+)
 from ui.bridge import QtEngineBridge
 
 
@@ -49,16 +55,50 @@ class MLDataCollectionTabWidget(QScrollArea):
             "1. Performs initial autofocus without UV offset.<br>"
             "2. Projects a 2x2 ArUco calibration grid in Red light to compute relative projector-to-camera alignment.<br>"
             "3. Moves in a 2D spiral pattern from the current position.<br>"
-            "4. At each step, autofocuses, exposes the generated random cross marker pattern in UV, then returns to Red focus Z under solid Red illumination.<br>"
-            "5. Saves the camera capture, transformed ground-truth pattern, and JSON marker annotations in image space."
+            "4. At each step, autofocuses, exposes the selected pattern (generated cross markers or randomly chosen image from folder scaled to full projector resolution) in UV, then returns to Red focus Z under solid Red illumination.<br>"
+            "5. Saves the camera capture, transformed ground-truth pattern, and annotations (including marker coordinates if applicable)."
         )
         info_lbl.setWordWrap(True)
         info_layout.addWidget(info_lbl)
         main_layout.addWidget(info_box)
 
-        # 2. Marker Configuration
-        marker_box = QGroupBox("Marker Parameters")
-        marker_grid = QGridLayout(marker_box)
+        # 2. Pattern Source Selection
+        src_box = QGroupBox("Pattern Source")
+        src_layout = QVBoxLayout(src_box)
+        src_layout.setContentsMargins(6, 6, 6, 6)
+        src_layout.setSpacing(6)
+
+        self.src_btn_group = QButtonGroup(self)
+        src_radio_row = QHBoxLayout()
+        self.radio_src_marker = QRadioButton("Generated Cross Markers")
+        self.radio_src_marker.setChecked(True)
+        self.radio_src_folder = QRadioButton("Image Folder")
+        self.src_btn_group.addButton(self.radio_src_marker)
+        self.src_btn_group.addButton(self.radio_src_folder)
+        src_radio_row.addWidget(self.radio_src_marker)
+        src_radio_row.addWidget(self.radio_src_folder)
+        src_radio_row.addStretch()
+        src_layout.addLayout(src_radio_row)
+
+        folder_row = QHBoxLayout()
+        folder_row.addWidget(QLabel("Folder:"))
+        self.txt_image_folder = QLineEdit()
+        self.txt_image_folder.setPlaceholderText("Select folder with images...")
+        self.txt_image_folder.setEnabled(False)
+        self.btn_browse_image_folder = QPushButton("Browse...")
+        self.btn_browse_image_folder.setEnabled(False)
+        self.btn_browse_image_folder.clicked.connect(self._on_browse_image_folder_clicked)
+        folder_row.addWidget(self.txt_image_folder)
+        folder_row.addWidget(self.btn_browse_image_folder)
+        src_layout.addLayout(folder_row)
+
+        self.radio_src_marker.toggled.connect(self._on_source_changed)
+
+        main_layout.addWidget(src_box)
+
+        # 3. Marker Configuration
+        self.marker_box = QGroupBox("Marker Parameters")
+        marker_grid = QGridLayout(self.marker_box)
 
         # Target Scale (%)
         marker_grid.addWidget(QLabel("Target Scale (%):"), 0, 0)
@@ -88,9 +128,9 @@ class MLDataCollectionTabWidget(QScrollArea):
         self.spin_marker_count.setValue(20)
         marker_grid.addWidget(self.spin_marker_count, 2, 1)
 
-        main_layout.addWidget(marker_box)
+        main_layout.addWidget(self.marker_box)
 
-        # 3. Patterning & Exposure
+        # 4. Patterning & Exposure
         pattern_box = QGroupBox("Patterning & Capture")
         pattern_grid = QGridLayout(pattern_box)
 
@@ -134,7 +174,7 @@ class MLDataCollectionTabWidget(QScrollArea):
 
         main_layout.addWidget(pattern_box)
 
-        # 4. Output Folder
+        # 5. Output Folder
         output_box = QGroupBox("Dataset Output Folder")
         output_layout = QHBoxLayout(output_box)
 
@@ -148,7 +188,7 @@ class MLDataCollectionTabWidget(QScrollArea):
 
         main_layout.addWidget(output_box)
 
-        # 5. Start button & Status
+        # 6. Start button & Status
         action_box = QGroupBox("Execution")
         action_layout = QVBoxLayout(action_box)
 
@@ -166,6 +206,24 @@ class MLDataCollectionTabWidget(QScrollArea):
 
         self.setWidget(container)
 
+    def _on_source_changed(self):
+        is_folder = self.radio_src_folder.isChecked()
+        self.txt_image_folder.setEnabled(is_folder)
+        self.btn_browse_image_folder.setEnabled(is_folder)
+        self.marker_box.setEnabled(not is_folder)
+        self.spin_target_scale.setEnabled(not is_folder)
+        self.spin_scale_jitter.setEnabled(not is_folder)
+        self.spin_marker_count.setEnabled(not is_folder)
+
+    def _on_browse_image_folder_clicked(self):
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Select Pattern Images Folder",
+            self.txt_image_folder.text() or os.getcwd(),
+        )
+        if folder:
+            self.txt_image_folder.setText(folder)
+
     def _on_browse_clicked(self):
         folder = QFileDialog.getExistingDirectory(
             self,
@@ -181,7 +239,22 @@ class MLDataCollectionTabWidget(QScrollArea):
             save_dir = os.path.abspath("stepper_captures/ml_data")
             self.txt_save_dir.setText(save_dir)
 
+        is_folder = self.radio_src_folder.isChecked()
+        pattern_source = (
+            PatternSource.IMAGE_FOLDER.value
+            if is_folder
+            else PatternSource.GENERATED_MARKER.value
+        )
+        image_folder = self.txt_image_folder.text().strip() if is_folder else ""
+
+        if is_folder:
+            if not image_folder or not os.path.isdir(image_folder):
+                self.lbl_status.setText("Status: Error - Please select a valid image folder")
+                return
+
         config = MLDataCollectionConfig(
+            pattern_source=pattern_source,
+            image_folder=image_folder,
             total_patterns=self.spin_total_patterns.value(),
             pattern_gap=self.spin_pattern_gap.value(),
             target_scale_pct=self.spin_target_scale.value(),
@@ -211,9 +284,18 @@ class MLDataCollectionTabWidget(QScrollArea):
 
     def update_lock_state(self, is_busy: bool):
         self.btn_start.setEnabled(not is_busy)
-        self.spin_target_scale.setEnabled(not is_busy)
-        self.spin_scale_jitter.setEnabled(not is_busy)
-        self.spin_marker_count.setEnabled(not is_busy)
+        self.radio_src_marker.setEnabled(not is_busy)
+        self.radio_src_folder.setEnabled(not is_busy)
+
+        is_folder = self.radio_src_folder.isChecked()
+        self.txt_image_folder.setEnabled(not is_busy and is_folder)
+        self.btn_browse_image_folder.setEnabled(not is_busy and is_folder)
+
+        self.marker_box.setEnabled(not is_busy and not is_folder)
+        self.spin_target_scale.setEnabled(not is_busy and not is_folder)
+        self.spin_scale_jitter.setEnabled(not is_busy and not is_folder)
+        self.spin_marker_count.setEnabled(not is_busy and not is_folder)
+
         self.spin_total_patterns.setEnabled(not is_busy)
         self.spin_pattern_gap.setEnabled(not is_busy)
         self.spin_exposure_time.setEnabled(not is_busy)

@@ -1,12 +1,14 @@
 from dataclasses import dataclass
 from datetime import datetime
+from enum import auto
 import json
 import os
+import random
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import cv2
 import numpy as np
 
-from core.events import ColorMode, ProjectorImageSource
+from core.events import ColorMode, ProjectorImageSource, StrAutoEnum
 from core.operation import ExecutionContext, Operation
 from lib.ar_tag import detect_ar_tags
 from lib.cross_marker import generate_cross_pattern
@@ -22,8 +24,17 @@ from operations.movement import JogOperation
 from operations.process_calibration import generate_spiral_offsets
 
 
+class PatternSource(StrAutoEnum):
+    """Pattern source options for ML data collection."""
+
+    GENERATED_MARKER = auto()
+    IMAGE_FOLDER = auto()
+
+
 @dataclass
 class MLDataCollectionConfig:
+    pattern_source: str = PatternSource.GENERATED_MARKER.value
+    image_folder: str = ""
     total_patterns: int = 10
     pattern_gap: float = 1000.0  # µm (spiral step distance)
     target_scale_pct: float = 8.0  # % of projector longer edge
@@ -39,7 +50,11 @@ class MLDataCollectionConfig:
     def from_dict(cls, d: Optional[dict] = None) -> "MLDataCollectionConfig":
         if not d:
             return cls()
+        raw_source = d.get("pattern_source", PatternSource.GENERATED_MARKER.value)
+        pattern_source = raw_source.value if hasattr(raw_source, "value") else str(raw_source)
         return cls(
+            pattern_source=pattern_source,
+            image_folder=str(d.get("image_folder", "")),
             total_patterns=int(d.get("total_patterns", 10)),
             pattern_gap=float(d.get("pattern_gap", 1000.0)),
             target_scale_pct=float(d.get("target_scale_pct", 8.0)),
@@ -104,6 +119,23 @@ class MLDataCollectionOperation(Operation):
 
         pw, ph = projector.projector_size()
         os.makedirs(self.config.save_directory, exist_ok=True)
+
+        # Validate image folder if image_folder mode is selected
+        if self.config.pattern_source == PatternSource.IMAGE_FOLDER.value:
+            if not self.config.image_folder or not os.path.isdir(self.config.image_folder):
+                return f"Image folder does not exist or is not a directory: {self.config.image_folder}"
+            valid_extensions = (".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp")
+            image_paths = [
+                os.path.join(self.config.image_folder, f)
+                for f in sorted(os.listdir(self.config.image_folder))
+                if f.lower().endswith(valid_extensions)
+            ]
+            if not image_paths:
+                return f"No valid image files found in folder: {self.config.image_folder}"
+            available_images: List[str] = []
+        else:
+            image_paths = []
+            available_images = []
 
         report_progress(0.02, "Starting ML Data Collection...")
 
@@ -236,17 +268,34 @@ class MLDataCollectionOperation(Operation):
                     uv_offset = af_op.config.uv_z_offset if af_op.config else 0.0
                     red_focus_z = stage.get_position()[2] - uv_offset
 
-                # 2.3 Generate random cross marker pattern
-                report_progress(
-                    base_pct + 0.45 * step_pct_span,
-                    f"Pattern {step_num}/{total_steps}: Generating cross pattern...",
-                )
-                pattern_canvas, markers_spec = generate_cross_pattern(
-                    canvas_size=(pw, ph),
-                    target_scale_pct=self.config.target_scale_pct,
-                    scale_jitter_pct=self.config.scale_jitter_pct,
-                    marker_count=self.config.marker_count,
-                )
+                # 2.3 Generate or load pattern
+                selected_image_path: Optional[str] = None
+                markers_spec = None
+                if self.config.pattern_source == PatternSource.IMAGE_FOLDER.value:
+                    if not available_images:
+                        available_images = list(image_paths)
+                        random.shuffle(available_images)
+                    selected_image_path = available_images.pop()
+
+                    report_progress(
+                        base_pct + 0.45 * step_pct_span,
+                        f"Pattern {step_num}/{total_steps}: Loading image ({os.path.basename(selected_image_path)})...",
+                    )
+                    loaded_img = cv2.imread(selected_image_path, cv2.IMREAD_COLOR)
+                    if loaded_img is None:
+                        return f"Failed to load image: {selected_image_path}"
+                    pattern_canvas = cv2.resize(loaded_img, (pw, ph), interpolation=cv2.INTER_LINEAR)
+                else:
+                    report_progress(
+                        base_pct + 0.45 * step_pct_span,
+                        f"Pattern {step_num}/{total_steps}: Generating cross pattern...",
+                    )
+                    pattern_canvas, markers_spec = generate_cross_pattern(
+                        canvas_size=(pw, ph),
+                        target_scale_pct=self.config.target_scale_pct,
+                        scale_jitter_pct=self.config.scale_jitter_pct,
+                        marker_count=self.config.marker_count,
+                    )
 
                 # 2.4 Expose pattern in UV
                 projector.set_generated_image(pattern_canvas)
@@ -331,29 +380,38 @@ class MLDataCollectionOperation(Operation):
                 )
                 cv2.imwrite(gt_path, warped_gt)
 
-                # 2.11 Transform all marker coordinates to camera space
-                transformed_markers = [
-                    transform_marker_to_camera_space(m, homography)
-                    for m in markers_spec
-                ]
+                # 2.11 Transform all marker coordinates to camera space if generated markers
+                transformed_markers = None
+                if markers_spec is not None:
+                    transformed_markers = [
+                        transform_marker_to_camera_space(m, homography)
+                        for m in markers_spec
+                    ]
 
                 # 2.12 Write individual JSON annotation
                 json_filename = f"pattern_{step_num:04d}.json"
                 json_path = os.path.join(self.config.save_directory, json_filename)
                 curr_pos = stage.get_position()
-                record = {
+                record: Dict[str, Any] = {
                     "image_filename": img_filename,
                     "projected_gt_filename": gt_filename,
                     "step_index": step_num,
+                    "pattern_source": self.config.pattern_source,
                     "stage_position": {
                         "x": float(curr_pos[0]),
                         "y": float(curr_pos[1]),
                         "z_captured": float(curr_pos[2]),
                         "z_red_focus": float(red_focus_z),
                     },
-                    "marker_count": len(transformed_markers),
-                    "markers": transformed_markers,
                 }
+                if self.config.pattern_source == PatternSource.IMAGE_FOLDER.value:
+                    if selected_image_path is not None:
+                        record["source_image"] = os.path.basename(selected_image_path)
+                else:
+                    if transformed_markers is not None:
+                        record["marker_count"] = len(transformed_markers)
+                        record["markers"] = transformed_markers
+
                 with open(json_path, "w", encoding="utf-8") as f:
                     json.dump(record, f, indent=2)
 
@@ -368,6 +426,8 @@ class MLDataCollectionOperation(Operation):
                 "homography_matrix": homography.tolist(),
                 "total_patterns_collected": len(self.dataset_records),
                 "config": {
+                    "pattern_source": self.config.pattern_source,
+                    "image_folder": self.config.image_folder if self.config.pattern_source == PatternSource.IMAGE_FOLDER.value else None,
                     "total_patterns": self.config.total_patterns,
                     "pattern_gap": self.config.pattern_gap,
                     "target_scale_pct": self.config.target_scale_pct,

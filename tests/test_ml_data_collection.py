@@ -22,7 +22,11 @@ from lib.projector_camera_transform import (
     transform_points_projector_to_camera,
     warp_projector_image_to_camera,
 )
-from operations.ml_data_collection import MLDataCollectionConfig, MLDataCollectionOperation
+from operations.ml_data_collection import (
+    MLDataCollectionConfig,
+    MLDataCollectionOperation,
+    PatternSource,
+)
 from projector import DummyProjector
 from stage_control.dummy_stage import DummyStage
 from ui.bridge import QtEngineBridge
@@ -271,6 +275,93 @@ class TestMLDataCollectionOperation(unittest.TestCase):
         expected_val = int(np.round(np.mean(list(range(1, 31)))))
         self.assertTrue(np.all(saved_img == expected_val))
 
+    def test_image_folder_pattern_source(self):
+        # Create a folder with two dummy image files of different dimensions
+        img_folder = os.path.join(self.test_dir, "source_images")
+        os.makedirs(img_folder, exist_ok=True)
+        img1 = np.full((60, 80, 3), 100, dtype=np.uint8)
+        img2 = np.full((90, 120, 3), 200, dtype=np.uint8)
+        cv2.imwrite(os.path.join(img_folder, "test_img1.png"), img1)
+        cv2.imwrite(os.path.join(img_folder, "test_img2.jpg"), img2)
+
+        config = MLDataCollectionConfig(
+            pattern_source=PatternSource.IMAGE_FOLDER.value,
+            image_folder=img_folder,
+            total_patterns=4,
+            pattern_gap=500.0,
+            exposure_time=0.1,
+            stabilization_delay=0.0,
+            save_directory=self.test_dir,
+            grid_n=2,
+        )
+
+        op = MLDataCollectionOperation(config=config)
+
+        # Mock sub-operations
+        with patch.object(op, "_run_sub_op", return_value=None):
+            err = op.execute(self.context, lambda p, m: None)
+            self.assertIsNone(err)
+
+        # Check all 4 pattern image pairs and JSONs exist
+        selected_sources = []
+        for i in range(1, 5):
+            img_path = os.path.join(self.test_dir, f"pattern_{i:04d}.png")
+            gt_path = os.path.join(self.test_dir, f"pattern_{i:04d}_projected.png")
+            json_path = os.path.join(self.test_dir, f"pattern_{i:04d}.json")
+
+            self.assertTrue(os.path.exists(img_path))
+            self.assertTrue(os.path.exists(gt_path))
+            self.assertTrue(os.path.exists(json_path))
+
+            with open(json_path, "r", encoding="utf-8") as f:
+                rec = json.load(f)
+
+            self.assertEqual(rec["pattern_source"], PatternSource.IMAGE_FOLDER.value)
+            self.assertIn("source_image", rec)
+            self.assertIn(rec["source_image"], ["test_img1.png", "test_img2.jpg"])
+            selected_sources.append(rec["source_image"])
+
+            # Marker fields must be omitted
+            self.assertNotIn("markers", rec)
+            self.assertNotIn("marker_count", rec)
+
+        # Verify cycling without replacement:
+        # First 2 patterns should contain both images without duplicates
+        self.assertEqual(set(selected_sources[:2]), {"test_img1.png", "test_img2.jpg"})
+        # Next 2 patterns should also contain both images without duplicates
+        self.assertEqual(set(selected_sources[2:]), {"test_img1.png", "test_img2.jpg"})
+
+        # Check master metadata
+        master_json = os.path.join(self.test_dir, "dataset_metadata.json")
+        with open(master_json, "r", encoding="utf-8") as f:
+            master = json.load(f)
+        self.assertEqual(master["total_patterns_collected"], 4)
+        self.assertEqual(master["config"]["pattern_source"], PatternSource.IMAGE_FOLDER.value)
+        self.assertEqual(master["config"]["image_folder"], img_folder)
+
+    def test_image_folder_validation_errors(self):
+        # 1. Non-existent directory
+        bad_config = MLDataCollectionConfig(
+            pattern_source=PatternSource.IMAGE_FOLDER.value,
+            image_folder=os.path.join(self.test_dir, "does_not_exist"),
+        )
+        op = MLDataCollectionOperation(config=bad_config)
+        err = op.execute(self.context, lambda p, m: None)
+        self.assertIsNotNone(err)
+        self.assertIn("does not exist", err)
+
+        # 2. Empty directory
+        empty_folder = os.path.join(self.test_dir, "empty_dir")
+        os.makedirs(empty_folder, exist_ok=True)
+        bad_config2 = MLDataCollectionConfig(
+            pattern_source=PatternSource.IMAGE_FOLDER.value,
+            image_folder=empty_folder,
+        )
+        op2 = MLDataCollectionOperation(config=bad_config2)
+        err2 = op2.execute(self.context, lambda p, m: None)
+        self.assertIsNotNone(err2)
+        self.assertIn("No valid image files found", err2)
+
 
 class TestMLDataCollectionTabWidget(unittest.TestCase):
     def setUp(self):
@@ -285,6 +376,11 @@ class TestMLDataCollectionTabWidget(unittest.TestCase):
         ml_tab = panel.ml_tab
 
         # Test defaults
+        self.assertTrue(ml_tab.radio_src_marker.isChecked())
+        self.assertFalse(ml_tab.radio_src_folder.isChecked())
+        self.assertFalse(ml_tab.txt_image_folder.isEnabled())
+        self.assertFalse(ml_tab.btn_browse_image_folder.isEnabled())
+        self.assertTrue(ml_tab.marker_box.isEnabled())
         self.assertAlmostEqual(ml_tab.spin_target_scale.value(), 8.0)
         self.assertAlmostEqual(ml_tab.spin_scale_jitter.value(), 2.0)
         self.assertEqual(ml_tab.spin_marker_count.value(), 20)
@@ -302,12 +398,13 @@ class TestMLDataCollectionTabWidget(unittest.TestCase):
         self.assertTrue(ml_tab.spin_target_scale.isEnabled())
         self.assertTrue(ml_tab.spin_total_patterns.isEnabled())
 
-        # Test start triggers operation
+        # Test start triggers operation with default marker config
         with patch.object(self.bridge, "start_operation") as mock_start:
             ml_tab.btn_start.click()
             mock_start.assert_called_once()
             op = mock_start.call_args[0][0]
             self.assertIsInstance(op, MLDataCollectionOperation)
+            self.assertEqual(op.config.pattern_source, PatternSource.GENERATED_MARKER.value)
             self.assertEqual(op.config.total_patterns, 10)
 
         # Test finish updates status
@@ -316,6 +413,50 @@ class TestMLDataCollectionTabWidget(unittest.TestCase):
 
         ml_tab.on_operation_finished(op, err="Device timeout")
         self.assertEqual(ml_tab.lbl_status.text(), "Status: Failed - Device timeout")
+
+    def test_tab_widget_image_folder_selection_and_validation(self):
+        panel = MachineControlPanelWidget(self.engine, self.bridge)
+        ml_tab = panel.ml_tab
+
+        # Switch to image folder
+        ml_tab.radio_src_folder.setChecked(True)
+        self.assertTrue(ml_tab.radio_src_folder.isChecked())
+        self.assertTrue(ml_tab.txt_image_folder.isEnabled())
+        self.assertTrue(ml_tab.btn_browse_image_folder.isEnabled())
+        self.assertFalse(ml_tab.marker_box.isEnabled())
+        self.assertFalse(ml_tab.spin_target_scale.isEnabled())
+
+        # Click start without folder -> should show error
+        ml_tab.txt_image_folder.setText("")
+        with patch.object(self.bridge, "start_operation") as mock_start:
+            ml_tab.btn_start.click()
+            mock_start.assert_not_called()
+            self.assertIn("Please select a valid image folder", ml_tab.lbl_status.text())
+
+        # Test lock state when folder mode is active
+        ml_tab.update_lock_state(is_busy=True)
+        self.assertFalse(ml_tab.txt_image_folder.isEnabled())
+        self.assertFalse(ml_tab.btn_browse_image_folder.isEnabled())
+        self.assertFalse(ml_tab.spin_target_scale.isEnabled())
+
+        ml_tab.update_lock_state(is_busy=False)
+        self.assertTrue(ml_tab.txt_image_folder.isEnabled())
+        self.assertTrue(ml_tab.btn_browse_image_folder.isEnabled())
+        self.assertFalse(ml_tab.spin_target_scale.isEnabled())  # still disabled because folder mode
+
+        # Set valid folder and click start
+        temp_dir = tempfile.mkdtemp()
+        try:
+            ml_tab.txt_image_folder.setText(temp_dir)
+            with patch.object(self.bridge, "start_operation") as mock_start:
+                ml_tab.btn_start.click()
+                mock_start.assert_called_once()
+                op = mock_start.call_args[0][0]
+                self.assertIsInstance(op, MLDataCollectionOperation)
+                self.assertEqual(op.config.pattern_source, PatternSource.IMAGE_FOLDER.value)
+                self.assertEqual(op.config.image_folder, temp_dir)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":
