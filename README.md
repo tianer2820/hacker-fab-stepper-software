@@ -44,9 +44,9 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-To install optional hardware drivers (e.g. Basler camera, GRBL, OMM stage, alignment YOLO models):
+To install optional hardware drivers (e.g. Basler camera, GRBL, OMM stage, alignment YOLO models, latent vision):
 ```bash
-pip install -e '.[grbl,omm,alignment,basler,dlpc]'
+pip install -e '.[grbl,omm,alignment,basler,dlpc,latent_vision]'
 ```
 
 Launch the GUI:

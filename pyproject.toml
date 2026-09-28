@@ -28,6 +28,10 @@ basler = [
 dlpc = [
     "pyusb>=1.2.1",
 ]
+latent_vision = [
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+]
 
 
 [tool.uv.sources]
