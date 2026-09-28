@@ -80,6 +80,7 @@ class TestLatentVisionModel(unittest.TestCase):
         self.assertIsNotNone(model)
         self.assertIsInstance(model, LatentVisionCNN)
 
+    @unittest.skipUnless(LATENT_VISION_AVAILABLE, "PyTorch not installed")
     def test_load_nonexistent_checkpoint(self):
         model = load_latent_vision_model("nonexistent_model.pth")
         self.assertIsNone(model)
@@ -155,7 +156,7 @@ class TestCameraViewWidget(unittest.TestCase):
         self.assertFalse(self.widget.latent_vision_enabled)
         self.assertIsNone(self.widget.latest_latent_mask)
 
-    def test_green_channel_overlay_additive(self):
+    def test_latent_vision_blending(self):
         # Set a synthetic mask
         h, w = 480, 640
         fake_mask = np.ones((h, w), dtype=np.float32)  # value 1.0 everywhere
@@ -167,18 +168,27 @@ class TestCameraViewWidget(unittest.TestCase):
         frame = np.full((h, w, 3), 50, dtype=np.uint8)
         self.widget._on_frame_ready(frame)
 
-        expected_green = int(np.clip(50.0 + LATENT_VISION_OPACITY * 255.0, 0, 255))
-        qimg = self.widget.current_qimage
-        self.assertIsNotNone(qimg)
-        self.assertEqual(qimg.width(), w)
-        self.assertEqual(qimg.height(), h)
+        # Unmodified camera image is in current_qimage (no heavy computation in event loop)
+        raw_qimg = self.widget.current_qimage
+        self.assertIsNotNone(raw_qimg)
+        self.assertEqual(raw_qimg.width(), w)
+        self.assertEqual(raw_qimg.height(), h)
+        raw_pixel = raw_qimg.pixelColor(320, 240)
+        self.assertEqual(raw_pixel.red(), 50)
+        self.assertEqual(raw_pixel.green(), 50)
+        self.assertEqual(raw_pixel.blue(), 50)
 
-        # Inspect pixel at center (320, 240)
-        pixel_color = qimg.pixelColor(320, 240)
-        # BGR888 format converted: red=50, green=expected_green, blue=50
-        self.assertEqual(pixel_color.red(), 50)
-        self.assertEqual(pixel_color.green(), expected_green)
-        self.assertEqual(pixel_color.blue(), 50)
+        # Image merge is performed in the camera viewport drawing function: final = cam*(1-mask) + green*mask
+        display_img = self.widget.viewport.get_display_image()
+        self.assertIsNotNone(display_img)
+        self.assertEqual(display_img.width(), w)
+        self.assertEqual(display_img.height(), h)
+
+        # Inspect pixel at center (320, 240): mask=1.0 -> final is pure green (0, 255, 0)
+        pixel_color = display_img.pixelColor(320, 240)
+        self.assertEqual(pixel_color.red(), 0)
+        self.assertEqual(pixel_color.green(), 255)
+        self.assertEqual(pixel_color.blue(), 0)
 
     def test_grayscale_frame_overlay(self):
         h, w = 480, 640
@@ -191,13 +201,12 @@ class TestCameraViewWidget(unittest.TestCase):
         gray_frame = np.full((h, w), 50, dtype=np.uint8)
         self.widget._on_frame_ready(gray_frame)
 
-        expected_green = int(np.clip(50.0 + LATENT_VISION_OPACITY * 255.0, 0, 255))
-        qimg = self.widget.current_qimage
-        self.assertIsNotNone(qimg)
-        pixel_color = qimg.pixelColor(320, 240)
-        self.assertEqual(pixel_color.red(), 50)
-        self.assertEqual(pixel_color.green(), expected_green)
-        self.assertEqual(pixel_color.blue(), 50)
+        display_img = self.widget.viewport.get_display_image()
+        self.assertIsNotNone(display_img)
+        pixel_color = display_img.pixelColor(320, 240)
+        self.assertEqual(pixel_color.red(), 0)
+        self.assertEqual(pixel_color.green(), 255)
+        self.assertEqual(pixel_color.blue(), 0)
 
     def test_previous_mask_reused_when_model_slower_than_camera(self):
         h, w = 480, 640
@@ -210,11 +219,14 @@ class TestCameraViewWidget(unittest.TestCase):
         for i in range(5):
             frame = np.full((h, w, 3), 40 + i, dtype=np.uint8)
             self.widget._on_frame_ready(frame)
-            expected_green = int(np.clip((40.0 + i) + LATENT_VISION_OPACITY * (0.5 * 255.0), 0, 255))
-            pixel_color = self.widget.current_qimage.pixelColor(10, 10)
-            self.assertEqual(pixel_color.red(), 40 + i)
+            # final = cam * (1 - 0.5) + green * 0.5
+            expected_rb = int((40.0 + i) * 0.5)
+            expected_green = int((40.0 + i) * 0.5 + 127.5)
+            display_img = self.widget.viewport.get_display_image()
+            pixel_color = display_img.pixelColor(10, 10)
+            self.assertEqual(pixel_color.red(), expected_rb)
             self.assertEqual(pixel_color.green(), expected_green)
-            self.assertEqual(pixel_color.blue(), 40 + i)
+            self.assertEqual(pixel_color.blue(), expected_rb)
 
     def test_toggle_off_restores_clean_frame(self):
         h, w = 480, 640
@@ -230,7 +242,8 @@ class TestCameraViewWidget(unittest.TestCase):
         self.widget.latent_vision_cb.setChecked(False)
         self.widget._on_frame_ready(frame)
         self.assertIsNone(self.widget.latest_latent_mask)
-        pixel_color = self.widget.current_qimage.pixelColor(320, 240)
+        display_img = self.widget.viewport.get_display_image()
+        pixel_color = display_img.pixelColor(320, 240)
         self.assertEqual(pixel_color.red(), 50)
         self.assertEqual(pixel_color.green(), 50)
         self.assertEqual(pixel_color.blue(), 50)

@@ -1,20 +1,29 @@
-from typing import Optional, TYPE_CHECKING
+from typing import Optional
 
-from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QPainter, QPen
+import cv2
+import numpy as np
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QCursor, QImage, QPainter, QPen
 from PySide6.QtWidgets import QWidget
-
-if TYPE_CHECKING:
-    from .camera_view_widget import CameraViewWidget
 
 
 class CameraViewport(QWidget):
-    """Subwidget that paints the image with crosshair overlay, zooming, and panning."""
+    """Display widget that paints the camera image with crosshair overlay, zooming, panning, and latent mask blending."""
 
-    def __init__(self, parent_view: "CameraViewWidget"):
-        super().__init__()
-        self.parent_view = parent_view
+    zoom_changed = Signal(float)
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
         self.setStyleSheet("background-color: #0d0d11; border-radius: 4px;")
+
+        # Display images and frames
+        self.current_frame: Optional[np.ndarray] = None
+        self.current_qimage: Optional[QImage] = None
+        self.latent_mask: Optional[np.ndarray] = None
+
+        # Crosshair settings
+        self.show_crosshairs: bool = True
+        self.is_moving_crosshair: bool = False
 
         # Zoom and Pan parameters (UI level)
         self.zoom_level: float = 1.0
@@ -34,10 +43,52 @@ class CameraViewport(QWidget):
         self._is_panning: bool = False
         self._last_mouse_pos: Optional[QPointF] = None
 
+        # Cached blend state for latent vision
+        self._cached_blend_frame: Optional[np.ndarray] = None
+        self._cached_blend_mask: Optional[np.ndarray] = None
+        self._cached_blend_qimg: Optional[QImage] = None
+
+    def set_frame(self, frame: Optional[np.ndarray]):
+        """Sets the current camera frame and updates the underlying QImage."""
+        self.current_frame = frame
+        if frame is None:
+            self.current_qimage = None
+        else:
+            h, w = frame.shape[:2]
+            bytes_per_line = frame.strides[0]
+            if frame.ndim == 2:
+                self.current_qimage = QImage(frame.data, w, h, bytes_per_line, QImage.Format_Grayscale8).copy()
+            else:
+                self.current_qimage = QImage(frame.data, w, h, bytes_per_line, QImage.Format_BGR888).copy()
+        self.update()
+
+    def set_latent_mask(self, mask: Optional[np.ndarray]):
+        """Sets the latent vision mask.
+
+        Enables blending when the mask is set, and shows the original image when mask is None.
+        """
+        self.latent_mask = mask
+        self.update()
+
+    def set_show_crosshairs(self, show: bool):
+        """Toggles crosshair visibility."""
+        self.show_crosshairs = show
+        self.update()
+
+    def set_moving_crosshair(self, moving: bool):
+        """Sets whether cursor interaction moves crosshairs."""
+        self.is_moving_crosshair = moving
+        if moving:
+            self.setCursor(QCursor(Qt.CrossCursor))
+        else:
+            self.setCursor(QCursor(Qt.ArrowCursor))
+        self.update()
+
     def reset_zoom(self):
         self.zoom_level = 1.0
         self.pan_x = 0.0
         self.pan_y = 0.0
+        self.zoom_changed.emit(self.zoom_level)
         self.update()
 
     def zoom(self, factor: float, center_point: Optional[QPointF] = None):
@@ -46,7 +97,7 @@ class CameraViewport(QWidget):
         if new_zoom == old_zoom:
             return
 
-        qimg = self.parent_view.current_qimage
+        qimg = self.current_qimage
         if qimg is not None and not qimg.isNull() and center_point is not None:
             # Mouse-centered zoom
             vw, vh = self.width(), self.height()
@@ -74,10 +125,11 @@ class CameraViewport(QWidget):
         else:
             self.zoom_level = new_zoom
 
+        self.zoom_changed.emit(self.zoom_level)
         self.update()
 
     def _get_target_rect(self) -> QRectF:
-        qimg = self.parent_view.current_qimage
+        qimg = self.current_qimage
         vw = self.width()
         vh = self.height()
         if qimg is None or qimg.isNull():
@@ -92,6 +144,58 @@ class CameraViewport(QWidget):
         dy = (vh - dh) / 2.0 + self.pan_y
         return QRectF(dx, dy, dw, dh)
 
+    def get_display_image(self) -> Optional[QImage]:
+        """Returns the QImage to render.
+
+        Enables blending when the mask is set, and shows the original image when mask is None.
+        """
+        if self.latent_mask is None or self.current_frame is None:
+            return self.current_qimage
+
+        return self._blend_latent_vision(self.current_frame, self.latent_mask)
+
+    def _blend_latent_vision(self, frame: np.ndarray, mask: np.ndarray) -> Optional[QImage]:
+        if (
+            frame is self._cached_blend_frame
+            and mask is self._cached_blend_mask
+            and self._cached_blend_qimg is not None
+        ):
+            return self._cached_blend_qimg
+
+        h, w = frame.shape[:2]
+        if frame.ndim == 2:
+            cam = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+        else:
+            cam = frame
+
+        # Ensure mask matches frame dimensions
+        if mask.shape[:2] != (h, w):
+            mask_resized = cv2.resize(mask, (w, h), interpolation=cv2.INTER_LINEAR)
+        else:
+            mask_resized = mask
+
+        if mask_resized.ndim == 2:
+            mask_3d = mask_resized[:, :, np.newaxis]
+        else:
+            mask_3d = mask_resized
+
+        mask_f = np.clip(mask_3d.astype(np.float32), 0.0, 1.0)
+        cam_f = cam.astype(np.float32)
+        green = np.array([0.0, 255.0, 0.0], dtype=np.float32)
+
+        # final image = cam * (1 - mask) + green * mask
+        final = cam_f * (1.0 - mask_f) + green * mask_f
+        final = np.clip(final, 0.0, 255.0).astype(np.uint8)
+
+        bytes_per_line = final.strides[0]
+        merged_qimg = QImage(final.data, w, h, bytes_per_line, QImage.Format_BGR888).copy()
+
+        self._cached_blend_frame = frame
+        self._cached_blend_mask = mask
+        self._cached_blend_qimg = merged_qimg
+
+        return merged_qimg
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -100,18 +204,18 @@ class CameraViewport(QWidget):
         # Draw background
         painter.fillRect(self.rect(), QColor("#0d0d11"))
 
-        qimg = self.parent_view.current_qimage
         target_rect = self._get_target_rect()
+        display_img = self.get_display_image()
 
-        if qimg is not None and not qimg.isNull():
+        if display_img is not None and not display_img.isNull():
             # Fast direct render into target_rect without per-frame CPU reallocation
-            painter.drawImage(target_rect, qimg)
+            painter.drawImage(target_rect, display_img)
         else:
             painter.setPen(QColor("#555555"))
             painter.drawText(self.rect(), Qt.AlignCenter, "No Camera Feed Available")
 
         # Draw Crosshair
-        if self.parent_view.show_crosshairs:
+        if self.show_crosshairs:
             cx = target_rect.x() + self.crosshair_u * target_rect.width()
             cy = target_rect.y() + self.crosshair_v * target_rect.height()
 
@@ -142,7 +246,7 @@ class CameraViewport(QWidget):
                 painter.drawEllipse(QPointF(scx, scy), 35, 35)
 
                 # Compute pixel distance between the two crosshairs
-                qimg = self.parent_view.current_qimage
+                qimg = self.current_qimage
                 if qimg is not None and not qimg.isNull() and target_rect.width() > 0:
                     iw = qimg.width()
                     ih = qimg.height()
@@ -179,16 +283,15 @@ class CameraViewport(QWidget):
         if angle != 0:
             factor = 1.15 if angle > 0 else (1.0 / 1.15)
             self.zoom(factor, event.position())
-            self.parent_view._update_zoom_label()
         event.accept()
 
     def mousePressEvent(self, event):
-        if self.parent_view.is_moving_crosshair and event.button() == Qt.LeftButton:
+        if self.is_moving_crosshair and event.button() == Qt.LeftButton:
             self._update_crosshair_from_pos(event.position())
             event.accept()
             return
 
-        if self.parent_view.is_moving_crosshair and event.button() == Qt.RightButton:
+        if self.is_moving_crosshair and event.button() == Qt.RightButton:
             self._update_secondary_crosshair_from_pos(event.position())
             event.accept()
             return
@@ -199,7 +302,7 @@ class CameraViewport(QWidget):
             event.accept()
 
     def mouseMoveEvent(self, event):
-        if self.parent_view.is_moving_crosshair and (event.buttons() & Qt.LeftButton):
+        if self.is_moving_crosshair and (event.buttons() & Qt.LeftButton):
             self._update_crosshair_from_pos(event.position())
             event.accept()
             return
@@ -219,13 +322,12 @@ class CameraViewport(QWidget):
             event.accept()
 
     def mouseDoubleClickEvent(self, event):
-        if self.parent_view.is_moving_crosshair:
+        if self.is_moving_crosshair:
             self.crosshair_u = 0.5
             self.crosshair_v = 0.5
             self.update()
         else:
             self.reset_zoom()
-            self.parent_view._update_zoom_label()
         event.accept()
 
     def _update_crosshair_from_pos(self, pos: QPointF):
@@ -246,3 +348,4 @@ class CameraViewport(QWidget):
             self.secondary_crosshair_v = max(0.0, min(1.0, v))
             self.has_secondary_crosshair = True
             self.update()
+

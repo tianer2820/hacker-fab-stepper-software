@@ -1,8 +1,26 @@
 from pathlib import Path
-from typing import Optional, Union
+import threading
+from typing import Callable, Optional, Union
 
+import cv2
+import numpy as np
 import torch
 import torch.nn as nn
+
+
+DEFAULT_LATENT_VISION_CHECKPOINT = Path("checkpoints/latent_vision/latest_model.pth")
+
+
+def resolve_checkpoint_path(path: Union[str, Path] = DEFAULT_LATENT_VISION_CHECKPOINT) -> Path:
+    p = Path(path)
+    if p.is_file():
+        return p
+    # Try finding relative to project root
+    repo_root = Path(__file__).resolve().parents[2]
+    candidate = repo_root / p
+    if candidate.is_file():
+        return candidate
+    return p
 
 
 class LatentVisionCNN(nn.Module):
@@ -68,7 +86,7 @@ def load_latent_vision_model(
 
     Returns the loaded model in eval mode, or None if loading fails.
     """
-    ckpt_file = Path(checkpoint_path)
+    ckpt_file = resolve_checkpoint_path(checkpoint_path)
     if not ckpt_file.is_file():
         print(f"[Latent Vision] Checkpoint file not found: {ckpt_file}")
         return None
@@ -88,5 +106,93 @@ def load_latent_vision_model(
     except Exception as e:
         print(f"[Latent Vision] Failed to load latent vision checkpoint: {e}")
         return None
+
+
+class LatentVisionWorker(threading.Thread):
+    """Asynchronous worker for latent vision model inference and mask upscaling.
+
+    Runs in a background thread to prevent blocking camera updates and the GUI.
+    """
+
+    def __init__(
+        self,
+        checkpoint_path: Union[str, Path],
+        on_mask_ready: Callable[[np.ndarray], None],
+        device: str = "cpu",
+    ):
+        super().__init__(daemon=True)
+        self.checkpoint_path = resolve_checkpoint_path(checkpoint_path)
+        self.on_mask_ready = on_mask_ready
+        self.device = device
+
+        self._pending_frame: Optional[np.ndarray] = None
+        self._frame_lock = threading.Lock()
+        self._wake_event = threading.Event()
+        self._stop_event = threading.Event()
+        self.model: Optional[LatentVisionCNN] = None
+
+    def submit_frame(self, frame: np.ndarray):
+        """Submit the latest camera frame for processing without blocking."""
+        with self._frame_lock:
+            self._pending_frame = frame
+        self._wake_event.set()
+
+    def stop(self):
+        """Signals the worker thread to stop."""
+        self._stop_event.set()
+        self._wake_event.set()
+
+    def run(self):
+        self.model = load_latent_vision_model(self.checkpoint_path, device=self.device)
+        if self.model is None:
+            return
+
+        while not self._stop_event.is_set():
+            self._wake_event.wait()
+            self._wake_event.clear()
+
+            if self._stop_event.is_set():
+                break
+
+            with self._frame_lock:
+                frame_to_process = self._pending_frame
+                self._pending_frame = None
+
+            if frame_to_process is None:
+                continue
+
+            try:
+                # 1. Ensure RGB format
+                if frame_to_process.ndim == 2:
+                    rgb = cv2.cvtColor(frame_to_process, cv2.COLOR_GRAY2RGB)
+                else:
+                    rgb = cv2.cvtColor(frame_to_process, cv2.COLOR_BGR2RGB)
+
+                h, w = rgb.shape[:2]
+
+                # 2. Downscaled by x2 before feeding into the model
+                down_w = max(1, w // 2)
+                down_h = max(1, h // 2)
+                downscaled = cv2.resize(rgb, (down_w, down_h), interpolation=cv2.INTER_AREA)
+
+                # 3. Model accept RGB format, 0-1 float data
+                img_float = downscaled.astype(np.float32) / 255.0
+
+                # 4. Torch Tensor (1, 3, down_h, down_w)
+                tensor = torch.from_numpy(img_float).permute(2, 0, 1).unsqueeze(0).to(self.device)
+
+                # 5. Predict: output is input/4 size
+                out = self.model.predict(tensor)
+                out_mask = out.squeeze().cpu().numpy()
+
+                # 6. Scaled back up to match the camera image size
+                scaled_mask = cv2.resize(out_mask, (w, h), interpolation=cv2.INTER_LINEAR)
+
+                # 7. Notify callback with scaled mask
+                self.on_mask_ready(scaled_mask)
+            except Exception as e:
+                print(f"[Latent Vision] Inference error: {e}")
+
+
 
 

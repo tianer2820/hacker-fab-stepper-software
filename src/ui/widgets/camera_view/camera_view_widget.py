@@ -24,124 +24,26 @@ from ui.bridge import QtEngineBridge
 from .camera_viewport import CameraViewport
 
 try:
-    from lib.latent_vision_model import LatentVisionCNN, load_latent_vision_model
+    from lib.latent_vision_model import (
+        DEFAULT_LATENT_VISION_CHECKPOINT,
+        LatentVisionCNN,
+        LatentVisionWorker,
+        load_latent_vision_model,
+        resolve_checkpoint_path,
+    )
     LATENT_VISION_AVAILABLE = True
 except ImportError:
     LatentVisionCNN = None  # type: ignore
+    LatentVisionWorker = None  # type: ignore
     load_latent_vision_model = None  # type: ignore
+    DEFAULT_LATENT_VISION_CHECKPOINT = Path("checkpoints/latent_vision/latest_model.pth")
+    resolve_checkpoint_path = lambda p: Path(p)  # type: ignore
     LATENT_VISION_AVAILABLE = False
 
 
 # Latent vision overlay opacity constant (easy to change)
 LATENT_VISION_OPACITY: float = 0.5
-DEFAULT_LATENT_VISION_CHECKPOINT = Path("checkpoints/latent_vision/latest_model.pth")
-
-
-def _resolve_checkpoint_path(path: Union[str, Path] = DEFAULT_LATENT_VISION_CHECKPOINT) -> Path:
-    p = Path(path)
-    if p.is_file():
-        return p
-    # Try finding relative to project root
-    repo_root = Path(__file__).resolve().parents[4]
-    candidate = repo_root / p
-    if candidate.is_file():
-        return candidate
-    return p
-
-
-class LatentVisionWorker(threading.Thread):
-    """Asynchronous worker for latent vision model inference.
-
-    Runs in a background thread to prevent blocking camera updates and the GUI.
-    """
-
-    def __init__(
-        self,
-        checkpoint_path: Union[str, Path],
-        on_mask_ready: Callable[[np.ndarray], None],
-        device: str = "cpu",
-    ):
-        super().__init__(daemon=True)
-        self.checkpoint_path = _resolve_checkpoint_path(checkpoint_path)
-        self.on_mask_ready = on_mask_ready
-        self.device = device
-
-        self._pending_frame: Optional[np.ndarray] = None
-        self._frame_lock = threading.Lock()
-        self._wake_event = threading.Event()
-        self._stop_event = threading.Event()
-        self.model: Optional[LatentVisionCNN] = None
-
-    def submit_frame(self, frame: np.ndarray):
-        """Submit the latest camera frame for processing without blocking."""
-        with self._frame_lock:
-            self._pending_frame = frame
-        self._wake_event.set()
-
-    def stop(self):
-        """Signals the worker thread to stop."""
-        self._stop_event.set()
-        self._wake_event.set()
-
-    def run(self):
-        if not LATENT_VISION_AVAILABLE or load_latent_vision_model is None:
-            print(
-                "[Latent Vision] Optional packages 'torch' and 'torchvision' are not installed. "
-                "Latent vision model is disabled. Install with: pip install '.[latent_vision]'"
-            )
-            return
-
-        self.model = load_latent_vision_model(self.checkpoint_path, device=self.device)
-        if self.model is None:
-            return
-
-        while not self._stop_event.is_set():
-            self._wake_event.wait()
-            self._wake_event.clear()
-
-            if self._stop_event.is_set():
-                break
-
-            with self._frame_lock:
-                frame_to_process = self._pending_frame
-                self._pending_frame = None
-
-            if frame_to_process is None:
-                continue
-
-            try:
-                import torch
-
-                # 1. Ensure RGB format
-                if frame_to_process.ndim == 2:
-                    rgb = cv2.cvtColor(frame_to_process, cv2.COLOR_GRAY2RGB)
-                else:
-                    rgb = cv2.cvtColor(frame_to_process, cv2.COLOR_BGR2RGB)
-
-                h, w = rgb.shape[:2]
-
-                # 2. Downscaled by x2 before feeding into the model
-                down_w = max(1, w // 2)
-                down_h = max(1, h // 2)
-                downscaled = cv2.resize(rgb, (down_w, down_h), interpolation=cv2.INTER_AREA)
-
-                # 3. Model accept RGB format, 0-1 float data
-                img_float = downscaled.astype(np.float32) / 255.0
-
-                # 4. Torch Tensor (1, 3, down_h, down_w)
-                tensor = torch.from_numpy(img_float).permute(2, 0, 1).unsqueeze(0).to(self.device)
-
-                # 5. Predict: output is input/4 size
-                out = self.model.predict(tensor)
-                out_mask = out.squeeze().cpu().numpy()
-
-                # 6. Scaled back up to match the camera image size
-                scaled_mask = cv2.resize(out_mask, (w, h), interpolation=cv2.INTER_LINEAR)
-
-                # 7. Notify callback with scaled mask
-                self.on_mask_ready(scaled_mask)
-            except Exception as e:
-                print(f"[Latent Vision] Inference error: {e}")
+_resolve_checkpoint_path = resolve_checkpoint_path
 
 
 class CameraViewWidget(QWidget):
@@ -260,7 +162,12 @@ class CameraViewWidget(QWidget):
 
         # Main viewport canvas
         self.viewport = CameraViewport(self)
+        self.viewport.zoom_changed.connect(self._on_viewport_zoom_changed)
         layout.addWidget(self.viewport, stretch=1)
+
+    def _on_viewport_zoom_changed(self, zoom_level: float):
+        pct = int(round(zoom_level * 100))
+        self.btn_zoom_reset.setText(f"{pct}%")
 
     def _on_crosshair_toggled(self, checked: bool):
         self.show_crosshairs = checked
@@ -268,7 +175,7 @@ class CameraViewWidget(QWidget):
         self.center_crosshair_btn.setEnabled(checked)
         if not checked and self.move_crosshair_btn.isChecked():
             self.move_crosshair_btn.setChecked(False)
-        self.viewport.update()
+        self.viewport.set_show_crosshairs(checked)
 
     def _on_latent_vision_toggled(self, checked: bool):
         self.latent_vision_enabled = checked
@@ -277,13 +184,17 @@ class CameraViewWidget(QWidget):
                 self._start_latent_worker()
             if self.current_frame is not None and self._latent_worker is not None:
                 self._latent_worker.submit_frame(self.current_frame)
+            with self._latent_mask_lock:
+                mask = self.latest_latent_mask
+            self.viewport.set_latent_mask(mask)
         else:
             with self._latent_mask_lock:
                 self.latest_latent_mask = None
-            if self.current_frame is not None:
-                self._render_frame(self.current_frame)
+            self.viewport.set_latent_mask(None)
 
     def _start_latent_worker(self):
+        if not LATENT_VISION_AVAILABLE or LatentVisionWorker is None:
+            return
         self._latent_worker = LatentVisionWorker(
             checkpoint_path=DEFAULT_LATENT_VISION_CHECKPOINT,
             on_mask_ready=self._on_latent_mask_ready,
@@ -293,14 +204,12 @@ class CameraViewWidget(QWidget):
     def _on_latent_mask_ready(self, mask: np.ndarray):
         with self._latent_mask_lock:
             self.latest_latent_mask = mask
+        if self.latent_vision_enabled:
+            self.viewport.set_latent_mask(mask)
 
     def _on_move_crosshair_toggled(self, checked: bool):
         self.is_moving_crosshair = checked
-        if checked:
-            self.viewport.setCursor(QCursor(Qt.CrossCursor))
-        else:
-            self.viewport.setCursor(QCursor(Qt.ArrowCursor))
-        self.viewport.update()
+        self.viewport.set_moving_crosshair(checked)
 
     def _on_center_crosshair_clicked(self):
         self.viewport.crosshair_u = 0.5
@@ -310,15 +219,12 @@ class CameraViewWidget(QWidget):
 
     def _zoom_in(self):
         self.viewport.zoom(1.25)
-        self._update_zoom_label()
 
     def _zoom_out(self):
         self.viewport.zoom(1.0 / 1.25)
-        self._update_zoom_label()
 
     def _zoom_reset(self):
         self.viewport.reset_zoom()
-        self._update_zoom_label()
 
     def _update_zoom_label(self):
         pct = int(round(self.viewport.zoom_level * 100))
@@ -362,31 +268,13 @@ class CameraViewWidget(QWidget):
         if self.latent_vision_enabled:
             if self._latent_worker is not None and self._latent_worker.is_alive():
                 self._latent_worker.submit_frame(frame)
-
             with self._latent_mask_lock:
                 mask = self.latest_latent_mask
-
-            if mask is not None:
-                h, w = frame.shape[:2]
-                if mask.shape[:2] != (h, w):
-                    mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_LINEAR)
-
-                if frame.ndim == 2:
-                    display_frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-                else:
-                    display_frame = frame.copy()
-
-                # Additive blending on green channel: G + opacity * mask * 255
-                g = display_frame[:, :, 1].astype(np.float32)
-                g += LATENT_VISION_OPACITY * (mask * 255.0)
-                display_frame[:, :, 1] = np.clip(g, 0, 255).astype(np.uint8)
-                display_img = display_frame
-            else:
-                display_img = frame
+            self.viewport.set_latent_mask(mask)
         else:
-            display_img = frame
+            self.viewport.set_latent_mask(None)
 
-        self._render_frame(display_img)
+        self._render_frame(frame)
 
         # FPS calculate
         self.frame_count += 1
@@ -400,13 +288,12 @@ class CameraViewWidget(QWidget):
 
     def _render_frame(self, frame: np.ndarray):
         h, w = frame.shape[:2]
-        bytes_per_line = frame.strides[0]
-        if frame.ndim == 2:
-            qimg = QImage(frame.data, w, h, bytes_per_line, QImage.Format_Grayscale8).copy()
-        else:
-            qimg = QImage(frame.data, w, h, bytes_per_line, QImage.Format_BGR888).copy()
-
-        self.current_qimage = qimg
+        self.viewport.set_frame(frame)
+        self.current_qimage = self.viewport.current_qimage
         self.res_label.setText(f"{w}x{h}")
-        self.viewport.update()
+
+    def get_display_image(self) -> Optional[QImage]:
+        """Returns the current display image rendered by the viewport."""
+        return self.viewport.get_display_image()
+
 
