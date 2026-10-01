@@ -33,6 +33,7 @@ from ui.widgets.camera_view.camera_view_widget import (
     LATENT_VISION_OPACITY,
     CameraViewWidget,
     LatentVisionWorker,
+    MaskRenderWorker,
     _resolve_checkpoint_path,
 )
 
@@ -220,13 +221,13 @@ class TestCameraViewWidget(unittest.TestCase):
             frame = np.full((h, w, 3), 40 + i, dtype=np.uint8)
             self.widget._on_frame_ready(frame)
             # final = cam * (1 - 0.5) + green * 0.5
-            expected_rb = int((40.0 + i) * 0.5)
-            expected_green = int((40.0 + i) * 0.5 + 127.5)
+            expected_rb = int(round((40.0 + i) * 0.5))
+            expected_green = int(round((40.0 + i) * 0.5 + 127.5))
             display_img = self.widget.viewport.get_display_image()
             pixel_color = display_img.pixelColor(10, 10)
-            self.assertEqual(pixel_color.red(), expected_rb)
-            self.assertEqual(pixel_color.green(), expected_green)
-            self.assertEqual(pixel_color.blue(), expected_rb)
+            self.assertAlmostEqual(pixel_color.red(), expected_rb, delta=1)
+            self.assertAlmostEqual(pixel_color.green(), expected_green, delta=1)
+            self.assertAlmostEqual(pixel_color.blue(), expected_rb, delta=1)
 
     def test_toggle_off_restores_clean_frame(self):
         h, w = 480, 640
@@ -247,6 +248,38 @@ class TestCameraViewWidget(unittest.TestCase):
         self.assertEqual(pixel_color.red(), 50)
         self.assertEqual(pixel_color.green(), 50)
         self.assertEqual(pixel_color.blue(), 50)
+
+
+class TestMaskRenderWorker(unittest.TestCase):
+    def test_mask_render_worker_thread(self):
+        rendered_images = []
+
+        def on_image(qimg):
+            rendered_images.append(qimg)
+
+        worker = MaskRenderWorker(on_image_ready=on_image)
+        worker.start()
+
+        try:
+            # Submit a test mask
+            h, w = 240, 320
+            fake_mask = np.full((h, w), 0.75, dtype=np.float32)
+            worker.submit_mask(fake_mask)
+
+            # Wait for output
+            for _ in range(50):
+                if rendered_images:
+                    break
+                time.sleep(0.02)
+
+            self.assertGreater(len(rendered_images), 0)
+            img = rendered_images[-1]
+            self.assertEqual(img.width(), w)
+            self.assertEqual(img.height(), h)
+            self.assertFalse(img.isNull())
+        finally:
+            worker.stop()
+            worker.join(timeout=2.0)
 
 
 if __name__ == "__main__":

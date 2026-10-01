@@ -20,6 +20,7 @@ class CameraViewport(QWidget):
         self.current_frame: Optional[np.ndarray] = None
         self.current_qimage: Optional[QImage] = None
         self.latent_mask: Optional[np.ndarray] = None
+        self.latent_mask_image: Optional[QImage] = None
 
         # Crosshair settings
         self.show_crosshairs: bool = True
@@ -43,10 +44,10 @@ class CameraViewport(QWidget):
         self._is_panning: bool = False
         self._last_mouse_pos: Optional[QPointF] = None
 
-        # Cached blend state for latent vision
-        self._cached_blend_frame: Optional[np.ndarray] = None
-        self._cached_blend_mask: Optional[np.ndarray] = None
-        self._cached_blend_qimg: Optional[QImage] = None
+        # Cached composite image for get_display_image
+        self._cached_composite_qimage: Optional[QImage] = None
+        self._cached_composite_frame_qimg: Optional[QImage] = None
+        self._cached_composite_mask_qimg: Optional[QImage] = None
 
     def set_frame(self, frame: Optional[np.ndarray]):
         """Sets the current camera frame and updates the underlying QImage."""
@@ -62,12 +63,44 @@ class CameraViewport(QWidget):
                 self.current_qimage = QImage(frame.data, w, h, bytes_per_line, QImage.Format_BGR888).copy()
         self.update()
 
-    def set_latent_mask(self, mask: Optional[np.ndarray]):
+    @staticmethod
+    def _create_mask_qimage(mask: np.ndarray) -> QImage:
+        h, w = mask.shape[:2]
+        if mask.ndim == 3:
+            mask_2d = mask[:, :, 0]
+        else:
+            mask_2d = mask
+
+        alpha = np.clip(mask_2d * 255.0, 0.0, 255.0).astype(np.uint8)
+        overlay = np.zeros((h, w, 4), dtype=np.uint8)
+        overlay[:, :, 1] = alpha  # Green channel premultiplied
+        overlay[:, :, 3] = alpha  # Alpha channel
+        return QImage(overlay.data, w, h, overlay.strides[0], QImage.Format_RGBA8888_Premultiplied).copy()
+
+    def set_latent_mask(self, mask: Optional[object]):
         """Sets the latent vision mask.
 
         Enables blending when the mask is set, and shows the original image when mask is None.
+        Accepts either a pre-rendered QImage or a numpy array mask.
         """
-        self.latent_mask = mask
+        if mask is None:
+            if self.latent_mask is None and self.latent_mask_image is None:
+                return
+            self.latent_mask = None
+            self.latent_mask_image = None
+        elif isinstance(mask, QImage):
+            if self.latent_mask_image is mask:
+                return
+            self.latent_mask = None
+            self.latent_mask_image = mask
+        elif isinstance(mask, np.ndarray):
+            if self.latent_mask is mask:
+                return
+            self.latent_mask = mask
+            self.latent_mask_image = self._create_mask_qimage(mask)
+        else:
+            self.latent_mask = None
+            self.latent_mask_image = None
         self.update()
 
     def set_show_crosshairs(self, show: bool):
@@ -149,52 +182,26 @@ class CameraViewport(QWidget):
 
         Enables blending when the mask is set, and shows the original image when mask is None.
         """
-        if self.latent_mask is None or self.current_frame is None:
+        if self.latent_mask_image is None or self.current_qimage is None:
             return self.current_qimage
 
-        return self._blend_latent_vision(self.current_frame, self.latent_mask)
-
-    def _blend_latent_vision(self, frame: np.ndarray, mask: np.ndarray) -> Optional[QImage]:
         if (
-            frame is self._cached_blend_frame
-            and mask is self._cached_blend_mask
-            and self._cached_blend_qimg is not None
+            self._cached_composite_qimage is not None
+            and self._cached_composite_frame_qimg is self.current_qimage
+            and self._cached_composite_mask_qimg is self.latent_mask_image
         ):
-            return self._cached_blend_qimg
+            return self._cached_composite_qimage
 
-        h, w = frame.shape[:2]
-        if frame.ndim == 2:
-            cam = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-        else:
-            cam = frame
+        target = QImage(self.current_qimage.size(), QImage.Format_ARGB32_Premultiplied)
+        painter = QPainter(target)
+        painter.drawImage(0, 0, self.current_qimage)
+        painter.drawImage(0, 0, self.latent_mask_image)
+        painter.end()
 
-        # Ensure mask matches frame dimensions
-        if mask.shape[:2] != (h, w):
-            mask_resized = cv2.resize(mask, (w, h), interpolation=cv2.INTER_LINEAR)
-        else:
-            mask_resized = mask
-
-        if mask_resized.ndim == 2:
-            mask_3d = mask_resized[:, :, np.newaxis]
-        else:
-            mask_3d = mask_resized
-
-        mask_f = np.clip(mask_3d.astype(np.float32), 0.0, 1.0)
-        cam_f = cam.astype(np.float32)
-        green = np.array([0.0, 255.0, 0.0], dtype=np.float32)
-
-        # final image = cam * (1 - mask) + green * mask
-        final = cam_f * (1.0 - mask_f) + green * mask_f
-        final = np.clip(final, 0.0, 255.0).astype(np.uint8)
-
-        bytes_per_line = final.strides[0]
-        merged_qimg = QImage(final.data, w, h, bytes_per_line, QImage.Format_BGR888).copy()
-
-        self._cached_blend_frame = frame
-        self._cached_blend_mask = mask
-        self._cached_blend_qimg = merged_qimg
-
-        return merged_qimg
+        self._cached_composite_frame_qimg = self.current_qimage
+        self._cached_composite_mask_qimg = self.latent_mask_image
+        self._cached_composite_qimage = target
+        return target
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -205,11 +212,12 @@ class CameraViewport(QWidget):
         painter.fillRect(self.rect(), QColor("#0d0d11"))
 
         target_rect = self._get_target_rect()
-        display_img = self.get_display_image()
 
-        if display_img is not None and not display_img.isNull():
+        if self.current_qimage is not None and not self.current_qimage.isNull():
             # Fast direct render into target_rect without per-frame CPU reallocation
-            painter.drawImage(target_rect, display_img)
+            painter.drawImage(target_rect, self.current_qimage)
+            if self.latent_mask_image is not None and not self.latent_mask_image.isNull():
+                painter.drawImage(target_rect, self.latent_mask_image)
         else:
             painter.setPen(QColor("#555555"))
             painter.drawText(self.rect(), Qt.AlignCenter, "No Camera Feed Available")

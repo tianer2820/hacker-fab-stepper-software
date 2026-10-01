@@ -7,7 +7,7 @@ from typing import Callable, Optional, Union
 
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QCursor, QImage
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -46,8 +46,68 @@ LATENT_VISION_OPACITY: float = 0.5
 _resolve_checkpoint_path = resolve_checkpoint_path
 
 
+class MaskRenderWorker(threading.Thread):
+    """Background worker that converts model output masks into renderable QImages.
+
+    Performs heavy image processing on a separate thread to keep event handlers responsive.
+    """
+
+    def __init__(self, on_image_ready: Callable[[QImage], None]):
+        super().__init__(daemon=True)
+        self.on_image_ready = on_image_ready
+        self._pending_mask: Optional[np.ndarray] = None
+        self._lock = threading.Lock()
+        self._wake_event = threading.Event()
+        self._stop_event = threading.Event()
+
+    def submit_mask(self, mask: np.ndarray):
+        with self._lock:
+            self._pending_mask = mask
+        self._wake_event.set()
+
+    def stop(self):
+        self._stop_event.set()
+        self._wake_event.set()
+
+    def run(self):
+        while not self._stop_event.is_set():
+            self._wake_event.wait()
+            self._wake_event.clear()
+
+            if self._stop_event.is_set():
+                break
+
+            with self._lock:
+                mask_to_process = self._pending_mask
+                self._pending_mask = None
+
+            if mask_to_process is None:
+                continue
+
+            try:
+                h, w = mask_to_process.shape[:2]
+                if mask_to_process.ndim == 3:
+                    mask_2d = mask_to_process[:, :, 0]
+                else:
+                    mask_2d = mask_to_process
+
+                alpha = np.clip(mask_2d * 255.0, 0.0, 255.0).astype(np.uint8)
+                overlay = np.zeros((h, w, 4), dtype=np.uint8)
+                overlay[:, :, 1] = alpha  # Green channel premultiplied
+                overlay[:, :, 3] = alpha  # Alpha channel
+                mask_qimage = QImage(
+                    overlay.data, w, h, overlay.strides[0], QImage.Format_RGBA8888_Premultiplied
+                ).copy()
+
+                self.on_image_ready(mask_qimage)
+            except Exception as e:
+                print(f"[MaskRenderWorker] Error processing mask: {e}")
+
+
 class CameraViewWidget(QWidget):
     """Live camera view with crosshairs, FPS tracking, zooming, and snapshot capture."""
+
+    mask_rendered_signal = Signal(object)
 
     def __init__(
         self,
@@ -68,9 +128,12 @@ class CameraViewWidget(QWidget):
 
         # Latent Vision state
         self.latent_vision_enabled: bool = False
-        self.latest_latent_mask: Optional[np.ndarray] = None
-        self._latent_mask_lock = threading.Lock()
+        self._latest_latent_mask: Optional[np.ndarray] = None
+        self._latest_latent_mask_qimage: Optional[QImage] = None
+        self._latent_mask_lock = threading.RLock()
         self._latent_worker: Optional[LatentVisionWorker] = None
+        self._mask_render_worker: Optional[MaskRenderWorker] = None
+        self.mask_rendered_signal.connect(self._on_mask_rendered)
 
         # FPS metrics
         self.frame_count = 0
@@ -85,6 +148,24 @@ class CameraViewWidget(QWidget):
 
         # Listen for camera frame ready event from engine bridge
         self.bridge.camera_frame_ready.connect(self._on_frame_ready)
+
+    @property
+    def latest_latent_mask(self) -> Optional[np.ndarray]:
+        with self._latent_mask_lock:
+            return self._latest_latent_mask
+
+    @latest_latent_mask.setter
+    def latest_latent_mask(self, mask: Optional[np.ndarray]):
+        with self._latent_mask_lock:
+            self._latest_latent_mask = mask
+            self._latest_latent_mask_qimage = None
+        if self.latent_vision_enabled and mask is not None:
+            if self._mask_render_worker is not None and self._mask_render_worker.is_alive():
+                self._mask_render_worker.submit_mask(mask)
+            else:
+                self.viewport.set_latent_mask(mask)
+        else:
+            self.viewport.set_latent_mask(None)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -182,14 +263,18 @@ class CameraViewWidget(QWidget):
         if checked:
             if self._latent_worker is None or not self._latent_worker.is_alive():
                 self._start_latent_worker()
+            if self._mask_render_worker is None or not self._mask_render_worker.is_alive():
+                self._start_mask_render_worker()
             if self.current_frame is not None and self._latent_worker is not None:
                 self._latent_worker.submit_frame(self.current_frame)
             with self._latent_mask_lock:
-                mask = self.latest_latent_mask
-            self.viewport.set_latent_mask(mask)
+                mask = self._latest_latent_mask
+            if mask is not None and self._mask_render_worker is not None:
+                self._mask_render_worker.submit_mask(mask)
         else:
             with self._latent_mask_lock:
-                self.latest_latent_mask = None
+                self._latest_latent_mask = None
+                self._latest_latent_mask_qimage = None
             self.viewport.set_latent_mask(None)
 
     def _start_latent_worker(self):
@@ -201,11 +286,26 @@ class CameraViewWidget(QWidget):
         )
         self._latent_worker.start()
 
+    def _start_mask_render_worker(self):
+        if self._mask_render_worker is None or not self._mask_render_worker.is_alive():
+            self._mask_render_worker = MaskRenderWorker(on_image_ready=self.mask_rendered_signal.emit)
+            self._mask_render_worker.start()
+
     def _on_latent_mask_ready(self, mask: np.ndarray):
+        """Worker callback: saves mask and offloads heavy image processing to MaskRenderWorker."""
         with self._latent_mask_lock:
-            self.latest_latent_mask = mask
+            self._latest_latent_mask = mask
         if self.latent_vision_enabled:
-            self.viewport.set_latent_mask(mask)
+            if self._mask_render_worker is None or not self._mask_render_worker.is_alive():
+                self._start_mask_render_worker()
+            self._mask_render_worker.submit_mask(mask)
+
+    def _on_mask_rendered(self, mask_qimage: QImage):
+        """GUI thread slot: receives pre-rendered QImage and updates the viewport with zero processing."""
+        with self._latent_mask_lock:
+            self._latest_latent_mask_qimage = mask_qimage
+        if self.latent_vision_enabled:
+            self.viewport.set_latent_mask(mask_qimage)
 
     def _on_move_crosshair_toggled(self, checked: bool):
         self.is_moving_crosshair = checked
@@ -246,6 +346,9 @@ class CameraViewWidget(QWidget):
             self.bridge.camera_frame_ready.disconnect(self._on_frame_ready)
         except Exception:
             pass
+        if self._mask_render_worker is not None:
+            self._mask_render_worker.stop()
+            self._mask_render_worker = None
         if self._latent_worker is not None:
             self._latent_worker.stop()
             self._latent_worker = None
@@ -268,11 +371,10 @@ class CameraViewWidget(QWidget):
         if self.latent_vision_enabled:
             if self._latent_worker is not None and self._latent_worker.is_alive():
                 self._latent_worker.submit_frame(frame)
-            with self._latent_mask_lock:
-                mask = self.latest_latent_mask
-            self.viewport.set_latent_mask(mask)
-        else:
-            self.viewport.set_latent_mask(None)
+            if self.viewport.latent_mask_image is None and self._latest_latent_mask is not None:
+                with self._latent_mask_lock:
+                    mask = self._latest_latent_mask_qimage or self._latest_latent_mask
+                self.viewport.set_latent_mask(mask)
 
         self._render_frame(frame)
 
