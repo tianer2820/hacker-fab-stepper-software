@@ -40,6 +40,7 @@ app = QApplication.instance() or QApplication([])
 class TestCrossMarkerGeneration(unittest.TestCase):
     def test_base_cross_vertices(self):
         b = 10.0
+        # Default thickness = 1.0
         verts = get_base_cross_vertices(b)
         self.assertEqual(verts.shape, (12, 2))
         # Top-most point is at y = -1.5b
@@ -50,6 +51,19 @@ class TestCrossMarkerGeneration(unittest.TestCase):
         self.assertAlmostEqual(np.min(verts[:, 0]), -15.0)
         # Right-most (longer arm) is at x = +2.5b
         self.assertAlmostEqual(np.max(verts[:, 0]), 25.0)
+
+        # Test with thickness = 0.2
+        verts_thin = get_base_cross_vertices(b, thickness=0.2)
+        # Bounding box must be exactly the same
+        self.assertAlmostEqual(np.min(verts_thin[:, 1]), -15.0)
+        self.assertAlmostEqual(np.max(verts_thin[:, 1]), 15.0)
+        self.assertAlmostEqual(np.min(verts_thin[:, 0]), -15.0)
+        self.assertAlmostEqual(np.max(verts_thin[:, 0]), 25.0)
+        # Bar half-width h = 0.5 * 10 * 0.2 = 1.0
+        self.assertAlmostEqual(verts_thin[0, 0], -1.0)
+        self.assertAlmostEqual(verts_thin[1, 0], 1.0)
+        self.assertAlmostEqual(verts_thin[3, 1], -1.0)
+        self.assertAlmostEqual(verts_thin[4, 1], 1.0)
 
     def test_generate_cross_pattern(self):
         canvas_w, canvas_h = 800, 600
@@ -67,6 +81,9 @@ class TestCrossMarkerGeneration(unittest.TestCase):
         for m in markers:
             self.assertGreaterEqual(m.scale_pct, 6.0 - 1e-5)
             self.assertLessEqual(m.scale_pct, 10.0 + 1e-5)
+            self.assertGreaterEqual(m.thickness, 0.2 - 1e-5)
+            self.assertLessEqual(m.thickness, 1.0 + 1e-5)
+            self.assertIn("thickness", m.to_dict())
             # Center inside canvas
             self.assertGreater(m.center_proj[0], 0)
             self.assertLess(m.center_proj[0], canvas_w)
@@ -218,17 +235,26 @@ class TestMLDataCollectionOperation(unittest.TestCase):
         self.assertEqual(rec1["step_index"], 1)
         self.assertEqual(rec1["image_filename"], "pattern_0001.png")
         self.assertEqual(rec1["projected_gt_filename"], "pattern_0001_projected.png")
+        self.assertIn("exposure_time", rec1)
+        self.assertAlmostEqual(rec1["exposure_time"], 0.1, places=2)
         self.assertIn("markers", rec1)
         self.assertEqual(len(rec1["markers"]), 5)
         for m in rec1["markers"]:
             self.assertIn("center_img", m)
             self.assertIn("rotation_img_deg", m)
             self.assertIn("scale_img_px", m)
+            self.assertIn("thickness", m)
+            self.assertGreaterEqual(m["thickness"], 0.2)
+            self.assertLessEqual(m["thickness"], 1.0)
 
         with open(master_json, "r") as f:
             master = json.load(f)
         self.assertEqual(master["total_patterns_collected"], 2)
         self.assertIn("homography_matrix", master)
+        self.assertIn("min_exposure", master["config"])
+        self.assertIn("max_exposure", master["config"])
+        self.assertIn("min_thickness", master["config"])
+        self.assertIn("max_thickness", master["config"])
 
     def test_photo_capture_averages_30_frames(self):
         config = MLDataCollectionConfig(
@@ -384,19 +410,31 @@ class TestMLDataCollectionTabWidget(unittest.TestCase):
         self.assertAlmostEqual(ml_tab.spin_target_scale.value(), 8.0)
         self.assertAlmostEqual(ml_tab.spin_scale_jitter.value(), 2.0)
         self.assertEqual(ml_tab.spin_marker_count.value(), 20)
+        self.assertAlmostEqual(ml_tab.spin_min_thickness.value(), 0.2)
+        self.assertAlmostEqual(ml_tab.spin_max_thickness.value(), 1.0)
         self.assertEqual(ml_tab.spin_total_patterns.value(), 10)
         self.assertAlmostEqual(ml_tab.spin_pattern_gap.value(), 1000.0)
+        self.assertAlmostEqual(ml_tab.spin_min_exposure.value(), 8.0)
+        self.assertAlmostEqual(ml_tab.spin_max_exposure.value(), 12.0)
 
         # Test lock state
         ml_tab.update_lock_state(is_busy=True)
         self.assertFalse(ml_tab.btn_start.isEnabled())
         self.assertFalse(ml_tab.spin_target_scale.isEnabled())
+        self.assertFalse(ml_tab.spin_min_thickness.isEnabled())
+        self.assertFalse(ml_tab.spin_max_thickness.isEnabled())
         self.assertFalse(ml_tab.spin_total_patterns.isEnabled())
+        self.assertFalse(ml_tab.spin_min_exposure.isEnabled())
+        self.assertFalse(ml_tab.spin_max_exposure.isEnabled())
 
         ml_tab.update_lock_state(is_busy=False)
         self.assertTrue(ml_tab.btn_start.isEnabled())
         self.assertTrue(ml_tab.spin_target_scale.isEnabled())
+        self.assertTrue(ml_tab.spin_min_thickness.isEnabled())
+        self.assertTrue(ml_tab.spin_max_thickness.isEnabled())
         self.assertTrue(ml_tab.spin_total_patterns.isEnabled())
+        self.assertTrue(ml_tab.spin_min_exposure.isEnabled())
+        self.assertTrue(ml_tab.spin_max_exposure.isEnabled())
 
         # Test start triggers operation with default marker config
         with patch.object(self.bridge, "start_operation") as mock_start:
@@ -406,6 +444,10 @@ class TestMLDataCollectionTabWidget(unittest.TestCase):
             self.assertIsInstance(op, MLDataCollectionOperation)
             self.assertEqual(op.config.pattern_source, PatternSource.GENERATED_MARKER.value)
             self.assertEqual(op.config.total_patterns, 10)
+            self.assertAlmostEqual(op.config.min_exposure, 8.0)
+            self.assertAlmostEqual(op.config.max_exposure, 12.0)
+            self.assertAlmostEqual(op.config.min_thickness, 0.2)
+            self.assertAlmostEqual(op.config.max_thickness, 1.0)
 
         # Test finish updates status
         ml_tab.on_operation_finished(op, err=None)

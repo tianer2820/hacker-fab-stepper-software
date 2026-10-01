@@ -208,6 +208,7 @@ def transform_marker_to_camera_space(
         "scale_img_px": scale_img_px,
         "rotation_proj_deg": marker_spec.rotation_deg,
         "rotation_img_deg": rotation_img_deg,
+        "thickness": getattr(marker_spec, "thickness", 1.0),
         "longer_arm_tip_proj": [marker_spec.longer_arm_tip_proj[0], marker_spec.longer_arm_tip_proj[1]],
         "longer_arm_tip_img": [longer_tip_img[0], longer_tip_img[1]],
         "vertices_proj": [[v[0], v[1]] for v in marker_spec.vertices_proj],

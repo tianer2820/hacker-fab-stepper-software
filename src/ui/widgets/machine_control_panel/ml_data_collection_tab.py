@@ -128,6 +128,24 @@ class MLDataCollectionTabWidget(QScrollArea):
         self.spin_marker_count.setValue(20)
         marker_grid.addWidget(self.spin_marker_count, 2, 1)
 
+        # Min Thickness
+        marker_grid.addWidget(QLabel("Min Thickness:"), 3, 0)
+        self.spin_min_thickness = QDoubleSpinBox()
+        self.spin_min_thickness.setRange(0.0, 1.0)
+        self.spin_min_thickness.setDecimals(2)
+        self.spin_min_thickness.setSingleStep(0.05)
+        self.spin_min_thickness.setValue(0.2)
+        marker_grid.addWidget(self.spin_min_thickness, 3, 1)
+
+        # Max Thickness
+        marker_grid.addWidget(QLabel("Max Thickness:"), 4, 0)
+        self.spin_max_thickness = QDoubleSpinBox()
+        self.spin_max_thickness.setRange(0.0, 1.0)
+        self.spin_max_thickness.setDecimals(2)
+        self.spin_max_thickness.setSingleStep(0.05)
+        self.spin_max_thickness.setValue(1.0)
+        marker_grid.addWidget(self.spin_max_thickness, 4, 1)
+
         main_layout.addWidget(self.marker_box)
 
         # 4. Patterning & Exposure
@@ -152,25 +170,35 @@ class MLDataCollectionTabWidget(QScrollArea):
         self.spin_pattern_gap.setSuffix(" µm")
         pattern_grid.addWidget(self.spin_pattern_gap, 1, 1)
 
-        # Exposure Duration
-        pattern_grid.addWidget(QLabel("Exposure Time:"), 2, 0)
-        self.spin_exposure_time = QDoubleSpinBox()
-        self.spin_exposure_time.setRange(0.05, 300.0)
-        self.spin_exposure_time.setDecimals(2)
-        self.spin_exposure_time.setSingleStep(0.5)
-        self.spin_exposure_time.setValue(2.0)
-        self.spin_exposure_time.setSuffix(" s")
-        pattern_grid.addWidget(self.spin_exposure_time, 2, 1)
+        # Min Exposure
+        pattern_grid.addWidget(QLabel("Min Exposure:"), 2, 0)
+        self.spin_min_exposure = QDoubleSpinBox()
+        self.spin_min_exposure.setRange(0.05, 300.0)
+        self.spin_min_exposure.setDecimals(2)
+        self.spin_min_exposure.setSingleStep(0.5)
+        self.spin_min_exposure.setValue(8.0)
+        self.spin_min_exposure.setSuffix(" s")
+        pattern_grid.addWidget(self.spin_min_exposure, 2, 1)
+
+        # Max Exposure
+        pattern_grid.addWidget(QLabel("Max Exposure:"), 3, 0)
+        self.spin_max_exposure = QDoubleSpinBox()
+        self.spin_max_exposure.setRange(0.05, 300.0)
+        self.spin_max_exposure.setDecimals(2)
+        self.spin_max_exposure.setSingleStep(0.5)
+        self.spin_max_exposure.setValue(12.0)
+        self.spin_max_exposure.setSuffix(" s")
+        pattern_grid.addWidget(self.spin_max_exposure, 3, 1)
 
         # Stabilization Delay
-        pattern_grid.addWidget(QLabel("Stabilization Delay:"), 3, 0)
+        pattern_grid.addWidget(QLabel("Stabilization Delay:"), 4, 0)
         self.spin_stabilization_delay = QDoubleSpinBox()
         self.spin_stabilization_delay.setRange(0.1, 10.0)
         self.spin_stabilization_delay.setDecimals(1)
         self.spin_stabilization_delay.setSingleStep(0.5)
         self.spin_stabilization_delay.setValue(1.0)
         self.spin_stabilization_delay.setSuffix(" s")
-        pattern_grid.addWidget(self.spin_stabilization_delay, 3, 1)
+        pattern_grid.addWidget(self.spin_stabilization_delay, 4, 1)
 
         main_layout.addWidget(pattern_box)
 
@@ -214,6 +242,8 @@ class MLDataCollectionTabWidget(QScrollArea):
         self.spin_target_scale.setEnabled(not is_folder)
         self.spin_scale_jitter.setEnabled(not is_folder)
         self.spin_marker_count.setEnabled(not is_folder)
+        self.spin_min_thickness.setEnabled(not is_folder)
+        self.spin_max_thickness.setEnabled(not is_folder)
 
     def _on_browse_image_folder_clicked(self):
         folder = QFileDialog.getExistingDirectory(
@@ -260,7 +290,10 @@ class MLDataCollectionTabWidget(QScrollArea):
             target_scale_pct=self.spin_target_scale.value(),
             scale_jitter_pct=self.spin_scale_jitter.value(),
             marker_count=self.spin_marker_count.value(),
-            exposure_time=self.spin_exposure_time.value(),
+            min_thickness=self.spin_min_thickness.value(),
+            max_thickness=self.spin_max_thickness.value(),
+            min_exposure=self.spin_min_exposure.value(),
+            max_exposure=self.spin_max_exposure.value(),
             stabilization_delay=self.spin_stabilization_delay.value(),
             save_directory=save_dir,
             grid_n=2,
@@ -295,10 +328,13 @@ class MLDataCollectionTabWidget(QScrollArea):
         self.spin_target_scale.setEnabled(not is_busy and not is_folder)
         self.spin_scale_jitter.setEnabled(not is_busy and not is_folder)
         self.spin_marker_count.setEnabled(not is_busy and not is_folder)
+        self.spin_min_thickness.setEnabled(not is_busy and not is_folder)
+        self.spin_max_thickness.setEnabled(not is_busy and not is_folder)
 
         self.spin_total_patterns.setEnabled(not is_busy)
         self.spin_pattern_gap.setEnabled(not is_busy)
-        self.spin_exposure_time.setEnabled(not is_busy)
+        self.spin_min_exposure.setEnabled(not is_busy)
+        self.spin_max_exposure.setEnabled(not is_busy)
         self.spin_stabilization_delay.setEnabled(not is_busy)
         self.txt_save_dir.setEnabled(not is_busy)
         self.btn_browse.setEnabled(not is_busy)

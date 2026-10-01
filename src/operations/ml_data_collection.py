@@ -40,11 +40,23 @@ class MLDataCollectionConfig:
     target_scale_pct: float = 8.0  # % of projector longer edge
     scale_jitter_pct: float = 2.0  # % random variation (+/-)
     marker_count: int = 20  # Number of non-overlapping markers per pattern
-    exposure_time: float = 2.0  # seconds
+    min_exposure: float = 8.0  # seconds
+    max_exposure: float = 12.0  # seconds
+    min_thickness: float = 0.2  # cross pattern thickness factor (0.0 to 1.0)
+    max_thickness: float = 1.0  # cross pattern thickness factor (0.0 to 1.0)
     stabilization_delay: float = 1.0  # seconds
     save_directory: str = "stepper_captures/ml_data"
     grid_n: int = 2  # 2x2 ArUco calibration grid
     autofocus_config: Optional[Any] = None
+    exposure_time: Optional[float] = None
+
+    def __post_init__(self):
+        if self.exposure_time is not None:
+            if self.min_exposure == 8.0 and self.max_exposure == 12.0:
+                self.min_exposure = float(self.exposure_time)
+                self.max_exposure = float(self.exposure_time)
+        else:
+            self.exposure_time = (self.min_exposure + self.max_exposure) / 2.0
 
     @classmethod
     def from_dict(cls, d: Optional[dict] = None) -> "MLDataCollectionConfig":
@@ -52,6 +64,9 @@ class MLDataCollectionConfig:
             return cls()
         raw_source = d.get("pattern_source", PatternSource.GENERATED_MARKER.value)
         pattern_source = raw_source.value if hasattr(raw_source, "value") else str(raw_source)
+        legacy_exp = d.get("exposure_time")
+        min_exp = float(d.get("min_exposure", legacy_exp if legacy_exp is not None else 8.0))
+        max_exp = float(d.get("max_exposure", legacy_exp if legacy_exp is not None else 12.0))
         return cls(
             pattern_source=pattern_source,
             image_folder=str(d.get("image_folder", "")),
@@ -60,11 +75,15 @@ class MLDataCollectionConfig:
             target_scale_pct=float(d.get("target_scale_pct", 8.0)),
             scale_jitter_pct=float(d.get("scale_jitter_pct", 2.0)),
             marker_count=int(d.get("marker_count", 20)),
-            exposure_time=float(d.get("exposure_time", 2.0)),
+            min_exposure=min_exp,
+            max_exposure=max_exp,
+            min_thickness=float(d.get("min_thickness", 0.2)),
+            max_thickness=float(d.get("max_thickness", 1.0)),
             stabilization_delay=float(d.get("stabilization_delay", 1.0)),
             save_directory=str(d.get("save_directory", "stepper_captures/ml_data")),
             grid_n=int(d.get("grid_n", 2)),
             autofocus_config=d.get("autofocus_config"),
+            exposure_time=float(legacy_exp) if legacy_exp is not None else None,
         )
 
 
@@ -297,16 +316,22 @@ class MLDataCollectionOperation(Operation):
                         target_scale_pct=self.config.target_scale_pct,
                         scale_jitter_pct=self.config.scale_jitter_pct,
                         marker_count=self.config.marker_count,
+                        min_thickness=self.config.min_thickness,
+                        max_thickness=self.config.max_thickness,
                     )
 
                 # 2.4 Expose pattern in UV
                 projector.set_generated_image(pattern_canvas)
                 projector.set_image_source(ProjectorImageSource.GENERATED)
 
-                duration_ms = self.config.exposure_time * 1000.0
+                exp_min = min(self.config.min_exposure, self.config.max_exposure)
+                exp_max = max(self.config.min_exposure, self.config.max_exposure)
+                step_exposure_sec = float(random.uniform(exp_min, exp_max))
+                duration_ms = step_exposure_sec * 1000.0
+
                 report_progress(
                     base_pct + 0.50 * step_pct_span,
-                    f"Pattern {step_num}/{total_steps}: Exposing pattern ({self.config.exposure_time:.1f}s)...",
+                    f"Pattern {step_num}/{total_steps}: Exposing pattern ({step_exposure_sec:.2f}s)...",
                 )
                 exp_config = ExposureOperationConfig(exposure_time=duration_ms)
                 exp_op = ExposureOperation(layer_index=None, config=exp_config)
@@ -398,6 +423,7 @@ class MLDataCollectionOperation(Operation):
                     "image_filename": img_filename,
                     "projected_gt_filename": gt_filename,
                     "step_index": step_num,
+                    "exposure_time": round(step_exposure_sec, 3),
                     "pattern_source": self.config.pattern_source,
                     "stage_position": {
                         "x": float(curr_pos[0]),
@@ -435,6 +461,10 @@ class MLDataCollectionOperation(Operation):
                     "target_scale_pct": self.config.target_scale_pct,
                     "scale_jitter_pct": self.config.scale_jitter_pct,
                     "marker_count": self.config.marker_count,
+                    "min_thickness": self.config.min_thickness,
+                    "max_thickness": self.config.max_thickness,
+                    "min_exposure": self.config.min_exposure,
+                    "max_exposure": self.config.max_exposure,
                     "exposure_time": self.config.exposure_time,
                     "stabilization_delay": self.config.stabilization_delay,
                 },

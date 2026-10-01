@@ -13,6 +13,7 @@ class MarkerSpec:
     rotation_deg: float
     longer_arm_tip_proj: Tuple[float, float]
     vertices_proj: List[Tuple[float, float]]
+    thickness: float = 1.0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -21,39 +22,42 @@ class MarkerSpec:
             "scale_pct": self.scale_pct,
             "scale_px": self.scale_px,
             "rotation_deg": self.rotation_deg,
+            "thickness": self.thickness,
             "longer_arm_tip_proj": [self.longer_arm_tip_proj[0], self.longer_arm_tip_proj[1]],
             "vertices_proj": [[v[0], v[1]] for v in self.vertices_proj],
         }
 
 
-def get_base_cross_vertices(block_size: float) -> np.ndarray:
-    """Returns the 12 vertices of the asymmetric cross relative to the intersection center (1.5b, 1.5b).
+def get_base_cross_vertices(block_size: float, thickness: float = 1.0) -> np.ndarray:
+    """Returns the 12 vertices of the asymmetric cross relative to the intersection center.
     
-    Grid layout (4x3 blocks):
-      0 1 0 0
-      1 1 1 1
-      0 1 0 0
-    Intersection is block [1, 1], so:
-      Left arm: 1 block long (-1.5b to -0.5b)
-      Right arm (longer side): 2 blocks long (+0.5b to +2.5b)
-      Top arm: 1 block high (-1.5b to -0.5b)
-      Bottom arm: 1 block high (+0.5b to +1.5b)
+    The bounding box remains unchanged:
+      Left arm: -1.5 * b
+      Right arm: +2.5 * b
+      Top arm: -1.5 * b
+      Bottom arm: +1.5 * b
+
+    Thickness factor (0 to 1) scales the bar width/height (nominal thickness = 1.0 corresponds to 1 block width):
+      Horizontal bar half-height: h = 0.5 * b * thickness (spans y = -h to +h)
+      Vertical bar half-width: h = 0.5 * b * thickness (spans x = -h to +h)
     """
     b = float(block_size)
+    t = float(np.clip(thickness, 0.0, 1.0))
+    h = 0.5 * b * t
     vertices = np.array(
         [
-            [-0.5 * b, -1.5 * b],
-            [0.5 * b, -1.5 * b],
-            [0.5 * b, -0.5 * b],
-            [2.5 * b, -0.5 * b],
-            [2.5 * b, 0.5 * b],
-            [0.5 * b, 0.5 * b],
-            [0.5 * b, 1.5 * b],
-            [-0.5 * b, 1.5 * b],
-            [-0.5 * b, 0.5 * b],
-            [-1.5 * b, 0.5 * b],
-            [-1.5 * b, -0.5 * b],
-            [-0.5 * b, -0.5 * b],
+            [-h, -1.5 * b],
+            [h, -1.5 * b],
+            [h, -h],
+            [2.5 * b, -h],
+            [2.5 * b, h],
+            [h, h],
+            [h, 1.5 * b],
+            [-h, 1.5 * b],
+            [-h, h],
+            [-1.5 * b, h],
+            [-1.5 * b, -h],
+            [-h, -h],
         ],
         dtype=np.float64,
     )
@@ -65,6 +69,8 @@ def generate_cross_pattern(
     target_scale_pct: float = 8.0,
     scale_jitter_pct: float = 2.0,
     marker_count: int = 20,
+    min_thickness: float = 0.2,
+    max_thickness: float = 1.0,
     margin_px: int = 10,
     min_spacing_px: float = 5.0,
     random_seed: Optional[int] = None,
@@ -76,6 +82,8 @@ def generate_cross_pattern(
         target_scale_pct: Nominal scale of marker width as percentage of projector's longer edge.
         scale_jitter_pct: Uniform random variation (+/-) around target_scale_pct.
         marker_count: Desired number of markers.
+        min_thickness: Minimum thickness factor [0.0, 1.0].
+        max_thickness: Maximum thickness factor [0.0, 1.0].
         margin_px: Boundary margin to keep markers inside canvas.
         min_spacing_px: Minimum clearance between enclosing circles of adjacent markers.
         random_seed: Optional seed for reproducible generation.
@@ -107,8 +115,13 @@ def generate_cross_pattern(
             scale_px = (scale_pct / 100.0) * longer_edge
             block_size = max(1.0, scale_px / 4.0)
 
+            # Sample thickness factor
+            t_min = max(0.0, min(min_thickness, max_thickness))
+            t_max = min(1.0, max(min_thickness, max_thickness))
+            thickness = float(rng.uniform(t_min, t_max))
+
             # Enclosing radius around intersection center (1.5b, 1.5b)
-            # Max corner is at (2.5b, 0.5b) => sqrt(2.5^2 + 0.5^2) * b ~= 2.55 * b
+            # Max corner is at (2.5b, 0.5b * thickness) => sqrt(2.5^2 + (0.5*t)^2) * b <= 2.55 * b
             enclosing_radius = 2.6 * block_size
 
             # 2. Sample rotation angle in [0, 2*pi)
@@ -143,7 +156,7 @@ def generate_cross_pattern(
                 continue
 
             # 5. Transform vertices
-            base_vertices = get_base_cross_vertices(block_size)
+            base_vertices = get_base_cross_vertices(block_size, thickness=thickness)
             rotated_vertices = (base_vertices @ rot_mat.T) + np.array([cx, cy])
 
             # Verify all vertices are strictly inside canvas
@@ -169,6 +182,7 @@ def generate_cross_pattern(
                 rotation_deg=rotation_deg,
                 longer_arm_tip_proj=(float(longer_tip[0]), float(longer_tip[1])),
                 vertices_proj=[(float(pt[0]), float(pt[1])) for pt in rotated_vertices],
+                thickness=thickness,
             )
 
             # Draw polygon onto canvas
