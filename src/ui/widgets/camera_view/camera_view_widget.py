@@ -36,7 +36,7 @@ except ImportError:
     LatentVisionCNN = None  # type: ignore
     LatentVisionWorker = None  # type: ignore
     load_latent_vision_model = None  # type: ignore
-    DEFAULT_LATENT_VISION_CHECKPOINT = Path("checkpoints/latent_vision/latest_model.pth")
+    DEFAULT_LATENT_VISION_CHECKPOINT = Path("checkpoints/latent_vision/best_model.pth")
     resolve_checkpoint_path = lambda p: Path(p)  # type: ignore
     LATENT_VISION_AVAILABLE = False
 

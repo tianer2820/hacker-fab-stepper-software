@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-DEFAULT_LATENT_VISION_CHECKPOINT = Path("checkpoints/latent_vision/latest_model.pth")
+DEFAULT_LATENT_VISION_CHECKPOINT = Path("checkpoints/latent_vision/best_model.pth")
 
 
 def resolve_checkpoint_path(path: Union[str, Path] = DEFAULT_LATENT_VISION_CHECKPOINT) -> Path:
