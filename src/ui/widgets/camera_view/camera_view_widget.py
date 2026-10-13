@@ -272,6 +272,8 @@ class CameraViewWidget(QWidget):
             if mask is not None and self._mask_render_worker is not None:
                 self._mask_render_worker.submit_mask(mask)
         else:
+            if self._latent_worker is not None:
+                self._latent_worker.clear_queue()
             with self._latent_mask_lock:
                 self._latest_latent_mask = None
                 self._latest_latent_mask_qimage = None
