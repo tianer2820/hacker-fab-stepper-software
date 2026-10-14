@@ -83,7 +83,7 @@ class OMMStage(StageController):
         self._update_position()
         return True
 
-    def move_relative(self, microns: dict[str, float]) -> bool:
+    def _move_relative_raw(self, microns: dict[str, float]) -> bool:
         self._update_position()
 
         x_um = microns.get("x", microns.get("X", 0.0))
@@ -97,7 +97,7 @@ class OMMStage(StageController):
 
         return self._move_to(Position(x_mm, y_mm, z_mm), f)
 
-    def move_absolute(self, microns: dict[str, float]) -> bool:
+    def _move_absolute_raw(self, microns: dict[str, float]) -> bool:
         self._update_position()
 
         x_um = microns.get("x", microns.get("X", None))
@@ -111,7 +111,7 @@ class OMMStage(StageController):
 
         return self._move_to(Position(x_mm, y_mm, z_mm), f)
 
-    def get_position(self) -> tuple[float, float, float]:
+    def _get_position_raw(self) -> tuple[float, float, float]:
         if self.omm is not None:
             x, y, z = self.omm.read_current_position()
             self._current_position.update(x, y, z)
@@ -120,6 +120,7 @@ class OMMStage(StageController):
             self._current_position.y * 1000.0,
             self._current_position.z * 1000.0,
         )
+
 
     def _move_to(self, pos: Position, feed_rate: float) -> bool:
         """Internal method to move to a specific position."""

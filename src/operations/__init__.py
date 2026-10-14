@@ -6,6 +6,12 @@ from .ml_data_collection import MLDataCollectionConfig, MLDataCollectionOperatio
 from .movement import HomeOperation, JogOperation
 from .optics_calibration import OpticsCalibrationOperation
 from .process_calibration import ProcessCalibrationConfig, ProcessCalibrationOperation
+from .stage_calibration import (
+    StageCalibrationPatternAndZConfig,
+    StageCalibrationPatternAndZOperation,
+    StageCalibrationScanConfig,
+    StageCalibrationScanOperation,
+)
 from .tiling import TiledExposureOperation
 
 __all__ = [
@@ -16,6 +22,10 @@ __all__ = [
     "OpticsCalibrationOperation",
     "ProcessCalibrationOperation",
     "ProcessCalibrationConfig",
+    "StageCalibrationPatternAndZConfig",
+    "StageCalibrationPatternAndZOperation",
+    "StageCalibrationScanConfig",
+    "StageCalibrationScanOperation",
     "AlignmentOperation",
     "AlignmentConfig",
     "ExposureOperation",
@@ -26,5 +36,6 @@ __all__ = [
     "MLDataCollectionConfig",
     "PatternSource",
 ]
+
 
 

@@ -343,11 +343,13 @@ class TestMachineControlPanelTabs(unittest.TestCase):
         panel = MachineControlPanelWidget(engine, bridge)
 
         # Check tab widget
-        self.assertEqual(panel.tabs.count(), 4)
+        self.assertEqual(panel.tabs.count(), 5)
         self.assertEqual(panel.tabs.tabText(0), "Manual Control")
         self.assertEqual(panel.tabs.tabText(1), "Optics Calibration")
         self.assertEqual(panel.tabs.tabText(2), "Process Calibration")
         self.assertEqual(panel.tabs.tabText(3), "ML Data Collection")
+        self.assertEqual(panel.tabs.tabText(4), "Stage Calibration")
+
 
         # Check separate Autofocus and Alignment buttons and controls
         self.assertTrue(hasattr(panel, "btn_autofocus"))

@@ -1,4 +1,7 @@
-from typing import Optional
+import os
+from typing import Any, Optional
+
+
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -70,6 +73,28 @@ class ManualControlTabWidget(QScrollArea):
         pos_layout.addWidget(self.lbl_pos_z, 0, 5)
 
         manual_layout.addWidget(pos_box)
+
+        # Coordinate Calibration Status & Load Button
+        cal_box = QGroupBox("Coordinate Calibration")
+        cal_layout = QHBoxLayout(cal_box)
+        cal_layout.setContentsMargins(6, 6, 6, 6)
+        cal_layout.setSpacing(6)
+
+        self.lbl_cal_status = QLabel("Status: Raw (No Calibration)")
+        self.lbl_cal_status.setStyleSheet("color: #888888; font-size: 11px;")
+        cal_layout.addWidget(self.lbl_cal_status, 1)
+
+        self.btn_load_cal = QPushButton("Load File...")
+        self.btn_load_cal.clicked.connect(self._on_load_calibration_clicked)
+        cal_layout.addWidget(self.btn_load_cal)
+
+        self.btn_clear_cal = QPushButton("Disable")
+        self.btn_clear_cal.setEnabled(False)
+        self.btn_clear_cal.clicked.connect(self._on_clear_calibration_clicked)
+        cal_layout.addWidget(self.btn_clear_cal)
+
+        manual_layout.addWidget(cal_box)
+
 
         # 2. Jog Controls
         jog_box = QGroupBox("Jog Stage")
@@ -421,5 +446,43 @@ class ManualControlTabWidget(QScrollArea):
             self.radio_src_solid,
             self.spin_projector_brightness,
             self.spin_uv_offset,
+            self.btn_load_cal,
+            self.btn_clear_cal,
         ]:
             btn.setEnabled(not is_busy)
+
+    def _on_load_calibration_clicked(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load Stage Calibration File",
+            "",
+            "JSON Files (*.json)",
+        )
+        if not file_path:
+            return
+
+        try:
+            from stage_control.calibration import StageCalibration
+            cal = StageCalibration.load_from_json(file_path)
+            if self.engine.stage is not None:
+                self.engine.stage.set_calibration(cal)
+            self._update_calibration_ui(cal, os.path.basename(file_path))
+        except Exception as e:
+            self.lbl_cal_status.setText(f"Error: {e}")
+            self.lbl_cal_status.setStyleSheet("color: #ff5555; font-size: 11px;")
+
+    def _on_clear_calibration_clicked(self):
+        if self.engine.stage is not None:
+            self.engine.stage.set_calibration(None)
+        self._update_calibration_ui(None)
+
+    def _update_calibration_ui(self, cal: Optional[Any], filename: str = ""):
+        if cal is not None and cal.enabled:
+            self.lbl_cal_status.setText(f"Active ({filename})")
+            self.lbl_cal_status.setStyleSheet("color: #55ff55; font-weight: bold; font-size: 11px;")
+            self.btn_clear_cal.setEnabled(True)
+        else:
+            self.lbl_cal_status.setText("Status: Raw (No Calibration)")
+            self.lbl_cal_status.setStyleSheet("color: #888888; font-size: 11px;")
+            self.btn_clear_cal.setEnabled(False)
+
