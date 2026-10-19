@@ -74,12 +74,14 @@ class OMMStage(StageController):
         if self.omm is None:
             return False
 
-        axes = ["A", "B", "C"]
+        axes = [0, 1, 2]
         for axis in axes:
-            res = self.omm.home(axis)
+            res = self.omm.home([axis])
             if res != self.omm.serial.ReplyStatus.OK:
                 print(f"Error: Failed to home axis {axis}")
                 return False
+            self._move_to(Position(0, 0, 0), 1000)
+            
         self._update_position()
         return True
 
