@@ -20,6 +20,7 @@ from lib.projector_camera_transform import (
     transform_points_projector_to_camera,
 )
 from operations.autofocus import AutofocusConfig, AutofocusOperation
+from operations.exposure import ExposureOperation, ExposureOperationConfig
 from stage_control.calibration import StageCalibration, StageCalibrationPoint
 
 DEFAULT_ARUCO_DICT = cv2.aruco.DICT_4X4_1000
@@ -464,11 +465,19 @@ class StageCalibrationPatternAndZOperation(Operation):
                 )
                 projector.set_generated_image(tag_img)
                 projector.set_image_source(ProjectorImageSource.GENERATED)
-                projector.set_color_mode(ColorMode.UV)
-                projector.set_on(True)
 
-                context.delay_func(self.config.exposure_time)
-                projector.set_on(False)
+                exp_config = ExposureOperationConfig(exposure_time=self.config.exposure_time * 1000.0)
+                exp_op = ExposureOperation(layer_index=None, config=exp_config)
+                exp_err = self._run_sub_op(
+                    exp_op,
+                    context,
+                    lambda p, m: report_progress(
+                        prog_frac + (0.5 + 0.5 * p) * (loop_span / total_points),
+                        f"Point {point_idx + 1}/{total_points} (Grid [{r}, {c}], Tag ID {marker_id}): {m}",
+                    ),
+                )
+                if exp_err or self.is_aborted:
+                    return exp_err or "Operation aborted during exposure"
 
                 self.recorded_points.append({
                     "grid_index": [r, c],

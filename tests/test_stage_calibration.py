@@ -147,6 +147,9 @@ class MockProjector:
     def set_generated_image(self, img):
         self.generated_image = img
 
+    def wait_for_display(self, timeout: float = 2.0) -> bool:
+        return True
+
 
 class MockCamera:
     def __init__(self, frame=None):
@@ -335,6 +338,52 @@ class TestStageCalibrationOperations(unittest.TestCase):
             err = op1.execute(ctx, lambda p, m: None)
             self.assertIsNotNone(err)
             self.assertIn("Failed to invert projector-to-camera homography", err)
+
+    def test_pass1_uses_exposure_operation(self):
+        from unittest.mock import patch
+        from core.operation import ExecutionContext
+        from operations.exposure import ExposureOperation
+        from operations.stage_calibration import (
+            StageCalibrationPatternAndZConfig,
+            StageCalibrationPatternAndZOperation,
+            generate_canonical_ar_tag,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p1_path = os.path.join(tmpdir, "pass1.json")
+            stage = DummyStage(delay=0.0)
+            projector = MockProjector()
+            tag_img, _ = generate_canonical_ar_tag(marker_id=0, size=100)
+            frame = np.zeros((480, 640, 3), dtype=np.uint8)
+            h, w = tag_img.shape
+            frame[100 : 100 + h, 100 : 100 + w, 0] = tag_img
+            frame[100 : 100 + h, 100 : 100 + w, 1] = tag_img
+            frame[100 : 100 + h, 100 : 100 + w, 2] = tag_img
+            camera = MockCamera(frame=frame)
+            ctx = ExecutionContext(stage=stage, camera=camera, projector=projector, delay_func=lambda s: None)
+
+            p1_cfg = StageCalibrationPatternAndZConfig(
+                calibration_range=2000.0,
+                pixel_scale=1.0,
+                grid_size=2,
+                step_distance=1000.0,
+                exposure_time=0.01,
+                stabilization_delay=0.0,
+                autofocus_enabled=False,
+                output_json_path=p1_path,
+            )
+            op = StageCalibrationPatternAndZOperation(config=p1_cfg)
+
+            with patch("operations.stage_calibration.ExposureOperation", wraps=ExposureOperation) as mock_exp_cls:
+                err = op.execute(ctx, lambda p, m: None)
+                self.assertIsNone(err)
+                self.assertEqual(mock_exp_cls.call_count, 4)
+                # Verify arguments passed to ExposureOperation
+                call_args = mock_exp_cls.call_args_list[0]
+                self.assertIsNone(call_args.kwargs.get("layer_index"))
+                config_arg = call_args.kwargs.get("config")
+                self.assertIsNotNone(config_arg)
+                self.assertAlmostEqual(config_arg.exposure_time, 10.0)
 
     def test_pass2_multi_tag_pose_averaging(self):
         from core.operation import ExecutionContext
