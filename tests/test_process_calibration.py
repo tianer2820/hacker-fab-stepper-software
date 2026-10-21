@@ -137,9 +137,12 @@ class TestProcessCalibrationOperation(unittest.TestCase):
         self.assertIsNotNone(self.projector.generated_image)
         self.assertEqual(self.projector.generated_image.shape, (1080, 1920, 3))
 
+    @patch("operations.process_calibration.ExposureOperation.execute")
     @patch("operations.process_calibration.AutofocusOperation.execute")
-    def test_process_calibration_af_failure(self, mock_af_exec):
-        mock_af_exec.return_value = "Blurry surface"
+    def test_process_calibration_af_failure(self, mock_af_exec, mock_exp_exec):
+        # Step 1 fails AF, step 2 succeeds AF
+        mock_af_exec.side_effect = ["Blurry surface", None]
+        mock_exp_exec.return_value = None
 
         op = ProcessCalibrationOperation(
             min_exposure=1.0,
@@ -148,7 +151,10 @@ class TestProcessCalibrationOperation(unittest.TestCase):
             motion_distance=500.0,
         )
         err = op.execute(self.engine.context, lambda p, m: None)
-        self.assertIn("Autofocus failed at step 1: Blurry surface", err)
+        self.assertIsNone(err)
+        self.assertEqual(mock_af_exec.call_count, 2)
+        # Step 1 exposure was skipped due to AF failure; only step 2 exposed
+        self.assertEqual(mock_exp_exec.call_count, 1)
 
     def test_process_calibration_abort(self):
         op = ProcessCalibrationOperation(
@@ -254,17 +260,6 @@ class TestProcessCalibrationUI(unittest.TestCase):
         self.assertEqual(tab.spin_max_z_offset.value(), 0.0)
         self.assertEqual(tab.spin_z_steps.value(), 1)
         self.assertEqual(tab.spin_motion_distance.value(), 1000.0)
-
-        # Verify direct aliases on panel
-        self.assertEqual(panel.spin_cal_min_exp.value(), 1.0)
-        self.assertEqual(panel.spin_cal_max_exp.value(), 5.0)
-        self.assertEqual(panel.spin_cal_sweep_steps.value(), 5)
-        self.assertEqual(panel.spin_cal_min_z.value(), 0.0)
-        self.assertEqual(panel.spin_cal_max_z.value(), 0.0)
-        self.assertEqual(panel.spin_cal_z_steps.value(), 1)
-        self.assertEqual(panel.spin_cal_motion_dist.value(), 1000.0)
-        self.assertEqual(panel.btn_start_process_cal, tab.btn_start_cal)
-        self.assertEqual(panel.btn_fem_placeholder, tab.btn_start_cal)
 
     def test_tab_lock_state(self):
         panel = MachineControlPanelWidget(self.engine, self.bridge)

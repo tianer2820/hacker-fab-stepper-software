@@ -1,4 +1,3 @@
-from .alignment import AlignmentConfig, AlignmentOperation
 from .autofocus import AutofocusConfig, AutofocusOperation
 from .exposure import ExposureOperation, ExposureOperationConfig
 from .maximize_image_sharpness import MaximizeImageSharpnessOperation
@@ -26,8 +25,6 @@ __all__ = [
     "StageCalibrationPatternAndZOperation",
     "StageCalibrationScanConfig",
     "StageCalibrationScanOperation",
-    "AlignmentOperation",
-    "AlignmentConfig",
     "ExposureOperation",
     "ExposureOperationConfig",
     "TiledExposureOperation",

@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
 from core.engine import StepperEngine
 from core.events import ColorMode, ProjectorImageSource
 from operations import (
-    AlignmentOperation,
     AutofocusOperation,
     HomeOperation,
     JogOperation,
@@ -287,16 +286,6 @@ class ManualControlTabWidget(QScrollArea):
         af_layout.addWidget(self.btn_autofocus)
         manual_layout.addWidget(af_box)
 
-        # 6. Alignment Group Box
-        align_box = QGroupBox("Alignment")
-        align_layout = QVBoxLayout(align_box)
-        align_layout.setContentsMargins(6, 6, 6, 6)
-
-        self.btn_align = QPushButton("Align to Marks")
-        self.btn_align.clicked.connect(self._on_align_clicked)
-        align_layout.addWidget(self.btn_align)
-        manual_layout.addWidget(align_box)
-
         manual_layout.addStretch()
 
         self.setWidget(container)
@@ -328,10 +317,6 @@ class ManualControlTabWidget(QScrollArea):
         if cfg is not None:
             cfg.uv_z_offset = self.spin_uv_offset.value()
         op = AutofocusOperation(config=cfg)
-        self.bridge.start_operation(op)
-
-    def _on_align_clicked(self):
-        op = AlignmentOperation(config=getattr(self.engine, "alignment_config", None))
         self.bridge.start_operation(op)
 
     def _on_projector_power_clicked(self):
@@ -437,7 +422,6 @@ class ManualControlTabWidget(QScrollArea):
             self.btn_maximize_sharpness,
             self.spin_sharp_z_range,
             self.btn_autofocus,
-            self.btn_align,
             self.btn_projector_power,
             self.radio_color_red,
             self.radio_color_uv,

@@ -24,8 +24,6 @@ from core.operation import (
     OperationManager,
 )
 from operations import (
-    AlignmentConfig,
-    AlignmentOperation,
     ExposureOperation,
     ExposureOperationConfig,
     JogOperation,
@@ -193,22 +191,22 @@ class MockStage(StageController):
         self.pos = (0.0, 0.0, 0.0)
         self.moves = []
 
-    def get_position(self):
+    def _get_position_raw(self):
         return self.pos
 
-    def move_relative(self, microns):
+    def _move_relative_raw(self, microns):
         self.moves.append(("rel", microns))
-        x = self.pos[0] + microns.get("x", 0)
-        y = self.pos[1] + microns.get("y", 0)
-        z = self.pos[2] + microns.get("z", 0)
+        x = self.pos[0] + microns.get("x", microns.get("X", 0.0))
+        y = self.pos[1] + microns.get("y", microns.get("Y", 0.0))
+        z = self.pos[2] + microns.get("z", microns.get("Z", 0.0))
         self.pos = (x, y, z)
         return True
 
-    def move_absolute(self, microns):
+    def _move_absolute_raw(self, microns):
         self.moves.append(("abs", microns))
-        x = microns.get("x", self.pos[0])
-        y = microns.get("y", self.pos[1])
-        z = microns.get("z", self.pos[2])
+        x = microns.get("x", microns.get("X", self.pos[0]))
+        y = microns.get("y", microns.get("Y", self.pos[1]))
+        z = microns.get("z", microns.get("Z", self.pos[2]))
         self.pos = (x, y, z)
         return True
 
@@ -356,21 +354,6 @@ class TestOperationManager(unittest.TestCase):
 
         self.assertIn("[Operation Aborted]", stdout_val)
         self.assertIn("AbortToPrint", stdout_val)
-
-    def test_alignment_operation(self):
-        cfg = AlignmentConfig(
-            enabled=True,
-            model_path="",
-            right_marker_x=100,
-            left_marker_x=20,
-            top_marker_y=20,
-            bottom_marker_y=100,
-            x_scale_factor=1.0,
-            y_scale_factor=1.0,
-        )
-        op = AlignmentOperation(cfg)
-        self.assertTrue(op.config.enabled)
-        self.assertEqual(op.config.right_marker_x, 100)
 
 
 class TestHierarchicalOperations(unittest.TestCase):

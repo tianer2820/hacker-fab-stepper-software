@@ -43,7 +43,6 @@ except ImportError:
 
 # Latent vision overlay opacity constant (easy to change)
 LATENT_VISION_OPACITY: float = 0.5
-_resolve_checkpoint_path = resolve_checkpoint_path
 
 
 class MaskRenderWorker(threading.Thread):

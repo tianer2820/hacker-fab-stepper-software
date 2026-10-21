@@ -21,7 +21,7 @@ class StepperEngine:
     Adheres strictly to the 3-pillar architecture:
     1. Chip Project (data): Self-contained ChipProject emitting layer/project events.
     2. Operation (workflow): Single active operation lifecycle managed by OperationManager.
-    3. Machine Control (hardware): Directly accessible submodules (stage, projector, camera, dlpc, alignment).
+    3. Machine Control (hardware): Directly accessible submodules (stage, projector, camera, dlpc).
     """
 
     def __init__(
@@ -33,14 +33,12 @@ class StepperEngine:
         delay_func: Optional[Callable[[float], None]] = None,
         warning_callback: Optional[Callable[[str], None]] = None,
         autofocus_config: Optional[Any] = None,
-        alignment_config: Optional[Any] = None,
     ):
         self.stage = stage
         self.projector = projector
         self.camera = camera
         self.dlpc = dlpc
         self.autofocus_config = autofocus_config
-        self.alignment_config = alignment_config
         
         self.delay_func = delay_func or time.sleep
         self.warning_callback = warning_callback or self._default_warning

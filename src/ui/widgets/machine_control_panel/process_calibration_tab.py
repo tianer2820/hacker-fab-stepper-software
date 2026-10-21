@@ -130,9 +130,6 @@ class ProcessCalibrationTabWidget(QScrollArea):
         self.btn_start_cal.clicked.connect(self._on_start_cal_clicked)
         ctrl_layout.addWidget(self.btn_start_cal)
 
-        # Placeholder alias for backward compatibility
-        self.btn_fem_placeholder = self.btn_start_cal
-
         # Status Label
         self.lbl_status = QLabel("Status: Ready")
         self.lbl_status.setStyleSheet("color: #666; font-size: 11px;")

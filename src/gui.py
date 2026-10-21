@@ -16,7 +16,6 @@ from PySide6.QtWidgets import QApplication, QFileDialog
 
 from camera import get_available_camera_types, get_camera
 from core.engine import StepperEngine
-from operations.alignment import AlignmentConfig
 from operations.autofocus import AutofocusConfig
 from stage_control import get_available_stage_types, get_stage_controller
 from ui.bridge import QtEngineBridge
@@ -75,12 +74,9 @@ def main():
         print(f"Error initializing camera: {e}")
         return 1
 
-    # AUTOFOCUS & ALIGNMENT CONFIG
+    # AUTOFOCUS CONFIG
     autofocus_config_dict = config.get("autofocus", {})
     autofocus_config = AutofocusConfig.from_dict(autofocus_config_dict)
-
-    alignment_config_dict = config.get("alignment", {})
-    alignment_config = AlignmentConfig.from_dict(alignment_config_dict)
 
     # DLPC CONFIG
     dlpc = None
@@ -117,7 +113,6 @@ def main():
         camera=camera,
         dlpc=dlpc,
         autofocus_config=autofocus_config,
-        alignment_config=alignment_config,
     )
     if "enabled" in tiling_config:
         engine.project.update_settings(tiling_enabled=tiling_enabled)

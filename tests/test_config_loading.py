@@ -9,8 +9,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import toml
 from camera import DummyCamera, get_camera
 from operations import (
-    AlignmentConfig,
-    AlignmentOperation,
     AutofocusConfig,
     AutofocusOperation,
 )
@@ -101,27 +99,6 @@ class TestConfigLoading(unittest.TestCase):
             get_stage_controller(cfg_oom)
             mock_omm.return_value.connect.assert_called_once_with("COM4", 921600)
 
-    def test_alignment_config_from_dict(self):
-        d = {
-            "enabled": True,
-            "model_path": "custom/path.pt",
-            "right_marker_x": 1900.0,
-            "left_marker_x": 200.0,
-            "top_marker_y": 300.0,
-            "bottom_marker_y": 1000.0,
-            "x_scale_factor": -1200.0,
-            "y_scale_factor": 850.0,
-        }
-        cfg = AlignmentConfig.from_dict(d)
-        self.assertTrue(cfg.enabled)
-        self.assertEqual(cfg.model_path, "custom/path.pt")
-        self.assertEqual(cfg.right_marker_x, 1900.0)
-        self.assertEqual(cfg.left_marker_x, 200.0)
-        self.assertEqual(cfg.top_marker_y, 300.0)
-        self.assertEqual(cfg.bottom_marker_y, 1000.0)
-        self.assertEqual(cfg.x_scale_factor, -1200.0)
-        self.assertEqual(cfg.y_scale_factor, 850.0)
-
     def test_autofocus_config_from_dict_and_operation(self):
         af_cfg = AutofocusConfig.from_dict({"enabled": False})
         self.assertFalse(af_cfg.enabled)
@@ -143,7 +120,6 @@ class TestConfigLoading(unittest.TestCase):
         self.assertIn("projector", cfg)
         self.assertIn("tiling", cfg)
         self.assertIn("autofocus", cfg)
-        self.assertIn("alignment", cfg)
 
         # Check camera section structure
         self.assertEqual(cfg["camera"]["type"], "webcam")
@@ -163,12 +139,6 @@ class TestConfigLoading(unittest.TestCase):
         self.assertIn("grbl", cfg["stage"])
         self.assertEqual(cfg["stage"]["grbl"]["baud-rate"], 115200)
 
-        # Check alignment section structure
-        align_cfg = AlignmentConfig.from_dict(cfg["alignment"])
-        self.assertFalse(align_cfg.enabled)
-        self.assertEqual(align_cfg.model_path, "ckpts/best.pt")
-        self.assertEqual(align_cfg.right_marker_x, 1820.0)
-
         # Check autofocus section
         af_cfg = AutofocusConfig.from_dict(cfg["autofocus"])
         self.assertTrue(af_cfg.enabled)
@@ -183,17 +153,11 @@ class TestConfigLoading(unittest.TestCase):
         mock_cam = MagicMock()
         ctx = ExecutionContext(stage=mock_stage, projector=mock_proj, camera=mock_cam)
         self.assertFalse(hasattr(ctx, "autofocus_config"))
-        self.assertFalse(hasattr(ctx, "alignment_config"))
 
     def test_operations_receive_configs_via_constructor(self):
         af_cfg = AutofocusConfig(enabled=False)
         af_op = AutofocusOperation(config=af_cfg)
         self.assertFalse(af_op.config.enabled)
-
-        align_cfg = AlignmentConfig(enabled=False, model_path="custom.pt")
-        align_op = AlignmentOperation(config=align_cfg)
-        self.assertFalse(align_op.config.enabled)
-        self.assertEqual(align_op.config.model_path, "custom.pt")
 
 
 if __name__ == "__main__":

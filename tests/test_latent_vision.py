@@ -17,12 +17,14 @@ try:
     from lib.latent_vision_model import (
         LatentVisionCNN,
         load_latent_vision_model,
+        resolve_checkpoint_path as _resolve_checkpoint_path,
     )
     LATENT_VISION_AVAILABLE = True
 except ImportError:
     torch = None  # type: ignore
     LatentVisionCNN = None  # type: ignore
     load_latent_vision_model = None  # type: ignore
+    _resolve_checkpoint_path = lambda p: Path(p)  # type: ignore
     LATENT_VISION_AVAILABLE = False
 
 from projector import ProjectorController
@@ -34,7 +36,6 @@ from ui.widgets.camera_view.camera_view_widget import (
     CameraViewWidget,
     LatentVisionWorker,
     MaskRenderWorker,
-    _resolve_checkpoint_path,
 )
 
 
