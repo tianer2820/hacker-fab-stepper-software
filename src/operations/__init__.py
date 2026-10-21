@@ -6,8 +6,9 @@ from .movement import HomeOperation, JogOperation
 from .optics_calibration import OpticsCalibrationOperation
 from .process_calibration import ProcessCalibrationOperation
 from .stage_calibration import (
-    StageCalibrationPatternAndZOperation,
+    StageCalibrationPatternOperation,
     StageCalibrationScanOperation,
+    StageCalibrationZFocusOperation,
 )
 from .tiling import TiledExposureOperation
 
@@ -17,7 +18,8 @@ __all__ = [
     "AutofocusOperation",
     "OpticsCalibrationOperation",
     "ProcessCalibrationOperation",
-    "StageCalibrationPatternAndZOperation",
+    "StageCalibrationZFocusOperation",
+    "StageCalibrationPatternOperation",
     "StageCalibrationScanOperation",
     "ExposureOperation",
     "TiledExposureOperation",

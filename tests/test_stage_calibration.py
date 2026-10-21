@@ -194,27 +194,28 @@ class TestStageCalibrationOperations(unittest.TestCase):
         self.assertAlmostEqual(recon[3][0], 100.0, places=2)
         self.assertAlmostEqual(recon[3][1], 100.0, places=2)
 
-    def test_pass1_and_pass2_end_to_end(self):
+    def test_three_stage_calibration_end_to_end(self):
         from core.operation import ExecutionContext
         from operations.stage_calibration import (
-            StageCalibrationPatternAndZOperation,
+            StageCalibrationZFocusOperation,
+            StageCalibrationPatternOperation,
             StageCalibrationScanOperation,
             generate_canonical_ar_tag,
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            p1_path = os.path.join(tmpdir, "pass1.json")
-            p2_path = os.path.join(tmpdir, "cal.json")
+            s1_path = os.path.join(tmpdir, "s1_focus.json")
+            s3_path = os.path.join(tmpdir, "final_cal.json")
 
             stage = DummyStage(delay=0.0)
             projector = MockProjector()
-            # Synthesize camera frame showing tag ID 0
-            tag_img, _ = generate_canonical_ar_tag(marker_id=0, size=100)
+            # Synthesize camera frame showing tag ID 0 and tag ID 1
+            tag0_img, _ = generate_canonical_ar_tag(marker_id=0, size=80)
+            tag1_img, _ = generate_canonical_ar_tag(marker_id=1, size=80)
+            h, w = tag0_img.shape
             frame = np.zeros((480, 640, 3), dtype=np.uint8)
-            h, w = tag_img.shape
-            frame[100 : 100 + h, 100 : 100 + w, 0] = tag_img
-            frame[100 : 100 + h, 100 : 100 + w, 1] = tag_img
-            frame[100 : 100 + h, 100 : 100 + w, 2] = tag_img
+            frame[150 : 150 + h, 100 : 100 + w, :] = np.stack([tag0_img] * 3, axis=-1)
+            frame[150 : 150 + h, 350 : 350 + w, :] = np.stack([tag1_img] * 3, axis=-1)
             camera = MockCamera(frame=frame)
 
             ctx = ExecutionContext(
@@ -224,35 +225,48 @@ class TestStageCalibrationOperations(unittest.TestCase):
                 delay_func=lambda s: None,
             )
 
-            # 1. Run Pass 1
-            op1 = StageCalibrationPatternAndZOperation(
+            # 1. Run Stage 1 (Z Focus)
+            op1 = StageCalibrationZFocusOperation(
                 calibration_range=2000.0,
-                pixel_scale=1.0,
+                camera_pixel_size=1.0,
                 grid_size=2,
                 step_distance=1000.0,
-                exposure_time=0.01,
                 stabilization_delay=0.0,
-                output_json_path=p1_path,
+                output_json_path=s1_path,
+                apply_to_stage=True,
             )
             err1 = op1.execute(ctx, lambda p, m: None)
             self.assertIsNone(err1)
-            self.assertTrue(os.path.exists(p1_path))
+            self.assertTrue(os.path.exists(s1_path))
             self.assertEqual(len(op1.recorded_points), 4)
+            # Stage should now have Z-leveling only
+            self.assertIsNotNone(stage.get_calibration())
+            self.assertFalse(stage.get_calibration().has_xy_calibration)
 
-            # 2. Run Pass 2
-            op2 = StageCalibrationScanOperation(
-                input_json_path=p1_path,
-                output_json_path=p2_path,
-                pixel_scale=1.0,
+            # 2. Run Stage 2 (Patterning)
+            op2 = StageCalibrationPatternOperation(
+                input_json_path=s1_path,
+                exposure_time=0.01,
                 stabilization_delay=0.0,
-                apply_to_stage=True,
             )
             err2 = op2.execute(ctx, lambda p, m: None)
             self.assertIsNone(err2)
-            self.assertTrue(os.path.exists(p2_path))
-            self.assertIsNotNone(op2.calibration)
+
+            # 3. Run Stage 3 (Optical Scan & Reconstruction)
+            op3 = StageCalibrationScanOperation(
+                input_json_path=s1_path,
+                output_json_path=s3_path,
+                camera_pixel_size=1.0,
+                stabilization_delay=0.0,
+                apply_to_stage=True,
+            )
+            err3 = op3.execute(ctx, lambda p, m: None)
+            self.assertIsNone(err3)
+            self.assertTrue(os.path.exists(s3_path))
+            self.assertIsNotNone(op3.calibration)
             self.assertIsNotNone(stage.get_calibration())
             self.assertEqual(stage.get_calibration().grid_shape, (2, 2))
+            self.assertTrue(stage.get_calibration().has_xy_calibration)
 
     def test_generate_spiral_grid_indices(self):
         from operations.stage_calibration import generate_spiral_grid_indices
@@ -277,66 +291,61 @@ class TestStageCalibrationOperations(unittest.TestCase):
         self.assertEqual(spiral_5x5[0], (2, 2))
         self.assertEqual(len(set(spiral_5x5)), 25)
 
-    def test_pass1_fails_explicitly_if_projection_uncalibrated(self):
+    def test_stage2_fails_explicitly_if_projection_uncalibrated(self):
         from core.operation import ExecutionContext
         from operations.stage_calibration import (
-            StageCalibrationPatternAndZOperation,
+            StageCalibrationPatternOperation,
         )
 
-        stage = DummyStage(delay=0.0)
-        projector = MockProjector()
-        # Blank frame: 0 tags detected
-        camera = MockCamera(frame=np.zeros((480, 640, 3), dtype=np.uint8))
-        ctx = ExecutionContext(stage=stage, camera=camera, projector=projector, delay_func=lambda s: None)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s1_path = os.path.join(tmpdir, "stage1.json")
+            StageCalibration(
+                grid_shape=(2, 2),
+                points=[
+                    StageCalibrationPoint((0, 0), 0, (0.0, 0.0), (0.0, 0.0), 100.0),
+                    StageCalibrationPoint((0, 1), 1, (1000.0, 0.0), (1000.0, 0.0), 100.0),
+                    StageCalibrationPoint((1, 0), 2, (0.0, 1000.0), (0.0, 1000.0), 100.0),
+                    StageCalibrationPoint((1, 1), 3, (1000.0, 1000.0), (1000.0, 1000.0), 100.0),
+                ],
+                stage_type="dummy",
+            ).save_to_json(s1_path)
 
-        op1 = StageCalibrationPatternAndZOperation(
-            exposure_time=0.01,
-            stabilization_delay=0.0,
-        )
-        err = op1.execute(ctx, lambda p, m: None)
-        self.assertIsNotNone(err)
-        self.assertIn("Projector-to-camera optical calibration failed", err)
+            stage = DummyStage(delay=0.0)
+            projector = MockProjector()
+            # Blank frame: 0 tags detected
+            camera = MockCamera(frame=np.zeros((480, 640, 3), dtype=np.uint8))
+            ctx = ExecutionContext(stage=stage, camera=camera, projector=projector, delay_func=lambda s: None)
 
-    def test_pass1_fails_explicitly_if_homography_inversion_fails(self):
-        from unittest.mock import patch
-        from core.operation import ExecutionContext
-        from operations.stage_calibration import (
-            StageCalibrationPatternAndZOperation,
-            generate_canonical_ar_tag,
-        )
-
-        stage = DummyStage(delay=0.0)
-        projector = MockProjector()
-        tag_img, _ = generate_canonical_ar_tag(marker_id=0, size=100)
-        frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        h, w = tag_img.shape
-        frame[100 : 100 + h, 100 : 100 + w, 0] = tag_img
-        frame[100 : 100 + h, 100 : 100 + w, 1] = tag_img
-        frame[100 : 100 + h, 100 : 100 + w, 2] = tag_img
-        camera = MockCamera(frame=frame)
-        ctx = ExecutionContext(stage=stage, camera=camera, projector=projector, delay_func=lambda s: None)
-
-        op1 = StageCalibrationPatternAndZOperation(
-            exposure_time=0.01,
-            stabilization_delay=0.0,
-        )
-        # Patch findHomography to return a singular matrix (all zeros)
-        with patch("cv2.findHomography", return_value=(np.zeros((3, 3), dtype=np.float64), np.ones((4, 1)))):
-            err = op1.execute(ctx, lambda p, m: None)
+            op2 = StageCalibrationPatternOperation(
+                input_json_path=s1_path,
+                exposure_time=0.01,
+                stabilization_delay=0.0,
+            )
+            err = op2.execute(ctx, lambda p, m: None)
             self.assertIsNotNone(err)
-            self.assertIn("Failed to invert projector-to-camera homography", err)
+            self.assertIn("Projector-to-camera optical calibration failed", err)
 
-    def test_pass1_uses_exposure_operation(self):
+    def test_stage2_fails_explicitly_if_homography_inversion_fails(self):
         from unittest.mock import patch
         from core.operation import ExecutionContext
-        from operations.exposure import ExposureOperation
         from operations.stage_calibration import (
-            StageCalibrationPatternAndZOperation,
+            StageCalibrationPatternOperation,
             generate_canonical_ar_tag,
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            p1_path = os.path.join(tmpdir, "pass1.json")
+            s1_path = os.path.join(tmpdir, "stage1.json")
+            StageCalibration(
+                grid_shape=(2, 2),
+                points=[
+                    StageCalibrationPoint((0, 0), 0, (0.0, 0.0), (0.0, 0.0), 100.0),
+                    StageCalibrationPoint((0, 1), 1, (1000.0, 0.0), (1000.0, 0.0), 100.0),
+                    StageCalibrationPoint((1, 0), 2, (0.0, 1000.0), (0.0, 1000.0), 100.0),
+                    StageCalibrationPoint((1, 1), 3, (1000.0, 1000.0), (1000.0, 1000.0), 100.0),
+                ],
+                stage_type="dummy",
+            ).save_to_json(s1_path)
+
             stage = DummyStage(delay=0.0)
             projector = MockProjector()
             tag_img, _ = generate_canonical_ar_tag(marker_id=0, size=100)
@@ -348,14 +357,54 @@ class TestStageCalibrationOperations(unittest.TestCase):
             camera = MockCamera(frame=frame)
             ctx = ExecutionContext(stage=stage, camera=camera, projector=projector, delay_func=lambda s: None)
 
-            op = StageCalibrationPatternAndZOperation(
-                calibration_range=2000.0,
-                pixel_scale=1.0,
-                grid_size=2,
-                step_distance=1000.0,
+            op2 = StageCalibrationPatternOperation(
+                input_json_path=s1_path,
                 exposure_time=0.01,
                 stabilization_delay=0.0,
-                output_json_path=p1_path,
+            )
+            # Patch findHomography to return a singular matrix (all zeros)
+            with patch("cv2.findHomography", return_value=(np.zeros((3, 3), dtype=np.float64), np.ones((4, 1)))):
+                err = op2.execute(ctx, lambda p, m: None)
+                self.assertIsNotNone(err)
+                self.assertIn("Failed to invert projector-to-camera homography", err)
+
+    def test_stage2_uses_exposure_operation(self):
+        from unittest.mock import patch
+        from core.operation import ExecutionContext
+        from operations.exposure import ExposureOperation
+        from operations.stage_calibration import (
+            StageCalibrationPatternOperation,
+            generate_canonical_ar_tag,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s1_path = os.path.join(tmpdir, "stage1.json")
+            StageCalibration(
+                grid_shape=(2, 2),
+                points=[
+                    StageCalibrationPoint((0, 0), 0, (0.0, 0.0), (0.0, 0.0), 100.0),
+                    StageCalibrationPoint((0, 1), 1, (1000.0, 0.0), (1000.0, 0.0), 100.0),
+                    StageCalibrationPoint((1, 0), 2, (0.0, 1000.0), (0.0, 1000.0), 100.0),
+                    StageCalibrationPoint((1, 1), 3, (1000.0, 1000.0), (1000.0, 1000.0), 100.0),
+                ],
+                stage_type="dummy",
+            ).save_to_json(s1_path)
+
+            stage = DummyStage(delay=0.0)
+            projector = MockProjector()
+            tag_img, _ = generate_canonical_ar_tag(marker_id=0, size=100)
+            frame = np.zeros((480, 640, 3), dtype=np.uint8)
+            h, w = tag_img.shape
+            frame[100 : 100 + h, 100 : 100 + w, 0] = tag_img
+            frame[100 : 100 + h, 100 : 100 + w, 1] = tag_img
+            frame[100 : 100 + h, 100 : 100 + w, 2] = tag_img
+            camera = MockCamera(frame=frame)
+            ctx = ExecutionContext(stage=stage, camera=camera, projector=projector, delay_func=lambda s: None)
+
+            op = StageCalibrationPatternOperation(
+                input_json_path=s1_path,
+                exposure_time=0.01,
+                stabilization_delay=0.0,
             )
 
             with patch("operations.stage_calibration.ExposureOperation", wraps=ExposureOperation) as mock_exp_cls:
@@ -415,7 +464,7 @@ class TestStageCalibrationOperations(unittest.TestCase):
             op2 = StageCalibrationScanOperation(
                 input_json_path=p1_path,
                 output_json_path=p2_path,
-                pixel_scale=1.0,
+                camera_pixel_size=1.0,
                 stabilization_delay=0.0,
                 apply_to_stage=True,
             )
@@ -459,11 +508,32 @@ class TestStageCalibrationUI(unittest.TestCase):
         self.assertTrue(hasattr(config_tab, "lbl_cal_status"))
         self.assertIn("Raw", config_tab.lbl_cal_status.text())
 
-        # Test setting calibration updates UI
-        cal = StageCalibration((2, 2), [], stage_type="dummy")
-        stage.set_calibration(cal)
+        # Test setting Z-leveling calibration updates UI
+        cal_z = StageCalibration(
+            (2, 2),
+            [
+                StageCalibrationPoint((0, 0), 0, (0.0, 0.0), (0.0, 0.0), 100.0),
+                StageCalibrationPoint((0, 1), 1, (100.0, 0.0), (100.0, 0.0), 100.0),
+            ],
+            stage_type="dummy",
+        )
+        stage.set_calibration(cal_z)
         config_tab._refresh_calibration_status()
-        self.assertIn("Active", config_tab.lbl_cal_status.text())
+        self.assertIn("Active: Z-Leveling Only", config_tab.lbl_cal_status.text())
+        self.assertTrue(config_tab.btn_clear_stage_cal.isEnabled())
+
+        # Test setting Full XY + Z calibration updates UI
+        cal_full = StageCalibration(
+            (2, 2),
+            [
+                StageCalibrationPoint((0, 0), 0, (0.0, 0.0), (5.0, 5.0), 100.0),
+                StageCalibrationPoint((0, 1), 1, (100.0, 0.0), (105.0, 5.0), 100.0),
+            ],
+            stage_type="dummy",
+        )
+        stage.set_calibration(cal_full)
+        config_tab._refresh_calibration_status()
+        self.assertIn("Active: Full XY + Z", config_tab.lbl_cal_status.text())
         self.assertTrue(config_tab.btn_clear_stage_cal.isEnabled())
 
         # Test clear
@@ -474,6 +544,9 @@ class TestStageCalibrationUI(unittest.TestCase):
 
         # Check Stage Calibration Tab fields & defaults
         stage_cal_tab = panel.stage_cal_tab
+        self.assertTrue(hasattr(stage_cal_tab, "btn_start_s1"))
+        self.assertTrue(hasattr(stage_cal_tab, "btn_start_s2"))
+        self.assertTrue(hasattr(stage_cal_tab, "btn_start_s3"))
         self.assertEqual(stage_cal_tab.spin_exposure_time.value(), 8.0)
         self.assertEqual(stage_cal_tab.spin_cal_range.value(), 10000.0)
         self.assertFalse(hasattr(stage_cal_tab, "spin_pixel_scale"))

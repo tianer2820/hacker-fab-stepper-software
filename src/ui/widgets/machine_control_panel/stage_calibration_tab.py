@@ -18,15 +18,16 @@ from PySide6.QtWidgets import (
 
 from core.engine import StepperEngine
 from operations.stage_calibration import (
-    StageCalibrationPatternAndZOperation,
+    StageCalibrationPatternOperation,
     StageCalibrationScanOperation,
+    StageCalibrationZFocusOperation,
     compute_calibration_grid_params,
 )
 from ui.bridge import QtEngineBridge
 
 
 class StageCalibrationTabWidget(QScrollArea):
-    """Tab 5: Two-pass stage coordinate calibration (Pass 1: Pattern & Z, Pass 2: Optical Scan)."""
+    """Tab 5: 3-Stage Stage Calibration (Stage 1: Z Focus, Stage 2: Pattern Grid, Stage 3: Optical Scan)."""
 
     def __init__(self, engine: StepperEngine, bridge: QtEngineBridge, parent: QWidget = None):
         super().__init__(parent)
@@ -45,32 +46,36 @@ class StageCalibrationTabWidget(QScrollArea):
         main_layout.setSpacing(8)
 
         # 1. Instructions
-        info_box = QGroupBox("Stage Calibration Procedure")
+        info_box = QGroupBox("Stage Calibration Procedure (3 Stages)")
         info_layout = QVBoxLayout(info_box)
         info_lbl = QLabel(
-            "<b>2-Pass Coordinate & Height Map Calibration</b><br><br>"
-            "<b>Pass 1 (Patterning & Z-Autofocus):</b><br>"
-            "• Autofocuses and measures optical transform between projector and camera.<br>"
-            "• Corrects tag projection (aligning Top-Left corner to camera center).<br>"
-            "• Calculates grid size & step distance so 2x2 tags fit within camera FOV.<br>"
-            "• Steps through grid, autofocuses, and exposes small ArUco tags in UV.<br>"
-            "<i>After Pass 1 completes, remove and develop the wafer.</i><br><br>"
-            "<b>Pass 2 (Optical Scan & Calibration):</b><br>"
-            "• Jog stage until at least one tag is visible in camera.<br>"
-            "• Software estimates wafer orientation and origin transform.<br>"
-            "• Scans clusters to measure tag-to-tag relative pixel vectors in camera view.<br>"
-            "• Solves global optical coordinates via Least Squares without relying on stage position."
+            "<b>3-Stage Coordinate & Focal Surface Calibration</b><br><br>"
+            "<b>Stage 1 (Z Focus Calibration):</b><br>"
+            "• Multi-point autofocus sweep across the wafer surface.<br>"
+            "• Maps wafer focal plane into a height map and enables stage Z-leveling.<br><br>"
+            "<b>Stage 2 (Patterning):</b><br>"
+            "• Measures optical transform (Projector -> Camera) and corrects alignment.<br>"
+            "• Uses calibrated Stage 1 Z heights to expose small ArUco tags in UV.<br>"
+            "<i>After Stage 2 completes, develop the wafer and remount.</i><br><br>"
+            "<b>Stage 3 (Optical Scan & Global Reconstruction):</b><br>"
+            "• Jog stage until at least one tag is visible in camera view.<br>"
+            "• Estimates wafer pose, scans tag clusters, and reconstructs coordinates via Least Squares."
         )
         info_lbl.setWordWrap(True)
         info_layout.addWidget(info_lbl)
         main_layout.addWidget(info_box)
 
-        # 2. Pass 1 Group (Single-Column)
-        p1_box = QGroupBox("Pass 1: Pattern Grid & Z Autofocus")
-        p1_layout = QVBoxLayout(p1_box)
-        p1_layout.setSpacing(6)
+        default_cal_file = (
+            self.engine.machine_config.stage_calibration.calibration_file_path
+            if hasattr(self.engine, "machine_config")
+            else "stage_calibration.json"
+        )
 
-        # Calibration Range (L)
+        # 2. Stage 1 Group
+        s1_box = QGroupBox("Stage 1: Z Focus Calibration")
+        s1_layout = QVBoxLayout(s1_box)
+        s1_layout.setSpacing(6)
+
         range_row = QHBoxLayout()
         range_row.addWidget(QLabel("Calibration Range:"))
         self.spin_cal_range = QDoubleSpinBox()
@@ -80,77 +85,99 @@ class StageCalibrationTabWidget(QScrollArea):
         self.spin_cal_range.setSuffix(" µm")
         self.spin_cal_range.valueChanged.connect(self._update_computed_grid_label)
         range_row.addWidget(self.spin_cal_range, 1)
-        p1_layout.addLayout(range_row)
+        s1_layout.addLayout(range_row)
 
-        # Dynamic Grid Calculation Display
         self.lbl_grid_info = QLabel("Computed Grid: Calculating...")
         self.lbl_grid_info.setStyleSheet("color: #4da6ff; font-weight: bold; font-size: 11px;")
-        p1_layout.addWidget(self.lbl_grid_info)
+        s1_layout.addWidget(self.lbl_grid_info)
 
-        # Exposure Time (default 8.0 s)
+        s1_layout.addWidget(QLabel("Stage 1 Output JSON:"))
+        s1_file_row = QHBoxLayout()
+        self.txt_s1_file = QLineEdit(os.path.abspath(default_cal_file))
+        s1_file_row.addWidget(self.txt_s1_file, 1)
+        self.btn_browse_s1 = QPushButton("Browse...")
+        self.btn_browse_s1.clicked.connect(self._on_browse_s1_clicked)
+        s1_file_row.addWidget(self.btn_browse_s1)
+        s1_layout.addLayout(s1_file_row)
+
+        self.btn_start_s1 = QPushButton("Run Stage 1 (Z Focus Calibration)")
+        self.btn_start_s1.setStyleSheet("font-weight: bold; padding: 6px;")
+        self.btn_start_s1.clicked.connect(self._on_start_s1_clicked)
+        s1_layout.addWidget(self.btn_start_s1)
+
+        main_layout.addWidget(s1_box)
+
+        # 3. Stage 2 Group
+        s2_box = QGroupBox("Stage 2: Pattern Grid (Uses Stage 1 Z Heights)")
+        s2_layout = QVBoxLayout(s2_box)
+        s2_layout.setSpacing(6)
+
+        s2_layout.addWidget(QLabel("Stage 1 Input JSON:"))
+        s2_in_row = QHBoxLayout()
+        self.txt_s2_input = QLineEdit(os.path.abspath(default_cal_file))
+        s2_in_row.addWidget(self.txt_s2_input, 1)
+        self.btn_browse_s2_input = QPushButton("Browse...")
+        self.btn_browse_s2_input.clicked.connect(self._on_browse_s2_input_clicked)
+        s2_in_row.addWidget(self.btn_browse_s2_input)
+        s2_layout.addLayout(s2_in_row)
+
         exp_row = QHBoxLayout()
         exp_row.addWidget(QLabel("Exposure Time:"))
         self.spin_exposure_time = QDoubleSpinBox()
         self.spin_exposure_time.setRange(0.1, 120.0)
-        self.spin_exposure_time.setValue(8.0)
+        default_exp_s = (
+            self.engine.machine_config.exposure.default_exposure_time_ms / 1000.0
+            if hasattr(self.engine, "machine_config")
+            else 8.0
+        )
+        self.spin_exposure_time.setValue(default_exp_s)
         self.spin_exposure_time.setSingleStep(1.0)
         self.spin_exposure_time.setSuffix(" s")
         exp_row.addWidget(self.spin_exposure_time, 1)
-        p1_layout.addLayout(exp_row)
+        s2_layout.addLayout(exp_row)
 
-        # Autofocus Checkbox
-        self.chk_autofocus = QCheckBox("Enable Autofocus")
-        self.chk_autofocus.setChecked(True)
-        p1_layout.addWidget(self.chk_autofocus)
+        self.btn_start_s2 = QPushButton("Run Stage 2 (Expose ArUco Grid)")
+        self.btn_start_s2.setStyleSheet("font-weight: bold; padding: 6px;")
+        self.btn_start_s2.clicked.connect(self._on_start_s2_clicked)
+        s2_layout.addWidget(self.btn_start_s2)
 
-        # Pass 1 Output File
-        p1_layout.addWidget(QLabel("Pass 1 Output JSON:"))
-        self.txt_p1_file = QLineEdit(os.path.abspath("stage_calibration_pass1.json"))
-        p1_layout.addWidget(self.txt_p1_file)
+        main_layout.addWidget(s2_box)
 
-        # Pass 1 Start Button
-        self.btn_start_p1 = QPushButton("Run Pass 1 (Optical Align, Pattern & Z)")
-        self.btn_start_p1.setStyleSheet("font-weight: bold; padding: 6px;")
-        self.btn_start_p1.clicked.connect(self._on_start_pass1_clicked)
-        p1_layout.addWidget(self.btn_start_p1)
+        # 4. Stage 3 Group
+        s3_box = QGroupBox("Stage 3: Optical Scan & Least Squares Map")
+        s3_layout = QVBoxLayout(s3_box)
+        s3_layout.setSpacing(6)
 
-        main_layout.addWidget(p1_box)
+        s3_layout.addWidget(QLabel("Input JSON (with Stage 1 Z Heights):"))
+        s3_in_row = QHBoxLayout()
+        self.txt_s3_input = QLineEdit(os.path.abspath(default_cal_file))
+        s3_in_row.addWidget(self.txt_s3_input, 1)
+        self.btn_browse_s3_input = QPushButton("Browse...")
+        self.btn_browse_s3_input.clicked.connect(self._on_browse_s3_input_clicked)
+        s3_in_row.addWidget(self.btn_browse_s3_input)
+        s3_layout.addLayout(s3_in_row)
 
-        # 3. Pass 2 Group (Single-Column)
-        p2_box = QGroupBox("Pass 2: Optical Scan & Least Squares Map")
-        p2_layout = QVBoxLayout(p2_box)
-        p2_layout.setSpacing(6)
-
-        p2_layout.addWidget(QLabel("Pass 1 Input JSON:"))
-        p2_in_row = QHBoxLayout()
-        self.txt_p2_input = QLineEdit(os.path.abspath("stage_calibration_pass1.json"))
-        p2_in_row.addWidget(self.txt_p2_input, 1)
-        self.btn_browse_p2_input = QPushButton("Browse...")
-        self.btn_browse_p2_input.clicked.connect(self._on_browse_p2_input_clicked)
-        p2_in_row.addWidget(self.btn_browse_p2_input)
-        p2_layout.addLayout(p2_in_row)
-
-        p2_layout.addWidget(QLabel("Final Calibration JSON:"))
-        p2_out_row = QHBoxLayout()
-        self.txt_p2_output = QLineEdit(os.path.abspath("stage_calibration.json"))
-        p2_out_row.addWidget(self.txt_p2_output, 1)
-        self.btn_browse_p2_output = QPushButton("Browse...")
-        self.btn_browse_p2_output.clicked.connect(self._on_browse_p2_output_clicked)
-        p2_out_row.addWidget(self.btn_browse_p2_output)
-        p2_layout.addLayout(p2_out_row)
+        s3_layout.addWidget(QLabel("Final Calibration Output JSON:"))
+        s3_out_row = QHBoxLayout()
+        self.txt_s3_output = QLineEdit(os.path.abspath(default_cal_file))
+        s3_out_row.addWidget(self.txt_s3_output, 1)
+        self.btn_browse_s3_output = QPushButton("Browse...")
+        self.btn_browse_s3_output.clicked.connect(self._on_browse_s3_output_clicked)
+        s3_out_row.addWidget(self.btn_browse_s3_output)
+        s3_layout.addLayout(s3_out_row)
 
         self.chk_apply_now = QCheckBox("Apply calibration to stage immediately upon completion")
         self.chk_apply_now.setChecked(True)
-        p2_layout.addWidget(self.chk_apply_now)
+        s3_layout.addWidget(self.chk_apply_now)
 
-        self.btn_start_p2 = QPushButton("Run Pass 2 (Scan & Reconstruct Global Map)")
-        self.btn_start_p2.setStyleSheet("font-weight: bold; padding: 6px;")
-        self.btn_start_p2.clicked.connect(self._on_start_pass2_clicked)
-        p2_layout.addWidget(self.btn_start_p2)
+        self.btn_start_s3 = QPushButton("Run Stage 3 (Scan & Reconstruct Global Map)")
+        self.btn_start_s3.setStyleSheet("font-weight: bold; padding: 6px;")
+        self.btn_start_s3.clicked.connect(self._on_start_s3_clicked)
+        s3_layout.addWidget(self.btn_start_s3)
 
-        main_layout.addWidget(p2_box)
+        main_layout.addWidget(s3_box)
 
-        # 4. Status & Controls (No progress bar)
+        # 5. Status & Controls
         status_box = QGroupBox("Status & Controls")
         status_layout = QVBoxLayout(status_box)
 
@@ -194,51 +221,75 @@ class StageCalibrationTabWidget(QScrollArea):
             f"Computed Grid: {n} x {n} ({n*n} tags) | Step: {d:.1f} µm (FOV: {fov_um:.1f} µm)"
         )
 
-    def _on_browse_p2_input_clicked(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Select Pass 1 JSON File", self.txt_p2_input.text(), "JSON Files (*.json)"
-        )
-        if path:
-            self.txt_p2_input.setText(path)
-
-    def _on_browse_p2_output_clicked(self):
+    def _on_browse_s1_clicked(self):
         path, _ = QFileDialog.getSaveFileName(
-            self, "Select Calibration JSON Save Path", self.txt_p2_output.text(), "JSON Files (*.json)"
+            self, "Select Stage 1 Output JSON", self.txt_s1_file.text(), "JSON Files (*.json)"
         )
         if path:
-            self.txt_p2_output.setText(path)
+            self.txt_s1_file.setText(path)
 
-    def _on_start_pass1_clicked(self):
+    def _on_browse_s2_input_clicked(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Stage 1 Input JSON", self.txt_s2_input.text(), "JSON Files (*.json)"
+        )
+        if path:
+            self.txt_s2_input.setText(path)
+
+    def _on_browse_s3_input_clicked(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Stage Calibration Input JSON", self.txt_s3_input.text(), "JSON Files (*.json)"
+        )
+        if path:
+            self.txt_s3_input.setText(path)
+
+    def _on_browse_s3_output_clicked(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Select Final Calibration JSON Save Path", self.txt_s3_output.text(), "JSON Files (*.json)"
+        )
+        if path:
+            self.txt_s3_output.setText(path)
+
+    def _on_start_s1_clicked(self):
         pixel_scale = (
             self.engine.machine_config.stage_calibration.camera_pixel_size
             if hasattr(self.engine, "machine_config")
             else 1.0
         )
-        op = StageCalibrationPatternAndZOperation(
+        op = StageCalibrationZFocusOperation(
             calibration_range=self.spin_cal_range.value(),
-            pixel_scale=pixel_scale,
-            exposure_time=self.spin_exposure_time.value(),
-            output_json_path=self.txt_p1_file.text().strip(),
+            camera_pixel_size=pixel_scale,
+            output_json_path=self.txt_s1_file.text().strip(),
+            apply_to_stage=True,
         )
         self._active_op = op
-        self.lbl_status.setText("Status: Starting Pass 1...")
+        self.lbl_status.setText("Status: Starting Stage 1 (Z Focus)...")
         self.btn_abort.setEnabled(True)
         self.bridge.start_operation(op)
 
-    def _on_start_pass2_clicked(self):
+    def _on_start_s2_clicked(self):
+        op = StageCalibrationPatternOperation(
+            input_json_path=self.txt_s2_input.text().strip(),
+            exposure_time=self.spin_exposure_time.value(),
+        )
+        self._active_op = op
+        self.lbl_status.setText("Status: Starting Stage 2 (Patterning)...")
+        self.btn_abort.setEnabled(True)
+        self.bridge.start_operation(op)
+
+    def _on_start_s3_clicked(self):
         pixel_scale = (
             self.engine.machine_config.stage_calibration.camera_pixel_size
             if hasattr(self.engine, "machine_config")
             else 1.0
         )
         op = StageCalibrationScanOperation(
-            input_json_path=self.txt_p2_input.text().strip(),
-            output_json_path=self.txt_p2_output.text().strip(),
-            pixel_scale=pixel_scale,
+            input_json_path=self.txt_s3_input.text().strip(),
+            output_json_path=self.txt_s3_output.text().strip(),
+            camera_pixel_size=pixel_scale,
             apply_to_stage=self.chk_apply_now.isChecked(),
         )
         self._active_op = op
-        self.lbl_status.setText("Status: Starting Pass 2...")
+        self.lbl_status.setText("Status: Starting Stage 3 (Optical Scan)...")
         self.btn_abort.setEnabled(True)
         self.bridge.start_operation(op)
 
@@ -257,18 +308,21 @@ class StageCalibrationTabWidget(QScrollArea):
             if err:
                 self.lbl_status.setText(f"Status: Error - {err}")
             else:
-                self.lbl_status.setText("Status: Operation complete successfully!")
+                self.lbl_status.setText("Status: Operation completed successfully!")
             self._active_op = None
 
     def update_lock_state(self, is_busy: bool):
-        self.btn_start_p1.setEnabled(not is_busy)
-        self.btn_start_p2.setEnabled(not is_busy)
+        self.btn_start_s1.setEnabled(not is_busy)
+        self.btn_start_s2.setEnabled(not is_busy)
+        self.btn_start_s3.setEnabled(not is_busy)
         self.spin_cal_range.setEnabled(not is_busy)
         self.spin_exposure_time.setEnabled(not is_busy)
-        self.chk_autofocus.setEnabled(not is_busy)
-        self.txt_p1_file.setEnabled(not is_busy)
-        self.txt_p2_input.setEnabled(not is_busy)
-        self.txt_p2_output.setEnabled(not is_busy)
-        self.btn_browse_p2_input.setEnabled(not is_busy)
-        self.btn_browse_p2_output.setEnabled(not is_busy)
+        self.txt_s1_file.setEnabled(not is_busy)
+        self.btn_browse_s1.setEnabled(not is_busy)
+        self.txt_s2_input.setEnabled(not is_busy)
+        self.btn_browse_s2_input.setEnabled(not is_busy)
+        self.txt_s3_input.setEnabled(not is_busy)
+        self.btn_browse_s3_input.setEnabled(not is_busy)
+        self.txt_s3_output.setEnabled(not is_busy)
+        self.btn_browse_s3_output.setEnabled(not is_busy)
         self.chk_apply_now.setEnabled(not is_busy)

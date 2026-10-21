@@ -48,12 +48,20 @@ class StageCalibration:
         stage_type: str = "",
         timestamp: Optional[str] = None,
         enabled: bool = True,
+        step_distance: Optional[float] = None,
+        calibration_range: Optional[float] = None,
+        dict_id: Optional[int] = None,
+        flip_horizontal: bool = False,
     ):
         self.grid_shape = (int(grid_shape[0]), int(grid_shape[1]))
         self.points = points
         self.stage_type = stage_type
         self.timestamp = timestamp or datetime.now().isoformat()
         self.enabled = enabled
+        self.step_distance = float(step_distance) if step_distance is not None else None
+        self.calibration_range = float(calibration_range) if calibration_range is not None else None
+        self.dict_id = int(dict_id) if dict_id is not None else None
+        self.flip_horizontal = bool(flip_horizontal)
 
         self._ny, self._nx = self.grid_shape
         self._raw_x_grid = np.zeros((self._ny, self._nx), dtype=np.float64)
@@ -228,15 +236,29 @@ class StageCalibration:
         cz = rz - z_surf
         return (cx, cy, cz)
 
+    @property
+    def has_xy_calibration(self) -> bool:
+        """Returns True if XY coordinates contain measured optical correction, False if identity (Z-leveling only)."""
+        if not self.points:
+            return False
+        return any(
+            abs(p.corr_xy[0] - p.raw_xy[0]) > 1e-4 or abs(p.corr_xy[1] - p.raw_xy[1]) > 1e-4
+            for p in self.points
+        )
+
     def save_to_json(self, file_path: str):
         """Serializes calibration data to a JSON file."""
         os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
         data = {
-            "version": "1.0",
+            "version": "2.0",
             "timestamp": self.timestamp,
             "stage_type": self.stage_type,
             "enabled": self.enabled,
             "grid_shape": list(self.grid_shape),
+            "step_distance": self.step_distance,
+            "calibration_range": self.calibration_range,
+            "dict_id": self.dict_id,
+            "flip_horizontal": self.flip_horizontal,
             "bounds_raw": {
                 "x_min": float(np.min(self._raw_x_grid)) if self._raw_x_grid.size > 0 else 0.0,
                 "x_max": float(np.max(self._raw_x_grid)) if self._raw_x_grid.size > 0 else 0.0,
@@ -259,6 +281,10 @@ class StageCalibration:
         stage_type = data.get("stage_type", "")
         timestamp = data.get("timestamp", "")
         enabled = data.get("enabled", True)
+        step_distance = data.get("step_distance")
+        calibration_range = data.get("calibration_range")
+        dict_id = data.get("dict_id")
+        flip_horizontal = data.get("flip_horizontal", False)
 
         return cls(
             grid_shape=grid_shape,
@@ -266,4 +292,8 @@ class StageCalibration:
             stage_type=stage_type,
             timestamp=timestamp,
             enabled=enabled,
+            step_distance=step_distance,
+            calibration_range=calibration_range,
+            dict_id=dict_id,
+            flip_horizontal=flip_horizontal,
         )

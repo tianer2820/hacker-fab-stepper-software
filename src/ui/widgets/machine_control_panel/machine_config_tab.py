@@ -244,8 +244,9 @@ class MachineConfigTabWidget(QScrollArea):
         cal = self.engine.stage.get_calibration() if self.engine.stage else None
         if cal is not None and cal.enabled:
             cal_file = self.txt_cal_file.text().strip()
-            name = os.path.basename(cal_file) if cal_file else "Active"
-            self.lbl_cal_status.setText(f"Active ({name})")
+            name = f" ({os.path.basename(cal_file)})" if cal_file else ""
+            cal_type = "Full XY + Z" if cal.has_xy_calibration else "Z-Leveling Only"
+            self.lbl_cal_status.setText(f"Active: {cal_type}{name}")
             self.lbl_cal_status.setStyleSheet("color: #55ff55; font-weight: bold; font-size: 11px;")
             self.btn_clear_stage_cal.setEnabled(True)
         else:
