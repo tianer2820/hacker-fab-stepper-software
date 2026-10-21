@@ -19,8 +19,8 @@ from lib.projector_camera_transform import (
     generate_calibration_tag_grid_with_coords,
     transform_points_projector_to_camera,
 )
-from operations.autofocus import AutofocusConfig, AutofocusOperation
-from operations.exposure import ExposureOperation, ExposureOperationConfig
+from operations.autofocus import AutofocusOperation
+from operations.exposure import ExposureOperation
 from stage_control.calibration import StageCalibration, StageCalibrationPoint
 
 DEFAULT_ARUCO_DICT = cv2.aruco.DICT_4X4_1000
@@ -208,51 +208,32 @@ def solve_global_positions_from_relative_measurements(
     return results
 
 
-@dataclass
-class StageCalibrationPatternAndZConfig:
-    calibration_range: float = 10000.0  # µm (total square span L)
-    pixel_scale: float = 1.0  # µm per camera pixel
-    exposure_time: float = 8.0  # seconds
-    stabilization_delay: float = 3  # seconds
-    autofocus_enabled: bool = True
-    uv_z_offset: float = 0.0
-    output_json_path: str = "stage_calibration_pass1.json"
-    dict_id: int = DEFAULT_ARUCO_DICT
-
-    # Backwards compatibility fields
-    grid_size: Optional[int] = None
-    step_distance: Optional[float] = None
-
-    @classmethod
-    def from_dict(cls, d: Optional[dict] = None) -> "StageCalibrationPatternAndZConfig":
-        if not d:
-            return cls()
-        return cls(
-            calibration_range=float(d.get("calibration_range", 10000.0)),
-            pixel_scale=float(d.get("pixel_scale", 1.0)),
-            exposure_time=float(d.get("exposure_time", 8.0)),
-            stabilization_delay=float(d.get("stabilization_delay", 0.5)),
-            autofocus_enabled=bool(d.get("autofocus_enabled", True)),
-            uv_z_offset=float(d.get("uv_z_offset", 0.0)),
-            output_json_path=str(d.get("output_json_path", "stage_calibration_pass1.json")),
-            dict_id=int(d.get("dict_id", DEFAULT_ARUCO_DICT)),
-            grid_size=int(d["grid_size"]) if "grid_size" in d else None,
-            step_distance=float(d["step_distance"]) if "step_distance" in d else None,
-        )
-
-
 class StageCalibrationPatternAndZOperation(Operation):
     """Pass 1: Autofocus, Optical Homography Measurement, 3-Step Iterative Correction, and Patterning."""
 
     def __init__(
         self,
-        config: Optional[Union[StageCalibrationPatternAndZConfig, dict]] = None,
+        calibration_range: float = 10000.0,
+        pixel_scale: Optional[float] = None,
+        exposure_time: Optional[float] = None,
+        stabilization_delay: float = 3.0,
+        uv_z_offset: Optional[float] = None,
+        output_json_path: str = "stage_calibration_pass1.json",
+        dict_id: int = DEFAULT_ARUCO_DICT,
+        grid_size: Optional[int] = None,
+        step_distance: Optional[float] = None,
     ):
         super().__init__("Stage Calibration - Pass 1 (Pattern & Z)")
-        if isinstance(config, dict):
-            self.config = StageCalibrationPatternAndZConfig.from_dict(config)
-        else:
-            self.config = config or StageCalibrationPatternAndZConfig()
+        self.calibration_range = float(calibration_range)
+        self.pixel_scale = float(pixel_scale) if pixel_scale is not None else None
+        self.exposure_time = float(exposure_time) if exposure_time is not None else None
+        self.stabilization_delay = float(stabilization_delay)
+        self.uv_z_offset = float(uv_z_offset) if uv_z_offset is not None else None
+        self.output_json_path = str(output_json_path)
+        self.dict_id = int(dict_id)
+        self.grid_size = int(grid_size) if grid_size is not None else None
+        self.step_distance = float(step_distance) if step_distance is not None else None
+
         self._current_sub_op: Optional[Operation] = None
         self.recorded_points: List[Dict[str, Any]] = []
         self.corrected_proj_corners: Optional[np.ndarray] = None
@@ -283,19 +264,47 @@ class StageCalibrationPatternAndZOperation(Operation):
         camera = context.camera
         pw, ph = projector.projector_size()
 
+        effective_pixel_scale = (
+            self.pixel_scale
+            if self.pixel_scale is not None
+            else (
+                context.machine_config.stage_calibration.camera_pixel_size
+                if context.machine_config is not None
+                else 1.0
+            )
+        )
+        effective_exp_time = (
+            self.exposure_time
+            if self.exposure_time is not None
+            else (
+                context.machine_config.exposure.default_exposure_time_ms / 1000.0
+                if context.machine_config is not None
+                else 8.0
+            )
+        )
+        effective_uv_offset = (
+            self.uv_z_offset
+            if self.uv_z_offset is not None
+            else (
+                context.machine_config.autofocus.uv_z_offset
+                if context.machine_config is not None
+                else 0.0
+            )
+        )
+
         # Step 0: Get camera frame dimensions
         init_frame = camera.get_latest_frame()
         cam_h, cam_w = init_frame.shape[:2] if init_frame is not None else (1080, 1920)
         u_c, v_c = cam_w / 2.0, cam_h / 2.0
 
         # Calculate grid parameters: N and d
-        if self.config.grid_size is not None and self.config.step_distance is not None:
-            nx = ny = self.config.grid_size
-            step_dist = self.config.step_distance
+        if self.grid_size is not None and self.step_distance is not None:
+            nx = ny = self.grid_size
+            step_dist = self.step_distance
         else:
             nx, step_dist = compute_calibration_grid_params(
-                cal_range=self.config.calibration_range,
-                pixel_scale=self.config.pixel_scale,
+                cal_range=self.calibration_range,
+                pixel_scale=effective_pixel_scale,
                 camera_size=(cam_w, cam_h),
             )
             ny = nx
@@ -308,19 +317,13 @@ class StageCalibrationPatternAndZOperation(Operation):
             # STEP 1: INITIAL AUTOFOCUS
             # =========================================================================
             report_progress(0.01, "Step 1/3: Running initial autofocus...")
-            if self.config.autofocus_enabled:
-                af_op = AutofocusOperation(
-                    config=AutofocusConfig(
-                        enabled=True,
-                        uv_z_offset=self.config.uv_z_offset,
-                    )
-                )
-                af_reporter = sub_progress(report_progress, 0.01, 0.06, prefix="Initial AF")
-                af_err = self._run_sub_op(af_op, context, af_reporter)
-                if af_err and self.is_aborted:
-                    return "Operation aborted during autofocus"
-                if af_op.best_red_z is not None:
-                    start_z = float(af_op.best_red_z)
+            af_op = AutofocusOperation(uv_z_offset=effective_uv_offset)
+            af_reporter = sub_progress(report_progress, 0.01, 0.06, prefix="Initial AF")
+            af_err = self._run_sub_op(af_op, context, af_reporter)
+            if af_err and self.is_aborted:
+                return "Operation aborted during autofocus"
+            if af_op.best_red_z is not None:
+                start_z = float(af_op.best_red_z)
 
             if self.is_aborted:
                 return "Operation aborted"
@@ -338,7 +341,7 @@ class StageCalibrationPatternAndZOperation(Operation):
             projector.set_color_mode(ColorMode.RED)
             projector.set_image_source(ProjectorImageSource.GENERATED)
             projector.set_on(True)
-            context.delay_func(self.config.stabilization_delay)
+            context.delay_func(self.stabilization_delay)
 
             cal_frame = camera.get_latest_frame()
             flip_horizontal = False
@@ -390,15 +393,15 @@ class StageCalibrationPatternAndZOperation(Operation):
                     marker_id=0,
                     target_proj_corners=proj_pts,
                     canvas_size=(pw, ph),
-                    dict_id=self.config.dict_id,
+                    dict_id=self.dict_id,
                 )
                 projector.set_generated_image(test_img)
                 projector.set_color_mode(ColorMode.RED)
                 projector.set_on(True)
-                context.delay_func(self.config.stabilization_delay)
+                context.delay_func(self.stabilization_delay)
 
                 iter_frame = camera.get_latest_frame()
-                c_cnt, c_corners, c_ids = detect_ar_tags(iter_frame, dict_id=self.config.dict_id, flip_horizontal=self.flip_horizontal)
+                c_cnt, c_corners, c_ids = detect_ar_tags(iter_frame, dict_id=self.dict_id, flip_horizontal=self.flip_horizontal)
                 if c_cnt > 0 and c_corners:
                     detected_tl = c_corners[0].reshape(-1, 2)[0]  # Top-left corner
                     err = detected_tl - np.array([u_c, v_c])
@@ -414,7 +417,7 @@ class StageCalibrationPatternAndZOperation(Operation):
             # =========================================================================
             # STEP 4: PATTERNING & Z SURVEY (SPIRAL ORDER FROM CENTER TO EDGE)
             # =========================================================================
-            report_progress(0.15, f"Patterning {nx}x{ny} grid (step: {step_dist:.1f} µm, range: {self.config.calibration_range:.1f} µm)...")
+            report_progress(0.15, f"Patterning {nx}x{ny} grid (step: {step_dist:.1f} µm, range: {self.calibration_range:.1f} µm)...")
             self.recorded_points = []
             loop_span = 0.85
             base_offset = 0.15
@@ -438,22 +441,14 @@ class StageCalibrationPatternAndZOperation(Operation):
                     f"Point {point_idx + 1}/{total_points} (Grid [{r}, {c}], Tag ID {marker_id}): Moving to ({target_raw_x:.1f}, {target_raw_y:.1f})...",
                 )
                 stage.move_absolute_raw({"x": target_raw_x, "y": target_raw_y})
-                context.delay_func(self.config.stabilization_delay)
+                context.delay_func(self.stabilization_delay)
 
                 # Autofocus
                 z_focus = start_z
-                if self.config.autofocus_enabled:
-                    af_op = AutofocusOperation(
-                        config=AutofocusConfig(
-                            enabled=True,
-                            uv_z_offset=self.config.uv_z_offset,
-                        )
-                    )
-                    self._run_sub_op(af_op, context, lambda p, m: None)
-                    if af_op.best_red_z is not None:
-                        z_focus = float(af_op.best_red_z)
-                    else:
-                        z_focus = float(stage.get_raw_position()[2])
+                af_op = AutofocusOperation(uv_z_offset=effective_uv_offset)
+                self._run_sub_op(af_op, context, lambda p, m: None)
+                if af_op.best_red_z is not None:
+                    z_focus = float(af_op.best_red_z)
                 else:
                     z_focus = float(stage.get_raw_position()[2])
 
@@ -462,13 +457,12 @@ class StageCalibrationPatternAndZOperation(Operation):
                     marker_id=marker_id,
                     target_proj_corners=self.corrected_proj_corners,
                     canvas_size=(pw, ph),
-                    dict_id=self.config.dict_id,
+                    dict_id=self.dict_id,
                 )
                 projector.set_generated_image(tag_img)
                 projector.set_image_source(ProjectorImageSource.GENERATED)
 
-                exp_config = ExposureOperationConfig(exposure_time=self.config.exposure_time * 1000.0)
-                exp_op = ExposureOperation(layer_index=None, config=exp_config)
+                exp_op = ExposureOperation(layer_index=None, exposure_time=effective_exp_time * 1000.0)
                 pt_span = loop_span / total_points
                 exp_reporter = sub_progress(
                     report_progress,
@@ -497,19 +491,19 @@ class StageCalibrationPatternAndZOperation(Operation):
                 "timestamp": datetime.now().isoformat(),
                 "grid_shape": [ny, nx],
                 "step_distance": step_dist,
-                "calibration_range": self.config.calibration_range,
-                "pixel_scale": self.config.pixel_scale,
-                "dict_id": self.config.dict_id,
+                "calibration_range": self.calibration_range,
+                "pixel_scale": effective_pixel_scale,
+                "dict_id": self.dict_id,
                 "flip_horizontal": self.flip_horizontal,
                 "points": self.recorded_points,
             }
-            os.makedirs(os.path.dirname(os.path.abspath(self.config.output_json_path)), exist_ok=True)
-            with open(self.config.output_json_path, "w", encoding="utf-8") as f:
+            os.makedirs(os.path.dirname(os.path.abspath(self.output_json_path)), exist_ok=True)
+            with open(self.output_json_path, "w", encoding="utf-8") as f:
                 json.dump(pass1_data, f, indent=2)
 
             report_progress(
                 1.0,
-                f"Pass 1 complete! Saved {len(self.recorded_points)} points to {self.config.output_json_path}. "
+                f"Pass 1 complete! Saved {len(self.recorded_points)} points to {self.output_json_path}. "
                 "Please develop wafer, mount, and jog stage so at least one tag is visible to run Pass 2.",
             )
             return None
@@ -520,46 +514,25 @@ class StageCalibrationPatternAndZOperation(Operation):
             projector.set_image_source(ProjectorImageSource.ACTIVE_LAYER)
 
 
-@dataclass
-class StageCalibrationScanConfig:
-    input_json_path: str = "stage_calibration_pass1.json"
-    output_json_path: str = "stage_calibration.json"
-    pixel_scale: float = 1.0  # µm per camera pixel
-    stabilization_delay: float = 0.5  # seconds
-    apply_to_stage: bool = True
-    dict_id: int = DEFAULT_ARUCO_DICT
-
-    # Backwards compatibility fields
-    pixel_scale_x: Optional[float] = None
-    pixel_scale_y: Optional[float] = None
-
-    @classmethod
-    def from_dict(cls, d: Optional[dict] = None) -> "StageCalibrationScanConfig":
-        if not d:
-            return cls()
-        ps = float(d.get("pixel_scale", d.get("pixel_scale_x", 1.0)))
-        return cls(
-            input_json_path=str(d.get("input_json_path", "stage_calibration_pass1.json")),
-            output_json_path=str(d.get("output_json_path", "stage_calibration.json")),
-            pixel_scale=ps,
-            stabilization_delay=float(d.get("stabilization_delay", 0.5)),
-            apply_to_stage=bool(d.get("apply_to_stage", True)),
-            dict_id=int(d.get("dict_id", DEFAULT_ARUCO_DICT)),
-        )
-
-
 class StageCalibrationScanOperation(Operation):
     """Pass 2: Chip pose estimation, multi-tag camera scanning, and Least Squares global reconstruction."""
 
     def __init__(
         self,
-        config: Optional[Union[StageCalibrationScanConfig, dict]] = None,
+        input_json_path: str = "stage_calibration_pass1.json",
+        output_json_path: Optional[str] = None,
+        pixel_scale: Optional[float] = None,
+        stabilization_delay: float = 0.5,
+        apply_to_stage: bool = True,
+        dict_id: int = DEFAULT_ARUCO_DICT,
     ):
         super().__init__("Stage Calibration - Pass 2 (Optical Scan)")
-        if isinstance(config, dict):
-            self.config = StageCalibrationScanConfig.from_dict(config)
-        else:
-            self.config = config or StageCalibrationScanConfig()
+        self.input_json_path = str(input_json_path)
+        self.output_json_path = str(output_json_path) if output_json_path is not None else None
+        self.pixel_scale = float(pixel_scale) if pixel_scale is not None else None
+        self.stabilization_delay = float(stabilization_delay)
+        self.apply_to_stage = bool(apply_to_stage)
+        self.dict_id = int(dict_id)
         self.calibration: Optional[StageCalibration] = None
         self.flip_horizontal: bool = False
 
@@ -567,16 +540,35 @@ class StageCalibrationScanOperation(Operation):
         if context.stage is None or context.camera is None:
             return "Stage or Camera not available in execution context"
 
-        if not os.path.exists(self.config.input_json_path):
-            return f"Pass 1 input file not found: {self.config.input_json_path}"
+        if not os.path.exists(self.input_json_path):
+            return f"Pass 1 input file not found: {self.input_json_path}"
 
-        with open(self.config.input_json_path, "r", encoding="utf-8") as f:
+        with open(self.input_json_path, "r", encoding="utf-8") as f:
             pass1_data = json.load(f)
+
+        effective_output_path = (
+            self.output_json_path
+            if self.output_json_path is not None
+            else (
+                context.machine_config.stage_calibration.calibration_file_path
+                if context.machine_config is not None
+                else "stage_calibration.json"
+            )
+        )
+        effective_pixel_scale = (
+            self.pixel_scale
+            if self.pixel_scale is not None
+            else (
+                context.machine_config.stage_calibration.camera_pixel_size
+                if context.machine_config is not None
+                else 1.0
+            )
+        )
 
         grid_shape = tuple(pass1_data.get("grid_shape", (0, 0)))
         ny, nx = grid_shape
         step_dist = float(pass1_data.get("step_distance", 5000.0))
-        dict_id = int(pass1_data.get("dict_id", self.config.dict_id))
+        dict_id = int(pass1_data.get("dict_id", self.dict_id))
         raw_points = pass1_data.get("points", [])
 
         if len(raw_points) == 0:
@@ -648,7 +640,7 @@ class StageCalibrationScanOperation(Operation):
         for mid_int, tag_corners in matched_tags:
             tag_cam_center = np.mean(tag_corners, axis=0)
             delta_cam_px = tag_cam_center - np.array([u_c, v_c])
-            delta_cam_um = delta_cam_px * self.config.pixel_scale
+            delta_cam_um = delta_cam_px * effective_pixel_scale
             tag_stage_pos = np.array([cur_stage_x + delta_cam_um[0], cur_stage_y + delta_cam_um[1]], dtype=np.float64)
 
             ref_grid_r, ref_grid_c = nominal_dict[mid_int]["grid_index"]
@@ -696,7 +688,7 @@ class StageCalibrationScanOperation(Operation):
                     f"Scanning Cell [{r}, {c}] ({cell_idx}/{num_cells}): Moving to cluster center...",
                 )
                 stage.move_absolute_raw({"x": float(target_stage_pos[0]), "y": float(target_stage_pos[1]), "z": avg_z})
-                context.delay_func(self.config.stabilization_delay)
+                context.delay_func(self.stabilization_delay)
 
                 cell_frame = camera.get_latest_frame()
                 if cell_frame is None:
@@ -722,7 +714,7 @@ class StageCalibrationScanOperation(Operation):
                             id_b = marker_ids_found[j]
                             # Intra-frame displacement in camera pixels
                             disp_cam_px = centers_in_frame[id_b] - centers_in_frame[id_a]
-                            disp_cam_um = disp_cam_px * self.config.pixel_scale
+                            disp_cam_um = disp_cam_px * effective_pixel_scale
                             # Rotate into wafer coordinate frame
                             disp_wafer = R_inv @ disp_cam_um
                             measurements.append((id_a, id_b, float(disp_wafer[0]), float(disp_wafer[1])))
@@ -768,11 +760,11 @@ class StageCalibrationScanOperation(Operation):
             points=cal_points,
             stage_type=type(stage).__name__,
         )
-        self.calibration.save_to_json(self.config.output_json_path)
+        self.calibration.save_to_json(effective_output_path)
 
-        if self.config.apply_to_stage:
+        if self.apply_to_stage:
             stage.set_calibration(self.calibration)
             print("[Stage Calibration] Applied new calibration directly to stage controller.")
 
-        report_progress(1.0, f"Pass 2 complete! Calibration map saved to {self.config.output_json_path}.")
+        report_progress(1.0, f"Pass 2 complete! Calibration map saved to {effective_output_path}.")
         return None

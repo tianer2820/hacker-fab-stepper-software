@@ -1,5 +1,4 @@
-from dataclasses import dataclass
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 import cv2
 import numpy as np
 
@@ -7,7 +6,7 @@ from core.events import ColorMode, ProjectorImageSource
 from core.operation import ExecutionContext, Operation, sub_progress
 from lib.gen_calibration_pattern import generate_litho_target
 from operations.autofocus import AutofocusOperation
-from operations.exposure import ExposureOperation, ExposureOperationConfig
+from operations.exposure import ExposureOperation
 from operations.movement import JogOperation
 
 
@@ -51,18 +50,6 @@ def generate_spiral_offsets(count: int, step_distance: float) -> List[Tuple[floa
     return offsets[:count]
 
 
-@dataclass
-class ProcessCalibrationConfig:
-    min_exposure: float = 1.0  # seconds
-    max_exposure: float = 5.0  # seconds
-    sweep_steps: int = 5
-    motion_distance: float = 1000.0  # µm
-    min_z_offset: float = 0.0  # µm
-    max_z_offset: float = 0.0  # µm
-    z_steps: int = 1
-    autofocus_config: Optional[Any] = None
-
-
 class ProcessCalibrationOperation(Operation):
     """Automates process calibration (FEM) across an array of positions in a 2D spiral order.
     
@@ -76,36 +63,24 @@ class ProcessCalibrationOperation(Operation):
 
     def __init__(
         self,
-        min_exposure: float = 1.0,
-        max_exposure: float = 5.0,
+        min_exposure: Optional[float] = None,
+        max_exposure: Optional[float] = None,
         sweep_steps: int = 5,
         motion_distance: float = 1000.0,
         min_z_offset: float = 0.0,
         max_z_offset: float = 0.0,
         z_steps: int = 1,
-        autofocus_config: Optional[Any] = None,
-        config: Optional[ProcessCalibrationConfig] = None,
+        uv_z_offset: Optional[float] = None,
     ):
         super().__init__("Process Calibration")
-        if config is not None:
-            self.min_exposure = config.min_exposure
-            self.max_exposure = config.max_exposure
-            self.sweep_steps = config.sweep_steps
-            self.motion_distance = config.motion_distance
-            self.min_z_offset = config.min_z_offset
-            self.max_z_offset = config.max_z_offset
-            self.z_steps = config.z_steps
-            self.autofocus_config = config.autofocus_config or autofocus_config
-        else:
-            self.min_exposure = min_exposure
-            self.max_exposure = max_exposure
-            self.sweep_steps = sweep_steps
-            self.motion_distance = motion_distance
-            self.min_z_offset = min_z_offset
-            self.max_z_offset = max_z_offset
-            self.z_steps = z_steps
-            self.autofocus_config = autofocus_config
-
+        self.min_exposure = min_exposure
+        self.max_exposure = max_exposure
+        self.sweep_steps = sweep_steps
+        self.motion_distance = motion_distance
+        self.min_z_offset = min_z_offset
+        self.max_z_offset = max_z_offset
+        self.z_steps = z_steps
+        self.uv_z_offset = uv_z_offset
         self._current_sub_op: Optional[Operation] = None
 
     def abort(self):
@@ -136,11 +111,19 @@ class ProcessCalibrationOperation(Operation):
         if projector is None or stage is None:
             return "Projector or stage not found in context"
 
+        default_exp_s = (
+            context.machine_config.exposure.default_exposure_time_ms / 1000.0
+            if context.machine_config is not None
+            else 5.0
+        )
+        min_exp = self.min_exposure if self.min_exposure is not None else default_exp_s
+        max_exp = self.max_exposure if self.max_exposure is not None else default_exp_s
+
         total_exp_steps = max(1, int(self.sweep_steps))
         if total_exp_steps == 1:
-            exposures = [float(self.min_exposure)]
+            exposures = [float(min_exp)]
         else:
-            exposures = [float(e) for e in np.linspace(self.min_exposure, self.max_exposure, total_exp_steps)]
+            exposures = [float(e) for e in np.linspace(min_exp, max_exp, total_exp_steps)]
 
         total_z_steps = max(1, int(self.z_steps))
         if total_z_steps == 1:
@@ -197,8 +180,7 @@ class ProcessCalibrationOperation(Operation):
                     pct_base + 0.15 * pct_step,
                     f"Step {step_num}/{total_steps}: Autofocusing...",
                 )
-                af_config = self.autofocus_config or getattr(context, "autofocus_config", None)
-                af_op = AutofocusOperation(config=af_config)
+                af_op = AutofocusOperation(uv_z_offset=self.uv_z_offset)
                 af_reporter = sub_progress(
                     report_progress,
                     pct_base + 0.15 * pct_step,
@@ -261,8 +243,7 @@ class ProcessCalibrationOperation(Operation):
                     pct_base + 0.6 * pct_step,
                     f"Step {step_num}/{total_steps}: Exposing {exp_s:g}s ({int(duration_ms)} ms)...",
                 )
-                exp_config = ExposureOperationConfig(exposure_time=duration_ms)
-                exp_op = ExposureOperation(layer_index=None, config=exp_config)
+                exp_op = ExposureOperation(layer_index=None, exposure_time=duration_ms)
                 exp_reporter = sub_progress(
                     report_progress,
                     pct_base + 0.60 * pct_step,

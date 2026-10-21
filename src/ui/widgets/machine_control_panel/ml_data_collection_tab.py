@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
 
 from core.engine import StepperEngine
 from operations.ml_data_collection import (
-    MLDataCollectionConfig,
     MLDataCollectionOperation,
     PatternSource,
 )
@@ -282,7 +281,7 @@ class MLDataCollectionTabWidget(QScrollArea):
                 self.lbl_status.setText("Status: Error - Please select a valid image folder")
                 return
 
-        config = MLDataCollectionConfig(
+        op = MLDataCollectionOperation(
             pattern_source=pattern_source,
             image_folder=image_folder,
             total_patterns=self.spin_total_patterns.value(),
@@ -298,8 +297,6 @@ class MLDataCollectionTabWidget(QScrollArea):
             save_directory=save_dir,
             grid_n=2,
         )
-
-        op = MLDataCollectionOperation(config=config)
         self._active_op = op
         self.lbl_status.setText("Status: Running ML data collection...")
         self.bridge.start_operation(op)

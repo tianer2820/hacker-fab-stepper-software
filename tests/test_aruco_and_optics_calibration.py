@@ -20,7 +20,6 @@ from lib.ar_tag import (
     get_aruco_dict,
 )
 from operations import (
-    AutofocusConfig,
     AutofocusOperation,
     OpticsCalibrationOperation,
 )
@@ -203,16 +202,6 @@ class TestProjectorGeneratedImageSource(unittest.TestCase):
 
 
 class TestIterativeAutofocus(unittest.TestCase):
-    def test_autofocus_config(self):
-        cfg = AutofocusConfig.from_dict({
-            "enabled": True,
-            "uv_z_offset": -12.5,
-            "min_detection_rate": 0.80,
-        })
-        self.assertTrue(cfg.enabled)
-        self.assertEqual(cfg.uv_z_offset, -12.5)
-        self.assertEqual(cfg.min_detection_rate, 0.80)
-
     def test_autofocus_applies_uv_z_offset(self):
         stage = DummyStage(initial_position=(0.0, 0.0, 50.0))
         proj = DummyProjector()
@@ -238,8 +227,7 @@ class TestIterativeAutofocus(unittest.TestCase):
             delay_func=lambda _: None,
         )
 
-        cfg = AutofocusConfig(enabled=True, uv_z_offset=15.0, min_detection_rate=0.85)
-        op = AutofocusOperation(config=cfg)
+        op = AutofocusOperation(uv_z_offset=15.0)
         progress_calls = []
         err = op.execute(ctx, lambda p, m: progress_calls.append((p, m)))
 

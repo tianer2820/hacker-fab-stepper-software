@@ -15,7 +15,7 @@ from camera.camera_module import DummyCamera
 from core.engine import StepperEngine
 from core.events import ColorMode, Event
 from core.operation import ExecutionContext, Operation
-from operations import AutofocusConfig, AutofocusOperation, OpticsCalibrationOperation
+from operations import AutofocusOperation, OpticsCalibrationOperation
 from stage_control.dummy_stage import DummyStage
 from projector import DummyProjector
 from ui.bridge import QtEngineBridge
@@ -104,8 +104,7 @@ class TestOperationErrorHandlingAndDelays(unittest.TestCase):
         )
 
         with patch("operations.maximize_image_sharpness.MaximizeImageSharpnessOperation.execute", return_value=None):
-            cfg = AutofocusConfig()
-            op = AutofocusOperation(config=cfg)
+            op = AutofocusOperation()
             op.execute(ctx, lambda p, m: None)
 
         self.assertTrue(len(delays) > 0)

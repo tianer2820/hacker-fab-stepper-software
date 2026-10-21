@@ -1,25 +1,9 @@
 import time
-from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Optional, Union
+from typing import Callable, Optional
 
 from core.events import ColorMode, Event, ProjectorImageSource
 from core.operation import ExecutionContext, Operation
-
-
-@dataclass
-class ExposureOperationConfig:
-    """Configuration for exposure operation."""
-
-    exposure_time: float = 8000.0  # ms
-
-    @classmethod
-    def from_dict(cls, d: Optional[dict] = None) -> "ExposureOperationConfig":
-        if not d:
-            return cls()
-        return cls(
-            exposure_time=float(d.get("exposure_time", 8000.0)),
-        )
 
 
 class ExposureOperation(Operation):
@@ -27,20 +11,23 @@ class ExposureOperation(Operation):
 
     def __init__(
         self,
-        layer_index: Optional[int],
-        config: Optional[Union[ExposureOperationConfig, dict]] = None,
+        layer_index: Optional[int] = None,
+        exposure_time: Optional[float] = None,
         tile_index: Optional[int] = None,
     ):
         super().__init__("Layer Exposure" if layer_index is not None else "Exposure")
         self.layer_index = layer_index
-        if isinstance(config, dict):
-            self.config = ExposureOperationConfig.from_dict(config)
-        else:
-            self.config = config or ExposureOperationConfig()
+        self.exposure_time = exposure_time
         self.tile_index = tile_index
 
     def execute(self, context: ExecutionContext, report_progress: Callable[[float, str], None]) -> Optional[str]:
-        duration_ms = self.config.exposure_time
+        if self.exposure_time is not None:
+            duration_ms = float(self.exposure_time)
+        elif context.machine_config is not None:
+            duration_ms = float(context.machine_config.exposure.default_exposure_time_ms)
+        else:
+            duration_ms = 8000.0
+
         if self.layer_index is not None:
             if context.project is None or self.layer_index >= len(context.project.layers):
                 msg = "Invalid project or layer index"
@@ -112,8 +99,8 @@ class ExposureOperation(Operation):
                 context.project.add_exposure_record(record)
 
         if self.is_aborted:
-            report_progress(1.0, "Exposure aborted")
-            return "Exposure aborted"
-        else:
-            report_progress(1.0, "Exposure finished")
-            return None
+            report_progress(1.0, f"Exposure of {layer_name} aborted")
+            return f"Exposure of {layer_name} aborted"
+
+        report_progress(1.0, f"Exposure of {layer_name} completed successfully")
+        return None

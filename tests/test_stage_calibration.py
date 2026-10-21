@@ -197,9 +197,7 @@ class TestStageCalibrationOperations(unittest.TestCase):
     def test_pass1_and_pass2_end_to_end(self):
         from core.operation import ExecutionContext
         from operations.stage_calibration import (
-            StageCalibrationPatternAndZConfig,
             StageCalibrationPatternAndZOperation,
-            StageCalibrationScanConfig,
             StageCalibrationScanOperation,
             generate_canonical_ar_tag,
         )
@@ -226,32 +224,29 @@ class TestStageCalibrationOperations(unittest.TestCase):
                 delay_func=lambda s: None,
             )
 
-            # 1. Run Pass 1 (autofocus disabled for fast test)
-            p1_cfg = StageCalibrationPatternAndZConfig(
+            # 1. Run Pass 1
+            op1 = StageCalibrationPatternAndZOperation(
                 calibration_range=2000.0,
                 pixel_scale=1.0,
                 grid_size=2,
                 step_distance=1000.0,
                 exposure_time=0.01,
                 stabilization_delay=0.0,
-                autofocus_enabled=False,
                 output_json_path=p1_path,
             )
-            op1 = StageCalibrationPatternAndZOperation(config=p1_cfg)
             err1 = op1.execute(ctx, lambda p, m: None)
             self.assertIsNone(err1)
             self.assertTrue(os.path.exists(p1_path))
             self.assertEqual(len(op1.recorded_points), 4)
 
             # 2. Run Pass 2
-            p2_cfg = StageCalibrationScanConfig(
+            op2 = StageCalibrationScanOperation(
                 input_json_path=p1_path,
                 output_json_path=p2_path,
                 pixel_scale=1.0,
                 stabilization_delay=0.0,
                 apply_to_stage=True,
             )
-            op2 = StageCalibrationScanOperation(config=p2_cfg)
             err2 = op2.execute(ctx, lambda p, m: None)
             self.assertIsNone(err2)
             self.assertTrue(os.path.exists(p2_path))
@@ -285,7 +280,6 @@ class TestStageCalibrationOperations(unittest.TestCase):
     def test_pass1_fails_explicitly_if_projection_uncalibrated(self):
         from core.operation import ExecutionContext
         from operations.stage_calibration import (
-            StageCalibrationPatternAndZConfig,
             StageCalibrationPatternAndZOperation,
         )
 
@@ -296,11 +290,8 @@ class TestStageCalibrationOperations(unittest.TestCase):
         ctx = ExecutionContext(stage=stage, camera=camera, projector=projector, delay_func=lambda s: None)
 
         op1 = StageCalibrationPatternAndZOperation(
-            config=StageCalibrationPatternAndZConfig(
-                autofocus_enabled=False,
-                exposure_time=0.01,
-                stabilization_delay=0.0,
-            )
+            exposure_time=0.01,
+            stabilization_delay=0.0,
         )
         err = op1.execute(ctx, lambda p, m: None)
         self.assertIsNotNone(err)
@@ -310,7 +301,6 @@ class TestStageCalibrationOperations(unittest.TestCase):
         from unittest.mock import patch
         from core.operation import ExecutionContext
         from operations.stage_calibration import (
-            StageCalibrationPatternAndZConfig,
             StageCalibrationPatternAndZOperation,
             generate_canonical_ar_tag,
         )
@@ -327,11 +317,8 @@ class TestStageCalibrationOperations(unittest.TestCase):
         ctx = ExecutionContext(stage=stage, camera=camera, projector=projector, delay_func=lambda s: None)
 
         op1 = StageCalibrationPatternAndZOperation(
-            config=StageCalibrationPatternAndZConfig(
-                autofocus_enabled=False,
-                exposure_time=0.01,
-                stabilization_delay=0.0,
-            )
+            exposure_time=0.01,
+            stabilization_delay=0.0,
         )
         # Patch findHomography to return a singular matrix (all zeros)
         with patch("cv2.findHomography", return_value=(np.zeros((3, 3), dtype=np.float64), np.ones((4, 1)))):
@@ -344,7 +331,6 @@ class TestStageCalibrationOperations(unittest.TestCase):
         from core.operation import ExecutionContext
         from operations.exposure import ExposureOperation
         from operations.stage_calibration import (
-            StageCalibrationPatternAndZConfig,
             StageCalibrationPatternAndZOperation,
             generate_canonical_ar_tag,
         )
@@ -362,17 +348,15 @@ class TestStageCalibrationOperations(unittest.TestCase):
             camera = MockCamera(frame=frame)
             ctx = ExecutionContext(stage=stage, camera=camera, projector=projector, delay_func=lambda s: None)
 
-            p1_cfg = StageCalibrationPatternAndZConfig(
+            op = StageCalibrationPatternAndZOperation(
                 calibration_range=2000.0,
                 pixel_scale=1.0,
                 grid_size=2,
                 step_distance=1000.0,
                 exposure_time=0.01,
                 stabilization_delay=0.0,
-                autofocus_enabled=False,
                 output_json_path=p1_path,
             )
-            op = StageCalibrationPatternAndZOperation(config=p1_cfg)
 
             with patch("operations.stage_calibration.ExposureOperation", wraps=ExposureOperation) as mock_exp_cls:
                 err = op.execute(ctx, lambda p, m: None)
@@ -381,14 +365,11 @@ class TestStageCalibrationOperations(unittest.TestCase):
                 # Verify arguments passed to ExposureOperation
                 call_args = mock_exp_cls.call_args_list[0]
                 self.assertIsNone(call_args.kwargs.get("layer_index"))
-                config_arg = call_args.kwargs.get("config")
-                self.assertIsNotNone(config_arg)
-                self.assertAlmostEqual(config_arg.exposure_time, 10.0)
+                self.assertAlmostEqual(call_args.kwargs.get("exposure_time"), 10.0)
 
     def test_pass2_multi_tag_pose_averaging(self):
         from core.operation import ExecutionContext
         from operations.stage_calibration import (
-            StageCalibrationScanConfig,
             StageCalibrationScanOperation,
             generate_canonical_ar_tag,
         )
@@ -432,13 +413,11 @@ class TestStageCalibrationOperations(unittest.TestCase):
             ctx = ExecutionContext(stage=stage, camera=camera, projector=projector, delay_func=lambda s: None)
 
             op2 = StageCalibrationScanOperation(
-                config=StageCalibrationScanConfig(
-                    input_json_path=p1_path,
-                    output_json_path=p2_path,
-                    pixel_scale=1.0,
-                    stabilization_delay=0.0,
-                    apply_to_stage=True,
-                )
+                input_json_path=p1_path,
+                output_json_path=p2_path,
+                pixel_scale=1.0,
+                stabilization_delay=0.0,
+                apply_to_stage=True,
             )
             err = op2.execute(ctx, lambda p, m: None)
             self.assertIsNone(err)

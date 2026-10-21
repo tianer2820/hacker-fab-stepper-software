@@ -10,8 +10,6 @@ from lib.gen_calibration_pattern import generate_litho_target
 from operations import (
     AutofocusOperation,
     ExposureOperation,
-    ExposureOperationConfig,
-    ProcessCalibrationConfig,
     ProcessCalibrationOperation,
 )
 from operations.process_calibration import generate_spiral_offsets
@@ -68,8 +66,7 @@ class TestExposureOperationDirect(unittest.TestCase):
         projector.set_generated_image(dummy_img)
         projector.set_image_source(ProjectorImageSource.GENERATED)
 
-        config = ExposureOperationConfig(exposure_time=50.0)
-        op = ExposureOperation(layer_index=None, config=config)
+        op = ExposureOperation(layer_index=None, exposure_time=50.0)
 
         # Execute
         err = op.execute(engine.context, lambda p, m: None)
@@ -170,26 +167,23 @@ class TestProcessCalibrationOperation(unittest.TestCase):
     @patch("operations.process_calibration.AutofocusOperation")
     @patch("operations.process_calibration.ExposureOperation.execute")
     def test_process_calibration_uses_autofocus_config(self, mock_exp_exec, mock_af_cls):
-        """Verify that ProcessCalibrationOperation passes autofocus_config to AutofocusOperation."""
+        """Verify that ProcessCalibrationOperation passes uv_z_offset to AutofocusOperation."""
         mock_af_instance = MagicMock()
         mock_af_instance.execute.return_value = None
         mock_af_cls.return_value = mock_af_instance
         mock_exp_exec.return_value = None
 
-        from operations.autofocus import AutofocusConfig
-        af_cfg = AutofocusConfig(enabled=True, uv_z_offset=12.5)
-
         op = ProcessCalibrationOperation(
             min_exposure=1.0,
             max_exposure=1.0,
             sweep_steps=1,
-            autofocus_config=af_cfg,
+            uv_z_offset=12.5,
         )
         err = op.execute(self.engine.context, lambda p, m: None)
         self.assertIsNone(err)
 
         # Inspect constructor call of AutofocusOperation
-        mock_af_cls.assert_called_with(config=af_cfg)
+        mock_af_cls.assert_called_with(uv_z_offset=12.5)
 
     @patch("operations.process_calibration.AutofocusOperation.execute")
     @patch("operations.process_calibration.ExposureOperation.execute")

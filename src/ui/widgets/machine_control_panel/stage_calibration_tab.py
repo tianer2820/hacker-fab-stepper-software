@@ -18,9 +18,7 @@ from PySide6.QtWidgets import (
 
 from core.engine import StepperEngine
 from operations.stage_calibration import (
-    StageCalibrationPatternAndZConfig,
     StageCalibrationPatternAndZOperation,
-    StageCalibrationScanConfig,
     StageCalibrationScanOperation,
     compute_calibration_grid_params,
 )
@@ -216,14 +214,12 @@ class StageCalibrationTabWidget(QScrollArea):
             if hasattr(self.engine, "machine_config")
             else 1.0
         )
-        cfg = StageCalibrationPatternAndZConfig(
+        op = StageCalibrationPatternAndZOperation(
             calibration_range=self.spin_cal_range.value(),
             pixel_scale=pixel_scale,
             exposure_time=self.spin_exposure_time.value(),
-            autofocus_enabled=self.chk_autofocus.isChecked(),
             output_json_path=self.txt_p1_file.text().strip(),
         )
-        op = StageCalibrationPatternAndZOperation(config=cfg)
         self._active_op = op
         self.lbl_status.setText("Status: Starting Pass 1...")
         self.btn_abort.setEnabled(True)
@@ -235,13 +231,12 @@ class StageCalibrationTabWidget(QScrollArea):
             if hasattr(self.engine, "machine_config")
             else 1.0
         )
-        cfg = StageCalibrationScanConfig(
+        op = StageCalibrationScanOperation(
             input_json_path=self.txt_p2_input.text().strip(),
             output_json_path=self.txt_p2_output.text().strip(),
             pixel_scale=pixel_scale,
             apply_to_stage=self.chk_apply_now.isChecked(),
         )
-        op = StageCalibrationScanOperation(config=cfg)
         self._active_op = op
         self.lbl_status.setText("Status: Starting Pass 2...")
         self.btn_abort.setEnabled(True)

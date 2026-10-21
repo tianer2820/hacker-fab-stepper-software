@@ -25,7 +25,6 @@ from core.operation import (
 )
 from operations import (
     ExposureOperation,
-    ExposureOperationConfig,
     JogOperation,
     TiledExposureOperation,
 )
@@ -754,7 +753,7 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
         engine.project.settings.exposure_time = 10.0
         op = ExposureOperation(
             layer_index=0,
-            config=ExposureOperationConfig(exposure_time=engine.project.settings.exposure_time),
+            exposure_time=engine.project.settings.exposure_time,
         )
         op.execute(engine.context, lambda p, m: None)
 
@@ -768,7 +767,7 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
         engine.project.settings.exposure_time = 10.0
         op = ExposureOperation(
             layer_index=0,
-            config=ExposureOperationConfig(exposure_time=engine.project.settings.exposure_time),
+            exposure_time=engine.project.settings.exposure_time,
         )
         op.execute(engine.context, lambda p, m: None)
 
@@ -807,7 +806,7 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
         engine.project.settings.exposure_time = 20.0
         op = ExposureOperation(
             layer_index=0,
-            config=ExposureOperationConfig(exposure_time=engine.project.settings.exposure_time),
+            exposure_time=engine.project.settings.exposure_time,
         )
         op.execute(engine.context, lambda p, m: None)
 

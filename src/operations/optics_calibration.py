@@ -29,14 +29,12 @@ class OpticsCalibrationOperation(Operation):
         self,
         search_range: float = 500.0,
         target_accuracy: float = 0.5,
-        min_detection_rate: float = 0.5,
         grid_sizes: Sequence[int] = (2, 4),
         step_configs: Optional[Sequence[Tuple[float, float]]] = None,
     ):
         super().__init__("Optics Calibration")
         self.search_range = float(search_range)
         self.target_accuracy = float(target_accuracy)
-        self.min_detection_rate = float(min_detection_rate)
         self.grid_sizes = list(grid_sizes)
         self.red_best_z: Optional[float] = None
         self.uv_best_z: Optional[float] = None
@@ -155,23 +153,6 @@ class OpticsCalibrationOperation(Operation):
 
             if err is not None:
                 return f"Optics calibration failed: {err}"
-
-            # 5. Verify detection rate at best focus
-            # Disabled because the failure rate is too high
-
-            # context.delay_func(1.0)
-            # frame_best = context.camera.get_latest_frame()
-            # det_count_best, _, _ = self._detect_tags(frame_best)
-            # rate_best = det_count_best / total_tags if total_tags > 0 else 0.0
-
-            # # If detection falls below threshold, do not progress to smaller tags
-            # if rate_best < self.min_detection_rate:
-            #     print(
-            #         f"Post-focus {mode_name} {grid_n}x{grid_n} detection rate ({rate_best*100:.1f}%) "
-            #         f"< {self.min_detection_rate*100:.1f}%. Halting further refinement.",
-            #         flush=True,
-            #     )
-            #     break
 
         return None
 

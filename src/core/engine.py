@@ -35,7 +35,6 @@ class StepperEngine:
         delay_func: Optional[Callable[[float], None]] = None,
         warning_callback: Optional[Callable[[str], None]] = None,
         machine_config: Optional[MachineConfig] = None,
-        autofocus_config: Optional[Any] = None,
     ):
         self.stage = stage
         self.projector = projector
@@ -58,13 +57,6 @@ class StepperEngine:
             self.machine_config = machine_config
         else:
             self.machine_config = MachineConfig.load_or_default("machine_config.toml")
-
-        # For backwards compatibility if old autofocus_config was passed in tests
-        if autofocus_config is not None:
-            if hasattr(autofocus_config, "uv_z_offset"):
-                self.machine_config.autofocus.uv_z_offset = autofocus_config.uv_z_offset
-            elif isinstance(autofocus_config, dict):
-                self.machine_config.autofocus.uv_z_offset = float(autofocus_config.get("uv_z_offset", 0.0))
 
         # Auto-load stage calibration from config if available
         self._init_stage_calibration()

@@ -9,7 +9,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import toml
 from camera import DummyCamera, get_camera
 from operations import (
-    AutofocusConfig,
     AutofocusOperation,
 )
 from stage_control import DummyStage, get_stage_controller
@@ -99,17 +98,6 @@ class TestConfigLoading(unittest.TestCase):
             get_stage_controller(cfg_oom)
             mock_omm.return_value.connect.assert_called_once_with("COM4", 921600)
 
-    def test_autofocus_config_from_dict_and_operation(self):
-        af_cfg = AutofocusConfig.from_dict({"enabled": False})
-        self.assertFalse(af_cfg.enabled)
-
-        op = AutofocusOperation(config=af_cfg)
-        mock_progress = MagicMock()
-        mock_ctx = MagicMock()
-        res = op.execute(mock_ctx, mock_progress)
-        self.assertEqual(res, "Autofocus disabled in config")
-        mock_progress.assert_called_with(1.0, "Autofocus disabled in config")
-
     def test_default_toml_parsing(self):
         default_toml_path = Path(__file__).resolve().parent.parent / "default.toml"
         with open(default_toml_path, "r") as f:
@@ -159,10 +147,9 @@ class TestConfigLoading(unittest.TestCase):
         ctx = ExecutionContext(stage=mock_stage, projector=mock_proj, camera=mock_cam)
         self.assertFalse(hasattr(ctx, "autofocus_config"))
 
-    def test_operations_receive_configs_via_constructor(self):
-        af_cfg = AutofocusConfig(enabled=False)
-        af_op = AutofocusOperation(config=af_cfg)
-        self.assertFalse(af_op.config.enabled)
+    def test_operations_receive_params_via_constructor(self):
+        af_op = AutofocusOperation(uv_z_offset=12.5)
+        self.assertEqual(af_op.uv_z_offset, 12.5)
 
 
 if __name__ == "__main__":

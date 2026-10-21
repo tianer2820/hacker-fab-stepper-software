@@ -1,10 +1,10 @@
-from typing import Callable, Optional, Any
+from typing import Callable, Optional
 
 from core.chip_project import PatterningSettings
 from core.events import ColorMode, ProjectorImageSource
 from core.operation import ExecutionContext, Operation, sub_progress
 from operations.autofocus import AutofocusOperation
-from operations.exposure import ExposureOperation, ExposureOperationConfig
+from operations.exposure import ExposureOperation
 from operations.movement import JogOperation
 
 
@@ -14,13 +14,13 @@ class TiledExposureOperation(Operation):
     def __init__(
         self,
         layer_index: int,
-        settings: PatterningSettings,
-        autofocus_config: Optional[Any] = None,
+        settings: Optional[PatterningSettings] = None,
+        uv_z_offset: Optional[float] = None,
     ):
         super().__init__("Tiled Exposure")
         self.layer_index = layer_index
         self.settings = settings
-        self.autofocus_config = autofocus_config
+        self.uv_z_offset = uv_z_offset
         self._current_sub_op: Optional[Operation] = None
 
     def abort(self):
@@ -85,26 +85,18 @@ class TiledExposureOperation(Operation):
                 context.projector.set_image_source(ProjectorImageSource.ACTIVE_LAYER)
 
                 # Step 5: Set projector to red and run auto focus
-                af_enabled = True
-                if self.autofocus_config is not None:
-                    if isinstance(self.autofocus_config, dict):
-                        af_enabled = self.autofocus_config.get("enabled", True)
-                    else:
-                        af_enabled = getattr(self.autofocus_config, "enabled", True)
-
-                if af_enabled:
-                    context.projector.set_color_mode(ColorMode.RED)
-                    af_reporter = sub_progress(
-                        report_progress,
-                        pct_base + 0.15 * pct_step,
-                        pct_base + 0.60 * pct_step,
-                        prefix=f"Tile {tile_idx + 1}/{total_tiles}",
-                    )
-                    af_op = AutofocusOperation(config=self.autofocus_config)
-                    err = self._run_sub_op(af_op, context, af_reporter)
-                    if err or self.is_aborted:
-                        last_error = err
-                        break
+                context.projector.set_color_mode(ColorMode.RED)
+                af_reporter = sub_progress(
+                    report_progress,
+                    pct_base + 0.15 * pct_step,
+                    pct_base + 0.60 * pct_step,
+                    prefix=f"Tile {tile_idx + 1}/{total_tiles}",
+                )
+                af_op = AutofocusOperation(uv_z_offset=self.uv_z_offset)
+                err = self._run_sub_op(af_op, context, af_reporter)
+                if err or self.is_aborted:
+                    last_error = err
+                    break
 
                 # Step 6: Then, do an exposure
                 exp_reporter = sub_progress(
@@ -113,9 +105,10 @@ class TiledExposureOperation(Operation):
                     pct_base + 1.0 * pct_step,
                     prefix=f"Tile {tile_idx + 1}/{total_tiles}",
                 )
+                exp_time = self.settings.exposure_time if self.settings is not None else None
                 exp_op = ExposureOperation(
                     layer_index=self.layer_index,
-                    config=ExposureOperationConfig(exposure_time=self.settings.exposure_time),
+                    exposure_time=exp_time,
                     tile_index=tile_idx,
                 )
                 err = self._run_sub_op(exp_op, context, exp_reporter)

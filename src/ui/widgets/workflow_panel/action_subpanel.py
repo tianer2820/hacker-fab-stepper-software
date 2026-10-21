@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.engine import StepperEngine
-from operations import ExposureOperation, ExposureOperationConfig, TiledExposureOperation
+from operations import ExposureOperation, TiledExposureOperation
 from ui.bridge import QtEngineBridge
 
 
@@ -89,7 +89,7 @@ class ActionSubpanelWidget(QWidget):
         else:
             op = ExposureOperation(
                 layer_index=layer_idx,
-                config=ExposureOperationConfig(exposure_time=effective.exposure_time),
+                exposure_time=effective.exposure_time,
             )
 
         self.bridge.start_operation(op)
