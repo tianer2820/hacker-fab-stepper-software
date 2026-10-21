@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 from core.chip_project import ChipProject
 from core.events import Event, EventBus
+from core.machine_config import MachineConfig
 
 
 @dataclass
@@ -23,6 +24,7 @@ class ExecutionContext:
 
     project: Optional[ChipProject] = None
     event_bus: Optional[EventBus] = None
+    machine_config: Optional[MachineConfig] = None
 
     warning_callback: Optional[Callable[[str], None]] = None
     delay_func: Callable[[float], None] = time.sleep

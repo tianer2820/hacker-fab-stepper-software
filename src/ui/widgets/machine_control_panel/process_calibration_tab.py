@@ -149,7 +149,6 @@ class ProcessCalibrationTabWidget(QScrollArea):
             min_z_offset=self.spin_min_z_offset.value(),
             max_z_offset=self.spin_max_z_offset.value(),
             z_steps=self.spin_z_steps.value(),
-            autofocus_config=getattr(self.engine, "autofocus_config", None),
         )
         self._active_op = op
         self.lbl_status.setText("Status: Running calibration...")

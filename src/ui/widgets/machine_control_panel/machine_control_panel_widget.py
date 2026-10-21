@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 from core.engine import StepperEngine
 from ui.bridge import QtEngineBridge
 from .manual_control_tab import ManualControlTabWidget
+from .machine_config_tab import MachineConfigTabWidget
 from .ml_data_collection_tab import MLDataCollectionTabWidget
 from .optics_calibration_tab import OpticsCalibrationTabWidget
 from .process_calibration_tab import ProcessCalibrationTabWidget
@@ -53,6 +54,10 @@ class MachineControlPanelWidget(QWidget):
         self.stage_cal_tab = StageCalibrationTabWidget(self.engine, self.bridge, self)
         self.tabs.addTab(self.stage_cal_tab, "Stage Calibration")
 
+        # Tab 6: Machine Config
+        self.config_tab = MachineConfigTabWidget(self.engine, self.bridge, self)
+        self.tabs.addTab(self.config_tab, "Machine Config")
+
 
         # Connect signals
         self.bridge.stage_position_changed.connect(self.manual_tab._on_pos_changed)
@@ -70,13 +75,15 @@ class MachineControlPanelWidget(QWidget):
         self._update_lock_state()
 
     def _on_optics_offset_applied(self, offset: float):
-        self.manual_tab.spin_uv_offset.setValue(offset)
+        self.config_tab.spin_uv_offset.setValue(offset)
+        self.engine.machine_config.autofocus.uv_z_offset = offset
 
     def _on_operation_finished(self, op_or_name=None, err=None):
         self.optics_tab.on_operation_finished(op_or_name, err)
         self.process_tab.on_operation_finished(op_or_name, err)
         self.ml_tab.on_operation_finished(op_or_name, err)
         self.stage_cal_tab._on_operation_finished(op_or_name, err)
+        self.config_tab._refresh_calibration_status()
         self._update_lock_state()
 
     def _on_operation_aborted(self, op_or_name=None):
@@ -84,6 +91,7 @@ class MachineControlPanelWidget(QWidget):
         self.process_tab.on_operation_finished(op_or_name, "Operation aborted")
         self.ml_tab.on_operation_finished(op_or_name, "Operation aborted")
         self.stage_cal_tab._on_operation_finished(op_or_name, "Operation aborted")
+        self.config_tab._refresh_calibration_status()
         self._update_lock_state()
 
     def _on_operation_failed(self, op_or_name=None, err=None):
@@ -91,6 +99,7 @@ class MachineControlPanelWidget(QWidget):
         self.process_tab.on_operation_finished(op_or_name, err)
         self.ml_tab.on_operation_finished(op_or_name, err)
         self.stage_cal_tab._on_operation_finished(op_or_name, err)
+        self.config_tab._refresh_calibration_status()
         self._update_lock_state()
 
     def _update_lock_state(self, *args):
@@ -100,4 +109,5 @@ class MachineControlPanelWidget(QWidget):
         self.process_tab.update_lock_state(is_busy)
         self.ml_tab.update_lock_state(is_busy)
         self.stage_cal_tab.update_lock_state(is_busy)
+        self.config_tab.update_lock_state(is_busy)
 

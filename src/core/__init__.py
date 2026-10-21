@@ -19,6 +19,13 @@ from .events import (
     ProjectorImageSource,
     StrAutoEnum,
 )
+from .machine_config import (
+    AutofocusMachineConfig,
+    AutofocusStageConfig,
+    ExposureMachineConfig,
+    MachineConfig,
+    StageCalibrationMachineConfig,
+)
 from .operation import (
     ExecutionContext,
     Operation,
@@ -42,4 +49,9 @@ __all__ = [
     "ExecutionContext",
     "OperationManager",
     "sub_progress",
+    "MachineConfig",
+    "AutofocusMachineConfig",
+    "AutofocusStageConfig",
+    "ExposureMachineConfig",
+    "StageCalibrationMachineConfig",
 ]

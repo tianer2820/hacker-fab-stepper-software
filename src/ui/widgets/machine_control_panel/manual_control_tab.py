@@ -73,28 +73,6 @@ class ManualControlTabWidget(QScrollArea):
 
         manual_layout.addWidget(pos_box)
 
-        # Coordinate Calibration Status & Load Button
-        cal_box = QGroupBox("Coordinate Calibration")
-        cal_layout = QHBoxLayout(cal_box)
-        cal_layout.setContentsMargins(6, 6, 6, 6)
-        cal_layout.setSpacing(6)
-
-        self.lbl_cal_status = QLabel("Status: Raw (No Calibration)")
-        self.lbl_cal_status.setStyleSheet("color: #888888; font-size: 11px;")
-        cal_layout.addWidget(self.lbl_cal_status, 1)
-
-        self.btn_load_cal = QPushButton("Load File...")
-        self.btn_load_cal.clicked.connect(self._on_load_calibration_clicked)
-        cal_layout.addWidget(self.btn_load_cal)
-
-        self.btn_clear_cal = QPushButton("Disable")
-        self.btn_clear_cal.setEnabled(False)
-        self.btn_clear_cal.clicked.connect(self._on_clear_calibration_clicked)
-        cal_layout.addWidget(self.btn_clear_cal)
-
-        manual_layout.addWidget(cal_box)
-
-
         # 2. Jog Controls
         jog_box = QGroupBox("Jog Stage")
         jog_layout = QVBoxLayout(jog_box)
@@ -267,20 +245,6 @@ class ManualControlTabWidget(QScrollArea):
         af_layout.setContentsMargins(6, 6, 6, 6)
         af_layout.setSpacing(6)
 
-        af_offset_layout = QHBoxLayout()
-        af_offset_layout.addWidget(QLabel("UV-Red Z Offset (µm):"))
-        self.spin_uv_offset = QDoubleSpinBox()
-        self.spin_uv_offset.setRange(-1000.0, 1000.0)
-        self.spin_uv_offset.setDecimals(2)
-        self.spin_uv_offset.setSingleStep(1.0)
-        init_offset = 0.0
-        if hasattr(self.engine, "autofocus_config") and self.engine.autofocus_config is not None:
-            init_offset = getattr(self.engine.autofocus_config, "uv_z_offset", 0.0)
-        self.spin_uv_offset.setValue(init_offset)
-        self.spin_uv_offset.valueChanged.connect(self._on_uv_offset_changed)
-        af_offset_layout.addWidget(self.spin_uv_offset)
-        af_layout.addLayout(af_offset_layout)
-
         self.btn_autofocus = QPushButton("Run Autofocus")
         self.btn_autofocus.clicked.connect(self._on_autofocus_clicked)
         af_layout.addWidget(self.btn_autofocus)
@@ -293,10 +257,6 @@ class ManualControlTabWidget(QScrollArea):
     def _on_step_changed(self, checked: bool, val: float):
         if checked:
             self.current_jog_step = val
-
-    def _on_uv_offset_changed(self, val: float):
-        if hasattr(self.engine, "autofocus_config") and self.engine.autofocus_config is not None:
-            self.engine.autofocus_config.uv_z_offset = val
 
     def _jog(self, dx: float, dy: float, dz: float):
         op = JogOperation({"x": dx, "y": dy, "z": dz}, relative=True)
@@ -313,10 +273,7 @@ class ManualControlTabWidget(QScrollArea):
         self.bridge.start_operation(op)
 
     def _on_autofocus_clicked(self):
-        cfg = getattr(self.engine, "autofocus_config", None)
-        if cfg is not None:
-            cfg.uv_z_offset = self.spin_uv_offset.value()
-        op = AutofocusOperation(config=cfg)
+        op = AutofocusOperation()
         self.bridge.start_operation(op)
 
     def _on_projector_power_clicked(self):
@@ -429,44 +386,6 @@ class ManualControlTabWidget(QScrollArea):
             self.radio_src_custom,
             self.radio_src_solid,
             self.spin_projector_brightness,
-            self.spin_uv_offset,
-            self.btn_load_cal,
-            self.btn_clear_cal,
         ]:
             btn.setEnabled(not is_busy)
-
-    def _on_load_calibration_clicked(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Load Stage Calibration File",
-            "",
-            "JSON Files (*.json)",
-        )
-        if not file_path:
-            return
-
-        try:
-            from stage_control.calibration import StageCalibration
-            cal = StageCalibration.load_from_json(file_path)
-            if self.engine.stage is not None:
-                self.engine.stage.set_calibration(cal)
-            self._update_calibration_ui(cal, os.path.basename(file_path))
-        except Exception as e:
-            self.lbl_cal_status.setText(f"Error: {e}")
-            self.lbl_cal_status.setStyleSheet("color: #ff5555; font-size: 11px;")
-
-    def _on_clear_calibration_clicked(self):
-        if self.engine.stage is not None:
-            self.engine.stage.set_calibration(None)
-        self._update_calibration_ui(None)
-
-    def _update_calibration_ui(self, cal: Optional[Any], filename: str = ""):
-        if cal is not None and cal.enabled:
-            self.lbl_cal_status.setText(f"Active ({filename})")
-            self.lbl_cal_status.setStyleSheet("color: #55ff55; font-weight: bold; font-size: 11px;")
-            self.btn_clear_cal.setEnabled(True)
-        else:
-            self.lbl_cal_status.setText("Status: Raw (No Calibration)")
-            self.lbl_cal_status.setStyleSheet("color: #888888; font-size: 11px;")
-            self.btn_clear_cal.setEnabled(False)
 

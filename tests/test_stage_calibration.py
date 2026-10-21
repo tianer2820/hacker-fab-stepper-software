@@ -468,34 +468,37 @@ class TestStageCalibrationUI(unittest.TestCase):
         bridge = QtEngineBridge(engine)
 
         panel = MachineControlPanelWidget(engine, bridge)
-        self.assertEqual(panel.tabs.count(), 5)
+        self.assertEqual(panel.tabs.count(), 6)
         self.assertEqual(panel.tabs.tabText(4), "Stage Calibration")
+        self.assertEqual(panel.tabs.tabText(5), "Machine Config")
         self.assertIsInstance(panel.stage_cal_tab, StageCalibrationTabWidget)
 
-        # Check manual tab calibration controls
-        manual_tab = panel.manual_tab
-        self.assertTrue(hasattr(manual_tab, "btn_load_cal"))
-        self.assertTrue(hasattr(manual_tab, "btn_clear_cal"))
-        self.assertTrue(hasattr(manual_tab, "lbl_cal_status"))
-        self.assertIn("Raw", manual_tab.lbl_cal_status.text())
+        # Check config tab calibration controls
+        config_tab = panel.config_tab
+        self.assertTrue(hasattr(config_tab, "btn_apply_stage_cal"))
+        self.assertTrue(hasattr(config_tab, "btn_clear_stage_cal"))
+        self.assertTrue(hasattr(config_tab, "lbl_cal_status"))
+        self.assertIn("Raw", config_tab.lbl_cal_status.text())
 
         # Test setting calibration updates UI
         cal = StageCalibration((2, 2), [], stage_type="dummy")
-        manual_tab._update_calibration_ui(cal, "test_cal.json")
-        self.assertIn("Active", manual_tab.lbl_cal_status.text())
-        self.assertTrue(manual_tab.btn_clear_cal.isEnabled())
+        stage.set_calibration(cal)
+        config_tab._refresh_calibration_status()
+        self.assertIn("Active", config_tab.lbl_cal_status.text())
+        self.assertTrue(config_tab.btn_clear_stage_cal.isEnabled())
 
         # Test clear
-        manual_tab._on_clear_calibration_clicked()
-        self.assertIn("Raw", manual_tab.lbl_cal_status.text())
-        self.assertFalse(manual_tab.btn_clear_cal.isEnabled())
+        config_tab._on_clear_stage_cal_clicked()
+        self.assertIn("Raw", config_tab.lbl_cal_status.text())
+        self.assertFalse(config_tab.btn_clear_stage_cal.isEnabled())
         self.assertIsNone(stage.get_calibration())
 
         # Check Stage Calibration Tab fields & defaults
         stage_cal_tab = panel.stage_cal_tab
         self.assertEqual(stage_cal_tab.spin_exposure_time.value(), 8.0)
         self.assertEqual(stage_cal_tab.spin_cal_range.value(), 10000.0)
-        self.assertEqual(stage_cal_tab.spin_pixel_scale.value(), 1.0)
+        self.assertFalse(hasattr(stage_cal_tab, "spin_pixel_scale"))
+        self.assertEqual(panel.config_tab.spin_camera_pixel_size.value(), 1.0)
         self.assertIn("Computed Grid", stage_cal_tab.lbl_grid_info.text())
         self.assertFalse(hasattr(stage_cal_tab, "progress_bar"))
 

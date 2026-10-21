@@ -311,28 +311,28 @@ class TestMachineControlPanelTabs(unittest.TestCase):
         projector = DummyProjector()
         camera = DummyCamera()
         engine = StepperEngine(stage=stage, projector=projector, camera=camera)
-        engine.autofocus_config = AutofocusConfig(enabled=True, uv_z_offset=7.5)
+        engine.machine_config.autofocus.uv_z_offset = 7.5
         bridge = QtEngineBridge(engine)
 
         panel = MachineControlPanelWidget(engine, bridge)
 
         # Check tab widget
-        self.assertEqual(panel.tabs.count(), 5)
+        self.assertEqual(panel.tabs.count(), 6)
         self.assertEqual(panel.tabs.tabText(0), "Manual Control")
         self.assertEqual(panel.tabs.tabText(1), "Optics Calibration")
         self.assertEqual(panel.tabs.tabText(2), "Process Calibration")
         self.assertEqual(panel.tabs.tabText(3), "ML Data Collection")
         self.assertEqual(panel.tabs.tabText(4), "Stage Calibration")
-
+        self.assertEqual(panel.tabs.tabText(5), "Machine Config")
 
         # Check separate Autofocus controls
         self.assertTrue(hasattr(panel.manual_tab, "btn_autofocus"))
-        self.assertTrue(hasattr(panel.manual_tab, "spin_uv_offset"))
-        self.assertEqual(panel.manual_tab.spin_uv_offset.value(), 7.5)
+        self.assertTrue(hasattr(panel.config_tab, "spin_uv_offset"))
+        self.assertEqual(panel.config_tab.spin_uv_offset.value(), 7.5)
 
-        # Changing spin_uv_offset updates engine autofocus_config
-        panel.manual_tab.spin_uv_offset.setValue(12.0)
-        self.assertEqual(engine.autofocus_config.uv_z_offset, 12.0)
+        # Changing spin_uv_offset updates engine machine_config
+        panel.config_tab.spin_uv_offset.setValue(12.0)
+        self.assertEqual(engine.machine_config.autofocus.uv_z_offset, 12.0)
 
         # Check optics calibration controls
         self.assertTrue(hasattr(panel.optics_tab, "btn_start_optics_cal"))
@@ -355,13 +355,13 @@ class TestMachineControlPanelTabs(unittest.TestCase):
         self.assertEqual(panel.optics_tab.lbl_cal_offset_z.text(), "+15.50 µm")
         self.assertTrue(panel.optics_tab.btn_apply_cal_offset.isEnabled())
         # Automatically set in GUI panel and engine config after calibration finishes
-        self.assertEqual(panel.manual_tab.spin_uv_offset.value(), 15.5)
-        self.assertEqual(engine.autofocus_config.uv_z_offset, 15.5)
+        self.assertEqual(panel.config_tab.spin_uv_offset.value(), 15.5)
+        self.assertEqual(engine.machine_config.autofocus.uv_z_offset, 15.5)
 
         # Click apply offset button again to verify idempotency
         panel.optics_tab.btn_apply_cal_offset.click()
-        self.assertEqual(panel.manual_tab.spin_uv_offset.value(), 15.5)
-        self.assertEqual(engine.autofocus_config.uv_z_offset, 15.5)
+        self.assertEqual(panel.config_tab.spin_uv_offset.value(), 15.5)
+        self.assertEqual(engine.machine_config.autofocus.uv_z_offset, 15.5)
 
 
 if __name__ == "__main__":

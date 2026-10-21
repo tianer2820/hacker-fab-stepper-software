@@ -297,7 +297,6 @@ class MLDataCollectionTabWidget(QScrollArea):
             stabilization_delay=self.spin_stabilization_delay.value(),
             save_directory=save_dir,
             grid_n=2,
-            autofocus_config=getattr(self.engine, "autofocus_config", None),
         )
 
         op = MLDataCollectionOperation(config=config)

@@ -85,7 +85,6 @@ class ActionSubpanelWidget(QWidget):
             op = TiledExposureOperation(
                 layer_index=layer_idx,
                 settings=effective,
-                autofocus_config=self.engine.autofocus_config,
             )
         else:
             op = ExposureOperation(

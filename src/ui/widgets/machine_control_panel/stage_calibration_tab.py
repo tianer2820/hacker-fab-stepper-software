@@ -84,19 +84,6 @@ class StageCalibrationTabWidget(QScrollArea):
         range_row.addWidget(self.spin_cal_range, 1)
         p1_layout.addLayout(range_row)
 
-        # Camera Pixel Scale
-        scale_row = QHBoxLayout()
-        scale_row.addWidget(QLabel("Camera Pixel Scale:"))
-        self.spin_pixel_scale = QDoubleSpinBox()
-        self.spin_pixel_scale.setRange(0.01, 100.0)
-        self.spin_pixel_scale.setDecimals(3)
-        self.spin_pixel_scale.setValue(1.0)
-        self.spin_pixel_scale.setSingleStep(0.1)
-        self.spin_pixel_scale.setSuffix(" µm/px")
-        self.spin_pixel_scale.valueChanged.connect(self._update_computed_grid_label)
-        scale_row.addWidget(self.spin_pixel_scale, 1)
-        p1_layout.addLayout(scale_row)
-
         # Dynamic Grid Calculation Display
         self.lbl_grid_info = QLabel("Computed Grid: Calculating...")
         self.lbl_grid_info.setStyleSheet("color: #4da6ff; font-weight: bold; font-size: 11px;")
@@ -154,16 +141,6 @@ class StageCalibrationTabWidget(QScrollArea):
         p2_out_row.addWidget(self.btn_browse_p2_output)
         p2_layout.addLayout(p2_out_row)
 
-        scale2_row = QHBoxLayout()
-        scale2_row.addWidget(QLabel("Camera Pixel Scale:"))
-        self.spin_p2_pixel_scale = QDoubleSpinBox()
-        self.spin_p2_pixel_scale.setRange(0.01, 100.0)
-        self.spin_p2_pixel_scale.setDecimals(3)
-        self.spin_p2_pixel_scale.setValue(1.0)
-        self.spin_p2_pixel_scale.setSuffix(" µm/px")
-        scale2_row.addWidget(self.spin_p2_pixel_scale, 1)
-        p2_layout.addLayout(scale2_row)
-
         self.chk_apply_now = QCheckBox("Apply calibration to stage immediately upon completion")
         self.chk_apply_now.setChecked(True)
         p2_layout.addWidget(self.chk_apply_now)
@@ -195,12 +172,17 @@ class StageCalibrationTabWidget(QScrollArea):
 
         self.bridge.operation_progress.connect(self._on_progress)
         self.bridge.operation_finished.connect(self._on_operation_finished)
+        self.bridge.machine_config_changed.connect(lambda *_: self._update_computed_grid_label())
 
         self._update_computed_grid_label()
 
     def _update_computed_grid_label(self):
         cal_range = self.spin_cal_range.value()
-        pixel_scale = self.spin_pixel_scale.value()
+        pixel_scale = (
+            self.engine.machine_config.stage_calibration.camera_pixel_size
+            if hasattr(self.engine, "machine_config")
+            else 1.0
+        )
 
         cam_w, cam_h = 1920, 1080
         if self.engine.camera is not None:
@@ -229,9 +211,14 @@ class StageCalibrationTabWidget(QScrollArea):
             self.txt_p2_output.setText(path)
 
     def _on_start_pass1_clicked(self):
+        pixel_scale = (
+            self.engine.machine_config.stage_calibration.camera_pixel_size
+            if hasattr(self.engine, "machine_config")
+            else 1.0
+        )
         cfg = StageCalibrationPatternAndZConfig(
             calibration_range=self.spin_cal_range.value(),
-            pixel_scale=self.spin_pixel_scale.value(),
+            pixel_scale=pixel_scale,
             exposure_time=self.spin_exposure_time.value(),
             autofocus_enabled=self.chk_autofocus.isChecked(),
             output_json_path=self.txt_p1_file.text().strip(),
@@ -243,10 +230,15 @@ class StageCalibrationTabWidget(QScrollArea):
         self.bridge.start_operation(op)
 
     def _on_start_pass2_clicked(self):
+        pixel_scale = (
+            self.engine.machine_config.stage_calibration.camera_pixel_size
+            if hasattr(self.engine, "machine_config")
+            else 1.0
+        )
         cfg = StageCalibrationScanConfig(
             input_json_path=self.txt_p2_input.text().strip(),
             output_json_path=self.txt_p2_output.text().strip(),
-            pixel_scale=self.spin_p2_pixel_scale.value(),
+            pixel_scale=pixel_scale,
             apply_to_stage=self.chk_apply_now.isChecked(),
         )
         op = StageCalibrationScanOperation(config=cfg)
@@ -277,7 +269,6 @@ class StageCalibrationTabWidget(QScrollArea):
         self.btn_start_p1.setEnabled(not is_busy)
         self.btn_start_p2.setEnabled(not is_busy)
         self.spin_cal_range.setEnabled(not is_busy)
-        self.spin_pixel_scale.setEnabled(not is_busy)
         self.spin_exposure_time.setEnabled(not is_busy)
         self.chk_autofocus.setEnabled(not is_busy)
         self.txt_p1_file.setEnabled(not is_busy)
@@ -285,5 +276,4 @@ class StageCalibrationTabWidget(QScrollArea):
         self.txt_p2_output.setEnabled(not is_busy)
         self.btn_browse_p2_input.setEnabled(not is_busy)
         self.btn_browse_p2_output.setEnabled(not is_busy)
-        self.spin_p2_pixel_scale.setEnabled(not is_busy)
         self.chk_apply_now.setEnabled(not is_busy)

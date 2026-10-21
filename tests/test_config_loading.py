@@ -119,7 +119,6 @@ class TestConfigLoading(unittest.TestCase):
         self.assertIn("stage", cfg)
         self.assertIn("projector", cfg)
         self.assertIn("tiling", cfg)
-        self.assertIn("autofocus", cfg)
 
         # Check camera section structure
         self.assertEqual(cfg["camera"]["type"], "webcam")
@@ -139,12 +138,18 @@ class TestConfigLoading(unittest.TestCase):
         self.assertIn("grbl", cfg["stage"])
         self.assertEqual(cfg["stage"]["grbl"]["baud-rate"], 115200)
 
-        # Check autofocus section
-        af_cfg = AutofocusConfig.from_dict(cfg["autofocus"])
-        self.assertTrue(af_cfg.enabled)
-
         # Check tiling section
         self.assertFalse(cfg["tiling"]["enabled"])
+
+    def test_machine_config_toml_parsing(self):
+        from core.machine_config import MachineConfig
+        config_path = Path(__file__).resolve().parent.parent / "machine_config.toml"
+        cfg = MachineConfig.load(str(config_path))
+        self.assertEqual(cfg.exposure.default_exposure_time_ms, 8000.0)
+        self.assertEqual(cfg.stage_calibration.calibration_file_path, "stage_calibration.json")
+        self.assertEqual(len(cfg.autofocus.stages), 2)
+        self.assertEqual(cfg.autofocus.stages[0].grid_n, 2)
+        self.assertEqual(cfg.autofocus.stages[1].grid_n, 4)
 
     def test_execution_context_does_not_contain_configs(self):
         from core.operation import ExecutionContext

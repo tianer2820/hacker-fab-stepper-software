@@ -62,6 +62,9 @@ class QtEngineBridge(QObject):
     operation_aborted = Signal(str)
     operation_failed = Signal(str, str)
 
+    # Machine Configuration
+    machine_config_changed = Signal(object)
+
     # Warnings & Status
     warning_emitted = Signal(str)
     status_message = Signal(str)
@@ -177,6 +180,14 @@ class QtEngineBridge(QObject):
         self.engine.event_bus.add_listener(
             Event.WARNING_MESSAGE,
             lambda msg="", *args: self.warning_emitted.emit(str(msg)),
+        )
+
+        # Machine Configuration
+        self.engine.event_bus.add_listener(
+            Event.MACHINE_CONFIG_CHANGED,
+            lambda cfg=None, *args: self.machine_config_changed.emit(
+                cfg if cfg is not None else self.engine.machine_config
+            ),
         )
 
     def start_operation(

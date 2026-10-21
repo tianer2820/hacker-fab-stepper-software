@@ -514,6 +514,8 @@ class TestConsolidatedEvents(unittest.TestCase):
             "OPERATION_FAILED",
             # Warning
             "WARNING_MESSAGE",
+            # Machine Configuration
+            "MACHINE_CONFIG_CHANGED",
         }
         actual_events = {e.name for e in Event}
         self.assertEqual(actual_events, expected_events)
