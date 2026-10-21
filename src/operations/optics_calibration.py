@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 
 from core.events import ColorMode, ProjectorImageSource
-from core.operation import ExecutionContext, Operation
+from core.operation import ExecutionContext, Operation, sub_progress
 from lib.ar_tag import (
     detect_ar_tags,
     generate_ar_tag_grid,
@@ -96,15 +96,18 @@ class OpticsCalibrationOperation(Operation):
         num_grids = len(self.grid_sizes)
         progress_span = progress_end - progress_start
 
+        grid_span = progress_span / max(1, num_grids)
+
         for idx, grid_n in enumerate(self.grid_sizes):
             if self.is_aborted:
                 return "Optics calibration aborted"
 
             total_tags = grid_n * grid_n
-            step_base = progress_start + (idx / num_grids) * progress_span
+            step_start = progress_start + idx * grid_span
+            step_end = step_start + grid_span
             report_progress(
-                step_base,
-                f"Projecting {grid_n}x{grid_n} ArUco grid...",
+                step_start,
+                f"Projecting {grid_n}x{grid_n} ArUco grid ({mode_name})...",
             )
 
             # 1. Project generated ArUco grid
@@ -121,45 +124,20 @@ class OpticsCalibrationOperation(Operation):
             if self.is_aborted:
                 return "Optics calibration aborted"
 
-            # 2. Check tag detection
-            # Disabled because the failure rate is too high
-
-            # frame = context.camera.get_latest_frame()
-            # det_count, _, _ = self._detect_tags(frame)
-
-            # # On initial check in Red illumination, verify that tags are present on stage
-            # if initial_tag_check and idx == 0 and det_count == 0:
-            #     msg = (
-            #         "No ArUco tags detected in Red illumination! "
-            #         "Please verify that a bare silicon chip is on the stage, "
-            #         "rough focus is set, and the camera/projector are active."
-            #     )
-            #     if context.warning_callback:
-            #         context.warning_callback(msg)
-            #     return msg
-
-            # detection_rate = det_count / total_tags if total_tags > 0 else 0.0
-
-            # # If detection rate is below threshold, stop iteration (skip first iteration as alignment may be blurry)
-            # if detection_rate < self.min_detection_rate and idx > 0:
-            #     print(
-            #         f"{mode_name} Grid {grid_n}x{grid_n} detection rate ({detection_rate*100:.1f}%) "
-            #         f"< {self.min_detection_rate*100:.1f}%. Stopping iteration.",
-            #         flush=True,
-            #     )
-            #     break
-
-            # 3. Determine search range & threshold for this grid level
+            # 2. Determine search range & threshold for this grid level
             sweep_range, threshold = (
                 self.step_configs[idx]
                 if idx < len(self.step_configs)
                 else self.step_configs[-1]
             )
 
-            # 4. Maximize image sharpness via MaximizeImageSharpnessOperation
-            report_progress(
-                step_base + (0.5 / num_grids) * progress_span,
-                f"Maximizing sharpness for {mode_name} {grid_n}x{grid_n} grid...",
+            # 3. Maximize image sharpness via MaximizeImageSharpnessOperation
+            sharp_start = step_start + 0.05 * grid_span
+            sub_reporter = sub_progress(
+                report_progress,
+                sharp_start,
+                step_end,
+                prefix=f"{mode_name} {grid_n}x{grid_n}",
             )
             sharp_op = MaximizeImageSharpnessOperation(
                 z_range=sweep_range,
@@ -169,13 +147,7 @@ class OpticsCalibrationOperation(Operation):
             if self.is_aborted:
                 sharp_op.abort()
 
-            err = sharp_op.execute(
-                context,
-                report_progress=lambda p, m: report_progress(
-                    step_base + p * (progress_span / num_grids),
-                    f"{mode_name} {grid_n}x{grid_n} - {m}",
-                ),
-            )
+            err = sharp_op.execute(context, report_progress=sub_reporter)
             self._current_sub_op = None
 
             if self.is_aborted:
@@ -209,7 +181,7 @@ class OpticsCalibrationOperation(Operation):
         if self.is_aborted:
             return "Optics calibration aborted"
 
-        report_progress(0.05, "Starting Optics Calibration...")
+        report_progress(0.0, "Starting Optics Calibration...")
         projector = context.projector
         assert projector is not None, "Projector not found"
 
@@ -218,8 +190,8 @@ class OpticsCalibrationOperation(Operation):
             red_err = self._run_focus_iterations(
                 context=context,
                 color_mode=ColorMode.RED,
-                progress_start=0.1,
-                progress_end=0.5,
+                progress_start=0.05,
+                progress_end=0.50,
                 report_progress=report_progress,
                 initial_tag_check=True,
             )
@@ -227,13 +199,13 @@ class OpticsCalibrationOperation(Operation):
                 return red_err
 
             self.red_best_z = context.stage.get_position()[2]
-            report_progress(0.5, f"Red focus locked at Z = {self.red_best_z:.2f} µm")
+            report_progress(0.50, f"Red focus locked at Z = {self.red_best_z:.2f} µm")
 
             if self.is_aborted:
                 return "Optics calibration aborted"
 
             # 2. Switch to UV illumination
-            report_progress(0.55, "Switching to UV illumination...")
+            report_progress(0.52, "Switching to UV illumination...")
 
             # 3. Optimize focus in UV light
             uv_err = self._run_focus_iterations(

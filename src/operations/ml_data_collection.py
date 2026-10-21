@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 
 from core.events import ColorMode, ProjectorImageSource, StrAutoEnum
-from core.operation import ExecutionContext, Operation
+from core.operation import ExecutionContext, Operation, sub_progress
 from lib.ar_tag import detect_ar_tags
 from lib.cross_marker import generate_cross_pattern
 from lib.projector_camera_transform import (
@@ -167,10 +167,11 @@ class MLDataCollectionOperation(Operation):
             # 1.1 Autofocus without UV offset
             af_cal_config = AutofocusConfig(enabled=True, uv_z_offset=0.0)
             af_cal_op = AutofocusOperation(config=af_cal_config)
+            af_reporter = sub_progress(report_progress, 0.05, 0.15, prefix="Initial AF")
             err = self._run_sub_op(
                 af_cal_op,
                 context,
-                lambda p, m: report_progress(0.05 + 0.1 * p, f"Initial AF: {m}"),
+                af_reporter,
             )
             if err or self.is_aborted:
                 return err or "ML data collection aborted during initial AF"
@@ -249,29 +250,34 @@ class MLDataCollectionOperation(Operation):
                     target_x = start_x + off_x
                     target_y = start_y + off_y
                     report_progress(
-                        base_pct + 0.05 * step_pct_span,
+                        base_pct,
                         f"Pattern {step_num}/{total_steps}: Moving stage to ({target_x:.1f}, {target_y:.1f}) µm...",
                     )
+                    jog_reporter = sub_progress(
+                        report_progress,
+                        base_pct,
+                        base_pct + 0.10 * step_pct_span,
+                        prefix=f"Pattern {step_num}/{total_steps}",
+                    )
                     jog_op = JogOperation({"x": target_x, "y": target_y}, relative=False)
-                    err = self._run_sub_op(jog_op, context, lambda p, m: None)
+                    err = self._run_sub_op(jog_op, context, jog_reporter)
                     if err or self.is_aborted:
                         return err or "ML data collection aborted during stage movement"
 
                 # 2.2 Autofocus with configured UV offset
                 report_progress(
-                    base_pct + 0.15 * step_pct_span,
+                    base_pct + 0.10 * step_pct_span,
                     f"Pattern {step_num}/{total_steps}: Autofocusing...",
                 )
                 af_config = self.config.autofocus_config or getattr(context, "autofocus_config", None)
                 af_op = AutofocusOperation(config=af_config)
-                err = self._run_sub_op(
-                    af_op,
-                    context,
-                    lambda p, m: report_progress(
-                        base_pct + (0.15 + 0.25 * p) * step_pct_span,
-                        f"Pattern {step_num}/{total_steps} - AF: {m}",
-                    ),
+                af_reporter = sub_progress(
+                    report_progress,
+                    base_pct + 0.10 * step_pct_span,
+                    base_pct + 0.40 * step_pct_span,
+                    prefix=f"Pattern {step_num}/{total_steps} - AF",
                 )
+                err = self._run_sub_op(af_op, context, af_reporter)
                 if err or self.is_aborted:
                     if err:
                         print(f"Autofocus failed at step {step_num}: {err}, skipping", flush=True)
@@ -297,7 +303,7 @@ class MLDataCollectionOperation(Operation):
                     selected_image_path = available_images.pop()
 
                     report_progress(
-                        base_pct + 0.45 * step_pct_span,
+                        base_pct + 0.40 * step_pct_span,
                         f"Pattern {step_num}/{total_steps}: Loading image ({os.path.basename(selected_image_path)})...",
                     )
                     loaded_img = cv2.imread(selected_image_path, cv2.IMREAD_COLOR)
@@ -308,7 +314,7 @@ class MLDataCollectionOperation(Operation):
                     pattern_canvas = cv2.threshold(pattern_canvas, 20, 255, cv2.THRESH_BINARY)[1]
                 else:
                     report_progress(
-                        base_pct + 0.45 * step_pct_span,
+                        base_pct + 0.40 * step_pct_span,
                         f"Pattern {step_num}/{total_steps}: Generating cross pattern...",
                     )
                     pattern_canvas, markers_spec = generate_cross_pattern(
@@ -335,14 +341,13 @@ class MLDataCollectionOperation(Operation):
                 )
                 exp_config = ExposureOperationConfig(exposure_time=duration_ms)
                 exp_op = ExposureOperation(layer_index=None, config=exp_config)
-                err = self._run_sub_op(
-                    exp_op,
-                    context,
-                    lambda p, m: report_progress(
-                        base_pct + (0.50 + 0.25 * p) * step_pct_span,
-                        f"Pattern {step_num}/{total_steps} - Exposure: {m}",
-                    ),
+                exp_reporter = sub_progress(
+                    report_progress,
+                    base_pct + 0.50 * step_pct_span,
+                    base_pct + 0.75 * step_pct_span,
+                    prefix=f"Pattern {step_num}/{total_steps} - Exposure",
                 )
+                err = self._run_sub_op(exp_op, context, exp_reporter)
                 if err or self.is_aborted:
                     return err or "ML data collection aborted during exposure"
 

@@ -23,6 +23,7 @@ from .operation import (
     ExecutionContext,
     Operation,
     OperationManager,
+    sub_progress,
 )
 
 __all__ = [
@@ -40,4 +41,5 @@ __all__ = [
     "Operation",
     "ExecutionContext",
     "OperationManager",
+    "sub_progress",
 ]

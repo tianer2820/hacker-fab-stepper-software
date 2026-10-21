@@ -64,6 +64,8 @@ class MaximizeImageSharpnessOperation(Operation):
         if z_high <= z_low:
             z_high = z_low + self.threshold
 
+        report_progress(0.0, f"Optimizing image sharpness across Z [{z_low:.2f}, {z_high:.2f}] µm...")
+
         # Cache for measured points: round(z, 4) -> score
         cache: Dict[float, float] = {}
         best_z = current_z

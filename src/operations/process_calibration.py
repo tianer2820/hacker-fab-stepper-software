@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 
 from core.events import ColorMode, ProjectorImageSource
-from core.operation import ExecutionContext, Operation
+from core.operation import ExecutionContext, Operation, sub_progress
 from lib.gen_calibration_pattern import generate_litho_target
 from operations.autofocus import AutofocusOperation
 from operations.exposure import ExposureOperation, ExposureOperationConfig
@@ -180,8 +180,14 @@ class ProcessCalibrationOperation(Operation):
                         pct_base,
                         f"Step {step_num}/{total_steps}: Moving to spiral pos ({target_x:.1f}, {target_y:.1f}) µm...",
                     )
+                    jog_reporter = sub_progress(
+                        report_progress,
+                        pct_base,
+                        pct_base + 0.15 * pct_step,
+                        prefix=f"Step {step_num}/{total_steps}",
+                    )
                     jog_op = JogOperation({"x": target_x, "y": target_y}, relative=False)
-                    err = self._run_sub_op(jog_op, context, lambda p, m: None)
+                    err = self._run_sub_op(jog_op, context, jog_reporter)
                     if err or self.is_aborted:
                         last_error = err
                         break
@@ -193,14 +199,13 @@ class ProcessCalibrationOperation(Operation):
                 )
                 af_config = self.autofocus_config or getattr(context, "autofocus_config", None)
                 af_op = AutofocusOperation(config=af_config)
-                err = self._run_sub_op(
-                    af_op,
-                    context,
-                    lambda p, m: report_progress(
-                        pct_base + (0.15 + 0.35 * p) * pct_step,
-                        f"Step {step_num}/{total_steps} - AF: {m}",
-                    ),
+                af_reporter = sub_progress(
+                    report_progress,
+                    pct_base + 0.15 * pct_step,
+                    pct_base + 0.50 * pct_step,
+                    prefix=f"Step {step_num}/{total_steps} - AF",
                 )
+                err = self._run_sub_op(af_op, context, af_reporter)
                 if err or self.is_aborted:
                     if err:
                         print(f"Autofocus failed at step {step_num}: {err}, skipping to next step")
@@ -258,14 +263,13 @@ class ProcessCalibrationOperation(Operation):
                 )
                 exp_config = ExposureOperationConfig(exposure_time=duration_ms)
                 exp_op = ExposureOperation(layer_index=None, config=exp_config)
-                err = self._run_sub_op(
-                    exp_op,
-                    context,
-                    lambda p, m: report_progress(
-                        pct_base + (0.6 + 0.4 * p) * pct_step,
-                        f"Step {step_num}/{total_steps} - {m}",
-                    ),
+                exp_reporter = sub_progress(
+                    report_progress,
+                    pct_base + 0.60 * pct_step,
+                    pct_base + 1.0 * pct_step,
+                    prefix=f"Step {step_num}/{total_steps}",
                 )
+                err = self._run_sub_op(exp_op, context, exp_reporter)
                 if err or self.is_aborted:
                     last_error = err
                     break

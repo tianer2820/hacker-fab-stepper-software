@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 
 from core.events import ColorMode, ProjectorImageSource
-from core.operation import ExecutionContext, Operation
+from core.operation import ExecutionContext, Operation, sub_progress
 from lib.ar_tag import detect_ar_tags, get_aruco_dict
 from lib.projector_camera_transform import (
     compute_projector_to_camera_homography,
@@ -307,7 +307,7 @@ class StageCalibrationPatternAndZOperation(Operation):
             # =========================================================================
             # STEP 1: INITIAL AUTOFOCUS
             # =========================================================================
-            report_progress(0.02, "Step 1/3: Running initial autofocus...")
+            report_progress(0.01, "Step 1/3: Running initial autofocus...")
             if self.config.autofocus_enabled:
                 af_op = AutofocusOperation(
                     config=AutofocusConfig(
@@ -315,7 +315,8 @@ class StageCalibrationPatternAndZOperation(Operation):
                         uv_z_offset=self.config.uv_z_offset,
                     )
                 )
-                af_err = self._run_sub_op(af_op, context, lambda p, m: None)
+                af_reporter = sub_progress(report_progress, 0.01, 0.06, prefix="Initial AF")
+                af_err = self._run_sub_op(af_op, context, af_reporter)
                 if af_err and self.is_aborted:
                     return "Operation aborted during autofocus"
                 if af_op.best_red_z is not None:
@@ -468,13 +469,17 @@ class StageCalibrationPatternAndZOperation(Operation):
 
                 exp_config = ExposureOperationConfig(exposure_time=self.config.exposure_time * 1000.0)
                 exp_op = ExposureOperation(layer_index=None, config=exp_config)
+                pt_span = loop_span / total_points
+                exp_reporter = sub_progress(
+                    report_progress,
+                    prog_frac + 0.5 * pt_span,
+                    prog_frac + pt_span,
+                    prefix=f"Point {point_idx + 1}/{total_points} (Grid [{r}, {c}], Tag ID {marker_id})",
+                )
                 exp_err = self._run_sub_op(
                     exp_op,
                     context,
-                    lambda p, m: report_progress(
-                        prog_frac + (0.5 + 0.5 * p) * (loop_span / total_points),
-                        f"Point {point_idx + 1}/{total_points} (Grid [{r}, {c}], Tag ID {marker_id}): {m}",
-                    ),
+                    exp_reporter,
                 )
                 if exp_err or self.is_aborted:
                     return exp_err or "Operation aborted during exposure"

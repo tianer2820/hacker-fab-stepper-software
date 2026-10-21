@@ -2,7 +2,7 @@ from typing import Callable, Optional, Any
 
 from core.chip_project import PatterningSettings
 from core.events import ColorMode, ProjectorImageSource
-from core.operation import ExecutionContext, Operation
+from core.operation import ExecutionContext, Operation, sub_progress
 from operations.autofocus import AutofocusOperation
 from operations.exposure import ExposureOperation, ExposureOperationConfig
 from operations.movement import JogOperation
@@ -62,12 +62,18 @@ class TiledExposureOperation(Operation):
                 # Step 2: Move to the position
                 tx = start_pos[0] + offset_x
                 ty = start_pos[1] + offset_y
+                jog_reporter = sub_progress(
+                    report_progress,
+                    pct_base,
+                    pct_base + 0.15 * pct_step,
+                    prefix=f"Tile {tile_idx + 1}/{total_tiles}",
+                )
                 report_progress(
                     pct_base,
                     f"Tile {tile_idx + 1}/{total_tiles} - Moving stage to ({tx:.1f}, {ty:.1f})...",
                 )
                 jog_op = JogOperation({"x": tx, "y": ty}, relative=False)
-                err = self._run_sub_op(jog_op, context, lambda p, m: None)
+                err = self._run_sub_op(jog_op, context, jog_reporter)
                 if err or self.is_aborted:
                     last_error = err
                     break
@@ -88,34 +94,31 @@ class TiledExposureOperation(Operation):
 
                 if af_enabled:
                     context.projector.set_color_mode(ColorMode.RED)
-                    report_progress(
-                        pct_base + 0.3 * pct_step,
-                        f"Tile {tile_idx + 1}/{total_tiles} - Autofocusing...",
+                    af_reporter = sub_progress(
+                        report_progress,
+                        pct_base + 0.15 * pct_step,
+                        pct_base + 0.60 * pct_step,
+                        prefix=f"Tile {tile_idx + 1}/{total_tiles}",
                     )
                     af_op = AutofocusOperation(config=self.autofocus_config)
-                    err = self._run_sub_op(af_op, context, lambda p, m: None)
+                    err = self._run_sub_op(af_op, context, af_reporter)
                     if err or self.is_aborted:
                         last_error = err
                         break
 
                 # Step 6: Then, do an exposure
-                report_progress(
-                    pct_base + 0.6 * pct_step,
-                    f"Tile {tile_idx + 1}/{total_tiles} - Exposing...",
+                exp_reporter = sub_progress(
+                    report_progress,
+                    pct_base + 0.60 * pct_step,
+                    pct_base + 1.0 * pct_step,
+                    prefix=f"Tile {tile_idx + 1}/{total_tiles}",
                 )
                 exp_op = ExposureOperation(
                     layer_index=self.layer_index,
                     config=ExposureOperationConfig(exposure_time=self.settings.exposure_time),
                     tile_index=tile_idx,
                 )
-                err = self._run_sub_op(
-                    exp_op,
-                    context,
-                    lambda p, m: report_progress(
-                        pct_base + (0.6 + 0.4 * p) * pct_step,
-                        f"Tile {tile_idx + 1}/{total_tiles} - {m}",
-                    ),
-                )
+                err = self._run_sub_op(exp_op, context, exp_reporter)
                 if err or self.is_aborted:
                     last_error = err
                     break

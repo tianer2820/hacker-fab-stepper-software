@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 
 from core.events import ColorMode, ProjectorImageSource
-from core.operation import ExecutionContext, Operation
+from core.operation import ExecutionContext, Operation, sub_progress
 from lib.ar_tag import detect_ar_tags, generate_ar_tag_grid
 from operations.maximize_image_sharpness import MaximizeImageSharpnessOperation
 
@@ -72,13 +72,15 @@ class AutofocusOperation(Operation):
                 (10, 0.5),
             ]
 
+            stage_pct_span = 0.85 / len(grid_sizes)
             for idx, grid_n in enumerate(grid_sizes):
                 if self.is_aborted:
                     return "Autofocus aborted"
 
                 total_tags = grid_n * grid_n
-                progress_base = 0.1 + (idx / len(grid_sizes)) * 0.8
-                report_progress(progress_base, f"Projecting {grid_n}x{grid_n} ArUco grid...")
+                stage_start = 0.05 + idx * stage_pct_span
+                stage_end = stage_start + stage_pct_span
+                report_progress(stage_start, f"Projecting {grid_n}x{grid_n} ArUco grid...")
 
                 # 1. Generate and project ArUco grid using generated image source
                 grid_img = generate_ar_tag_grid(
@@ -91,30 +93,17 @@ class AutofocusOperation(Operation):
                 projector.set_on(True)
                 context.delay_func(1.0)
 
-                # 2. Check tag detection
-                # Disabled because the failure rate is too high
-
-                # frame = context.camera.get_latest_frame()
-                # det_count, _, _ = detect_ar_tags(frame, flip_horizontal=True)
-                # detection_rate = det_count / total_tags if total_tags > 0 else 0.0
-
-                # # If detection rate is below threshold, stop iteration
-                # # skip the check for the first iteration since the user alignment is expected to be blurry
-                # if detection_rate < self.config.min_detection_rate and idx > 0:
-                #     print(
-                #         f"Grid {grid_n}x{grid_n} detection rate ({detection_rate*100:.1f}%) "
-                #         f"< {self.config.min_detection_rate*100:.1f}%. Stopping iteration.",
-                #         flush=True,
-                #     )
-                #     break
-
-
-                # 3. Determine search range & threshold for this grid level
-
+                # 2. Determine search range & threshold for this grid level
                 sweep_range, threshold = step_configs[idx]
 
-                # 4. Maximize image sharpness via MaximizeImageSharpnessOperation
-                report_progress(progress_base + 0.05, f"Maximizing sharpness for {grid_n}x{grid_n} grid...")
+                # 3. Maximize image sharpness via MaximizeImageSharpnessOperation
+                sharp_start = stage_start + 0.05 * stage_pct_span
+                sub_reporter = sub_progress(
+                    report_progress,
+                    sharp_start,
+                    stage_end,
+                    prefix=f"Grid {grid_n}x{grid_n}",
+                )
                 sharp_op = MaximizeImageSharpnessOperation(
                     z_range=sweep_range,
                     threshold=threshold,
@@ -123,13 +112,7 @@ class AutofocusOperation(Operation):
                 if self.is_aborted:
                     sharp_op.abort()
 
-                err = sharp_op.execute(
-                    context,
-                    report_progress=lambda p, m: report_progress(
-                        progress_base + p * (0.8 / len(grid_sizes)),
-                        f"Grid {grid_n}x{grid_n} - {m}",
-                    ),
-                )
+                err = sharp_op.execute(context, report_progress=sub_reporter)
                 self._current_sub_op = None
 
                 if self.is_aborted:
@@ -161,8 +144,9 @@ class AutofocusOperation(Operation):
 
             self.best_red_z = float(best_overall_z)
 
-            # 6. Apply UV-Red Z offset if offset is configured
+            # 4. Apply UV-Red Z offset if offset is configured
             if abs(self.config.uv_z_offset) > 1e-6:
+                report_progress(0.92, "Applying UV-Red Z offset...")
                 uv_focal_z = best_overall_z + self.config.uv_z_offset
                 if not context.stage.move_absolute({"z": uv_focal_z}):
                     msg = f"Failed to apply UV-Red Z offset to {uv_focal_z:.2f} µm"
@@ -171,7 +155,7 @@ class AutofocusOperation(Operation):
                     return msg
                 print(f"Applied UV-Red Z offset: {self.config.uv_z_offset:+.2f} µm (Z: {best_overall_z:.2f} -> {uv_focal_z:.2f} µm)", flush=True)
 
-            report_progress(1.0, "Autofocus complete")
+            report_progress(1.0, f"Autofocus complete at Z = {best_overall_z:.2f} µm")
             return None
 
         finally:
