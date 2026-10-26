@@ -96,6 +96,8 @@ class EdgeArucoDetector:
     ):
         if dictionary is None:
             dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_1000)
+        elif isinstance(dictionary, int):
+            dictionary = cv2.aruco.getPredefinedDictionary(dictionary)
         self.dictionary = dictionary
         self.params = parameters if parameters is not None else EdgeDetectorParameters()
 
@@ -114,6 +116,8 @@ class EdgeArucoDetector:
             ids: (N, 1) numpy array of int32 tag IDs, or None if no tags found.
             rejectedImgPoints: List of rejected candidate quads, each shape (1, 4, 2).
         """
+        if image is None or getattr(image, "size", 0) == 0:
+            return [], None, []
         corners, ids, rejected, _ = self.detectMarkersWithDetails(image)
         return corners, ids, rejected
 
@@ -158,7 +162,14 @@ class EdgeArucoDetector:
 
     def _run_pipeline(self, img: np.ndarray) -> Dict[str, Any]:
         p = self.params
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img.copy()
+        if img.ndim == 2:
+            gray = img.copy()
+        elif img.ndim == 3 and img.shape[2] == 4:
+            gray = cv2.cvtColor(img, cv2.COLOR_BGRA2GRAY)
+        elif img.ndim == 3 and img.shape[2] == 3:
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        else:
+            raise ValueError(f"unknown image dimension: {img.shape}")
         gray_f = gray.astype(np.float32)
 
         # Stage 0: Dual-scale edge filtering

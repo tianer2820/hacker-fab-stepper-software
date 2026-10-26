@@ -14,6 +14,11 @@ import numpy as np
 from core.events import ColorMode, ProjectorImageSource
 from core.operation import ExecutionContext, Operation, sub_progress
 from lib.ar_tag import detect_ar_tags, get_aruco_dict
+from lib.edge_artag import (
+    EdgeArucoDetector,
+    EdgeDetectorParameters,
+    detect_edge_markers,
+)
 from lib.projector_camera_transform import (
     compute_projector_to_camera_homography,
     generate_calibration_tag_grid_with_coords,
@@ -641,6 +646,7 @@ class StageCalibrationScanOperation(Operation):
         stabilization_delay: float = 0.5,
         apply_to_stage: bool = True,
         dict_id: int = DEFAULT_ARUCO_DICT,
+        edge_detector_params: Optional[EdgeDetectorParameters] = None,
     ):
         super().__init__("Stage Calibration - Stage 3 (Optical Scan)")
         self.input_json_path = input_json_path
@@ -649,8 +655,32 @@ class StageCalibrationScanOperation(Operation):
         self.stabilization_delay = float(stabilization_delay)
         self.apply_to_stage = bool(apply_to_stage)
         self.dict_id = int(dict_id)
+        self.edge_detector_params = edge_detector_params
         self.calibration: Optional[StageCalibration] = None
         self.flip_horizontal: bool = False
+
+    def _detect_markers(
+        self,
+        frame: Optional[np.ndarray],
+        dict_id: int,
+        flip_horizontal: bool = False,
+    ) -> Tuple[int, List[np.ndarray], Optional[np.ndarray]]:
+        """Detects ArUco markers using edge_artag detector."""
+        if frame is None or getattr(frame, "size", 0) == 0:
+            return 0, [], None
+
+        img = cv2.flip(frame, 1) if flip_horizontal else frame
+        dictionary = get_aruco_dict(dict_id)
+        corners, ids, _ = detect_edge_markers(
+            img,
+            dictionary=dictionary,
+            parameters=self.edge_detector_params,
+        )
+        count = len(ids) if ids is not None else 0
+        if count == 0:
+            # Fall back to standard OpenCV detector as safety net
+            count, corners, ids = detect_ar_tags(frame, dict_id=dict_id, flip_horizontal=flip_horizontal)
+        return count, corners, ids
 
     def execute(self, context: ExecutionContext, report_progress: Callable[[float, str], None]) -> Optional[str]:
         if context.stage is None or context.camera is None:
@@ -712,10 +742,10 @@ class StageCalibrationScanOperation(Operation):
         cam_h, cam_w = frame.shape[:2]
         u_c, v_c = cam_w / 2.0, cam_h / 2.0
 
-        det_count, corners, ids = detect_ar_tags(frame, dict_id=dict_id, flip_horizontal=False)
+        det_count, corners, ids = self._detect_markers(frame, dict_id=dict_id, flip_horizontal=False)
         flip_horizontal = False
         if det_count == 0:
-            det_count, corners, ids = detect_ar_tags(frame, dict_id=dict_id, flip_horizontal=True)
+            det_count, corners, ids = self._detect_markers(frame, dict_id=dict_id, flip_horizontal=True)
             flip_horizontal = True
         self.flip_horizontal = flip_horizontal
 
@@ -801,7 +831,7 @@ class StageCalibrationScanOperation(Operation):
                 if cell_frame is None:
                     continue
 
-                det_cnt, det_corners, det_ids = detect_ar_tags(
+                det_cnt, det_corners, det_ids = self._detect_markers(
                     cell_frame, dict_id=dict_id, flip_horizontal=self.flip_horizontal
                 )
 
