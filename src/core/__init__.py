@@ -24,6 +24,7 @@ from .machine_config import (
     AutofocusStageConfig,
     ExposureMachineConfig,
     MachineConfig,
+    OpticsMachineConfig,
     StageCalibrationMachineConfig,
 )
 from .operation import (
@@ -52,6 +53,7 @@ __all__ = [
     "MachineConfig",
     "AutofocusMachineConfig",
     "AutofocusStageConfig",
+    "OpticsMachineConfig",
     "ExposureMachineConfig",
     "StageCalibrationMachineConfig",
 ]

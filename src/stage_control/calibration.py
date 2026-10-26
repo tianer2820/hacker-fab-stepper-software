@@ -60,7 +60,10 @@ class StageCalibration:
         self.enabled = enabled
         self.step_distance = float(step_distance) if step_distance is not None else None
         self.calibration_range = float(calibration_range) if calibration_range is not None else None
-        self.dict_id = int(dict_id) if dict_id is not None else None
+        try:
+            self.dict_id = int(dict_id) if dict_id is not None else None
+        except (TypeError, ValueError):
+            self.dict_id = None
         self.flip_horizontal = bool(flip_horizontal)
 
         self._ny, self._nx = self.grid_shape

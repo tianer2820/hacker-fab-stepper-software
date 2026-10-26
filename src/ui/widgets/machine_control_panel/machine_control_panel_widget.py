@@ -76,7 +76,7 @@ class MachineControlPanelWidget(QWidget):
 
     def _on_optics_offset_applied(self, offset: float):
         self.config_tab.spin_uv_offset.setValue(offset)
-        self.engine.machine_config.autofocus.uv_z_offset = offset
+        self.engine.machine_config.optics.uv_z_offset = offset
 
     def _on_operation_finished(self, op_or_name=None, err=None):
         self.optics_tab.on_operation_finished(op_or_name, err)

@@ -13,7 +13,7 @@ import numpy as np
 
 from core.events import ColorMode, ProjectorImageSource
 from core.operation import ExecutionContext, Operation, sub_progress
-from lib.ar_tag import detect_ar_tags, get_aruco_dict
+from lib.ar_tag import detect_ar_tags
 from lib.edge_artag import (
     EdgeArucoDetector,
     EdgeDetectorParameters,
@@ -28,7 +28,21 @@ from operations.autofocus import AutofocusOperation
 from operations.exposure import ExposureOperation
 from stage_control.calibration import StageCalibration, StageCalibrationPoint
 
-DEFAULT_ARUCO_DICT = cv2.aruco.DICT_4X4_1000
+def get_aruco_dict(dict_id: Any = None) -> cv2.aruco.Dictionary:
+    """Returns a custom ArUco dictionary generated with 5x5 markers and 10000 IDs."""
+    dict_type = getattr(cv2.aruco, "Dictionary", None)
+    if isinstance(dict_type, type) and isinstance(dict_id, dict_type):
+        return dict_id
+    if hasattr(cv2.aruco, "Dictionary") and hasattr(cv2.aruco.Dictionary, "create"):
+        return cv2.aruco.Dictionary.create(10000, 5, 12345)
+    elif hasattr(cv2.aruco, "extendDictionary"):
+        return cv2.aruco.extendDictionary(10000, 5, 12345)
+    elif hasattr(cv2.aruco, "Dictionary_create"):
+        return cv2.aruco.Dictionary_create(10000, 5, 12345)
+    return cv2.aruco.Dictionary.create(10000, 5, 12345)
+
+
+DEFAULT_ARUCO_DICT = get_aruco_dict()
 
 
 def compute_calibration_grid_params(
@@ -229,7 +243,7 @@ class StageCalibrationZFocusOperation(Operation):
         apply_to_stage: bool = True,
         grid_size: Optional[int] = None,
         step_distance: Optional[float] = None,
-        dict_id: int = DEFAULT_ARUCO_DICT,
+        dict_id: Any = DEFAULT_ARUCO_DICT,
     ):
         super().__init__("Stage Calibration - Stage 1 (Z Focus)")
         self.calibration_range = float(calibration_range)
@@ -239,7 +253,10 @@ class StageCalibrationZFocusOperation(Operation):
         self.apply_to_stage = bool(apply_to_stage)
         self.grid_size = int(grid_size) if grid_size is not None else None
         self.step_distance = float(step_distance) if step_distance is not None else None
-        self.dict_id = int(dict_id)
+        if isinstance(dict_id, (int, float)) and not isinstance(dict_id, bool):
+            self.dict_id = int(dict_id)
+        else:
+            self.dict_id = dict_id
 
         self._current_sub_op: Optional[Operation] = None
         self.calibration: Optional[StageCalibration] = None
@@ -394,14 +411,17 @@ class StageCalibrationPatternOperation(Operation):
         exposure_time: Optional[float] = None,
         stabilization_delay: float = 1.0,
         uv_z_offset: Optional[float] = None,
-        dict_id: int = DEFAULT_ARUCO_DICT,
+        dict_id: Any = DEFAULT_ARUCO_DICT,
     ):
         super().__init__("Stage Calibration - Stage 2 (Patterning)")
         self.input_json_path = input_json_path
         self.exposure_time = float(exposure_time) if exposure_time is not None else None
         self.stabilization_delay = float(stabilization_delay)
         self.uv_z_offset = float(uv_z_offset) if uv_z_offset is not None else None
-        self.dict_id = int(dict_id)
+        if isinstance(dict_id, (int, float)) and not isinstance(dict_id, bool):
+            self.dict_id = int(dict_id)
+        else:
+            self.dict_id = dict_id
 
         self._current_sub_op: Optional[Operation] = None
         self.corrected_proj_corners: Optional[np.ndarray] = None
@@ -645,7 +665,7 @@ class StageCalibrationScanOperation(Operation):
         camera_pixel_size: Optional[float] = None,
         stabilization_delay: float = 0.5,
         apply_to_stage: bool = True,
-        dict_id: int = DEFAULT_ARUCO_DICT,
+        dict_id: Any = DEFAULT_ARUCO_DICT,
         edge_detector_params: Optional[EdgeDetectorParameters] = None,
     ):
         super().__init__("Stage Calibration - Stage 3 (Optical Scan)")
@@ -654,7 +674,10 @@ class StageCalibrationScanOperation(Operation):
         self.camera_pixel_size = float(camera_pixel_size) if camera_pixel_size is not None else None
         self.stabilization_delay = float(stabilization_delay)
         self.apply_to_stage = bool(apply_to_stage)
-        self.dict_id = int(dict_id)
+        if isinstance(dict_id, (int, float)) and not isinstance(dict_id, bool):
+            self.dict_id = int(dict_id)
+        else:
+            self.dict_id = dict_id
         self.edge_detector_params = edge_detector_params
         self.calibration: Optional[StageCalibration] = None
         self.flip_horizontal: bool = False
@@ -662,7 +685,7 @@ class StageCalibrationScanOperation(Operation):
     def _detect_markers(
         self,
         frame: Optional[np.ndarray],
-        dict_id: int,
+        dict_id: Any = None,
         flip_horizontal: bool = False,
     ) -> Tuple[int, List[np.ndarray], Optional[np.ndarray]]:
         """Detects ArUco markers using edge_artag detector."""
@@ -715,7 +738,11 @@ class StageCalibrationScanOperation(Operation):
         grid_shape = tuple(stage1_data.get("grid_shape", (0, 0)))
         ny, nx = grid_shape
         step_dist = float(stage1_data.get("step_distance", 5000.0))
-        dict_id = int(stage1_data.get("dict_id", self.dict_id))
+        raw_dict_id = stage1_data.get("dict_id", self.dict_id)
+        if isinstance(raw_dict_id, (int, float)) and not isinstance(raw_dict_id, bool):
+            dict_id = int(raw_dict_id)
+        else:
+            dict_id = raw_dict_id
         raw_points = stage1_data.get("points", [])
 
         if len(raw_points) == 0:

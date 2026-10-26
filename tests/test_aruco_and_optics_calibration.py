@@ -299,7 +299,7 @@ class TestMachineControlPanelTabs(unittest.TestCase):
         projector = DummyProjector()
         camera = DummyCamera()
         engine = StepperEngine(stage=stage, projector=projector, camera=camera)
-        engine.machine_config.autofocus.uv_z_offset = 7.5
+        engine.machine_config.optics.uv_z_offset = 7.5
         bridge = QtEngineBridge(engine)
 
         panel = MachineControlPanelWidget(engine, bridge)
@@ -320,7 +320,7 @@ class TestMachineControlPanelTabs(unittest.TestCase):
 
         # Changing spin_uv_offset updates engine machine_config
         panel.config_tab.spin_uv_offset.setValue(12.0)
-        self.assertEqual(engine.machine_config.autofocus.uv_z_offset, 12.0)
+        self.assertEqual(engine.machine_config.optics.uv_z_offset, 12.0)
 
         # Check optics calibration controls
         self.assertTrue(hasattr(panel.optics_tab, "btn_start_optics_cal"))
@@ -344,12 +344,12 @@ class TestMachineControlPanelTabs(unittest.TestCase):
         self.assertTrue(panel.optics_tab.btn_apply_cal_offset.isEnabled())
         # Automatically set in GUI panel and engine config after calibration finishes
         self.assertEqual(panel.config_tab.spin_uv_offset.value(), 15.5)
-        self.assertEqual(engine.machine_config.autofocus.uv_z_offset, 15.5)
+        self.assertEqual(engine.machine_config.optics.uv_z_offset, 15.5)
 
         # Click apply offset button again to verify idempotency
         panel.optics_tab.btn_apply_cal_offset.click()
         self.assertEqual(panel.config_tab.spin_uv_offset.value(), 15.5)
-        self.assertEqual(engine.machine_config.autofocus.uv_z_offset, 15.5)
+        self.assertEqual(engine.machine_config.optics.uv_z_offset, 15.5)
 
 
 if __name__ == "__main__":

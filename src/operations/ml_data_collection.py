@@ -116,7 +116,11 @@ class MLDataCollectionOperation(Operation):
             self.uv_z_offset
             if self.uv_z_offset is not None
             else (
-                context.machine_config.autofocus.uv_z_offset
+                (
+                    context.machine_config.optics.uv_z_offset
+                    if hasattr(context.machine_config, "optics")
+                    else getattr(context.machine_config.autofocus, "uv_z_offset", 0.0)
+                )
                 if context.machine_config is not None
                 else 0.0
             )

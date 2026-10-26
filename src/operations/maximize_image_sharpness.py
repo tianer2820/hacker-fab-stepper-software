@@ -48,24 +48,13 @@ class MaximizeImageSharpnessOperation(Operation):
 
         report_progress(0.05, "Starting image sharpness maximization...")
 
-        effective_z_range = self.z_range
-        if effective_z_range is None:
-            if context.machine_config is not None:
-                effective_z_range = context.machine_config.autofocus.sharpness_z_range
-            else:
-                effective_z_range = 20.0
-
-        effective_threshold = self.threshold
-        if effective_threshold is None:
-            if context.machine_config is not None:
-                effective_threshold = context.machine_config.autofocus.sharpness_threshold
-            else:
-                effective_threshold = 0.5
+        effective_z_range = self.z_range if self.z_range is not None else 20.0
+        effective_threshold = self.threshold if self.threshold is not None else 0.5
 
         effective_settle_delay = self.settle_delay
         if effective_settle_delay is None:
-            if context.machine_config is not None:
-                effective_settle_delay = context.machine_config.autofocus.settle_delay
+            if context.machine_config is not None and hasattr(context.machine_config, "optics"):
+                effective_settle_delay = context.machine_config.optics.settle_delay
             else:
                 effective_settle_delay = 1.0
 

@@ -231,8 +231,20 @@ class ManualControlTabWidget(QScrollArea):
         self.spin_sharp_z_range.setDecimals(1)
         self.spin_sharp_z_range.setSingleStep(1.0)
         self.spin_sharp_z_range.setValue(20.0)
+        self.spin_sharp_z_range.setSuffix(" µm")
         sharp_range_layout.addWidget(self.spin_sharp_z_range)
         sharp_layout.addLayout(sharp_range_layout)
+
+        sharp_thresh_layout = QHBoxLayout()
+        sharp_thresh_layout.addWidget(QLabel("Convergence Threshold (µm):"))
+        self.spin_sharp_threshold = QDoubleSpinBox()
+        self.spin_sharp_threshold.setRange(0.01, 100.0)
+        self.spin_sharp_threshold.setDecimals(2)
+        self.spin_sharp_threshold.setSingleStep(0.1)
+        self.spin_sharp_threshold.setValue(0.5)
+        self.spin_sharp_threshold.setSuffix(" µm")
+        sharp_thresh_layout.addWidget(self.spin_sharp_threshold)
+        sharp_layout.addLayout(sharp_thresh_layout)
 
         self.btn_maximize_sharpness = QPushButton("Maximize Image Sharpness")
         self.btn_maximize_sharpness.clicked.connect(self._on_maximize_sharpness_clicked)
@@ -269,6 +281,7 @@ class ManualControlTabWidget(QScrollArea):
     def _on_maximize_sharpness_clicked(self):
         op = MaximizeImageSharpnessOperation(
             z_range=self.spin_sharp_z_range.value(),
+            threshold=self.spin_sharp_threshold.value(),
         )
         self.bridge.start_operation(op)
 
@@ -378,6 +391,7 @@ class ManualControlTabWidget(QScrollArea):
             self.btn_home,
             self.btn_maximize_sharpness,
             self.spin_sharp_z_range,
+            self.spin_sharp_threshold,
             self.btn_autofocus,
             self.btn_projector_power,
             self.radio_color_red,

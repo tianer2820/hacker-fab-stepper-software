@@ -4,54 +4,76 @@ from dataclasses import asdict, dataclass, field
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-import toml
+try:
+    import toml
+except ImportError:
+    import tomllib
+    import pip._vendor.tomli_w as tomli_w
 
+    class _TomlFallback:
+        @staticmethod
+        def load(f):
+            if hasattr(f, "read"):
+                data = f.read()
+                if isinstance(data, bytes):
+                    return tomllib.loads(data.decode("utf-8"))
+                return tomllib.loads(data)
+            with open(f, "rb") as fp:
+                return tomllib.load(fp)
 
-@dataclass
-class AutofocusStageConfig:
-    grid_n: int = 2
-    sweep_range: float = 250.0
-    threshold: float = 5.0
+        @staticmethod
+        def dump(d, f):
+            content = tomli_w.dumps(d)
+            f.write(content)
 
-    @classmethod
-    def from_dict(cls, d: Optional[Dict[str, Any]]) -> AutofocusStageConfig:
-        if not d:
-            return cls()
-        return cls(
-            grid_n=int(d.get("grid_n", 2)),
-            sweep_range=float(d.get("sweep_range", 250.0)),
-            threshold=float(d.get("threshold", 5.0)),
-        )
+    toml = _TomlFallback()
 
 
 @dataclass
 class AutofocusMachineConfig:
-    uv_z_offset: float = 0.0
-    sharpness_z_range: float = 20.0
-    sharpness_threshold: float = 0.5
-    settle_delay: float = 0.1
-    stages: List[AutofocusStageConfig] = field(
-        default_factory=lambda: [
-            AutofocusStageConfig(grid_n=2, sweep_range=250.0, threshold=5.0),
-            AutofocusStageConfig(grid_n=4, sweep_range=10.0, threshold=0.5),
-        ]
-    )
+    grid_n: int = 2
+    sweep_range: float = 250.0
+    threshold: float = 5.0
 
     @classmethod
     def from_dict(cls, d: Optional[Dict[str, Any]]) -> AutofocusMachineConfig:
         if not d:
             return cls()
         stages_data = d.get("stages", [])
-        stages = [AutofocusStageConfig.from_dict(s) for s in stages_data] if stages_data else [
-            AutofocusStageConfig(grid_n=2, sweep_range=250.0, threshold=5.0),
-            AutofocusStageConfig(grid_n=4, sweep_range=10.0, threshold=0.5),
-        ]
+        if stages_data and isinstance(stages_data, list) and len(stages_data) > 0:
+            first = stages_data[0]
+            if isinstance(first, dict):
+                return cls(
+                    grid_n=int(first.get("grid_n", d.get("grid_n", 2))),
+                    sweep_range=float(first.get("sweep_range", d.get("sweep_range", 250.0))),
+                    threshold=float(first.get("threshold", d.get("threshold", 5.0))),
+                )
+        return cls(
+            grid_n=int(d.get("grid_n", 2)),
+            sweep_range=float(d.get("sweep_range", 250.0)),
+            threshold=float(d.get("threshold", 5.0)),
+        )
+
+    @property
+    def stages(self) -> List[AutofocusMachineConfig]:
+        return [self]
+
+
+AutofocusStageConfig = AutofocusMachineConfig
+
+
+@dataclass
+class OpticsMachineConfig:
+    uv_z_offset: float = 0.0
+    settle_delay: float = 0.1
+
+    @classmethod
+    def from_dict(cls, d: Optional[Dict[str, Any]]) -> OpticsMachineConfig:
+        if not d:
+            return cls()
         return cls(
             uv_z_offset=float(d.get("uv_z_offset", 0.0)),
-            sharpness_z_range=float(d.get("sharpness_z_range", 20.0)),
-            sharpness_threshold=float(d.get("sharpness_threshold", 0.5)),
             settle_delay=float(d.get("settle_delay", 0.1)),
-            stages=stages,
         )
 
 
@@ -87,17 +109,20 @@ class StageCalibrationMachineConfig:
 @dataclass
 class MachineConfig:
     autofocus: AutofocusMachineConfig = field(default_factory=AutofocusMachineConfig)
+    optics: OpticsMachineConfig = field(default_factory=OpticsMachineConfig)
     exposure: ExposureMachineConfig = field(default_factory=ExposureMachineConfig)
     stage_calibration: StageCalibrationMachineConfig = field(default_factory=StageCalibrationMachineConfig)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "autofocus": {
-                "uv_z_offset": self.autofocus.uv_z_offset,
-                "sharpness_z_range": self.autofocus.sharpness_z_range,
-                "sharpness_threshold": self.autofocus.sharpness_threshold,
-                "settle_delay": self.autofocus.settle_delay,
-                "stages": [asdict(s) for s in self.autofocus.stages],
+                "grid_n": self.autofocus.grid_n,
+                "sweep_range": self.autofocus.sweep_range,
+                "threshold": self.autofocus.threshold,
+            },
+            "optics": {
+                "uv_z_offset": self.optics.uv_z_offset,
+                "settle_delay": self.optics.settle_delay,
             },
             "exposure": {
                 "default_exposure_time_ms": self.exposure.default_exposure_time_ms,
@@ -112,8 +137,16 @@ class MachineConfig:
     def from_dict(cls, d: Optional[Dict[str, Any]]) -> MachineConfig:
         if not d:
             return cls()
+        optics_data = d.get("optics")
+        if not optics_data and "autofocus" in d and isinstance(d["autofocus"], dict):
+            af_d = d["autofocus"]
+            optics_data = {
+                "uv_z_offset": af_d.get("uv_z_offset", 0.0),
+                "settle_delay": af_d.get("settle_delay", 0.1),
+            }
         return cls(
             autofocus=AutofocusMachineConfig.from_dict(d.get("autofocus")),
+            optics=OpticsMachineConfig.from_dict(optics_data),
             exposure=ExposureMachineConfig.from_dict(d.get("exposure")),
             stage_calibration=StageCalibrationMachineConfig.from_dict(d.get("stage_calibration")),
         )
@@ -141,4 +174,3 @@ class MachineConfig:
                 print(f"[MachineConfig] Error loading {path}: {e}. Using defaults.", flush=True)
                 return cls()
         return cls()
-
