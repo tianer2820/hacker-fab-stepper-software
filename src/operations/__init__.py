@@ -1,4 +1,5 @@
 from .autofocus import AutofocusOperation
+from .chip_z_leveling import ChipZLevelingOperation, chip_z_leveling
 from .exposure import ExposureOperation
 from .maximize_image_sharpness import MaximizeImageSharpnessOperation
 from .ml_data_collection import MLDataCollectionOperation, PatternSource
@@ -26,4 +27,6 @@ __all__ = [
     "MaximizeImageSharpnessOperation",
     "MLDataCollectionOperation",
     "PatternSource",
+    "ChipZLevelingOperation",
+    "chip_z_leveling",
 ]

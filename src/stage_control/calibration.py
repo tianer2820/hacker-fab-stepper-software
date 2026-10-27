@@ -76,6 +76,8 @@ class StageCalibration:
         self._raw_x_coords: np.ndarray = np.array([])
         self._raw_y_coords: np.ndarray = np.array([])
 
+        self._chip_z_plane: Optional[Tuple[float, float, float]] = None
+
         self._build_grids()
 
     def _build_grids(self):
@@ -154,17 +156,43 @@ class StageCalibration:
         return (x_corr, y_corr)
 
 
-    def get_z_offset(self, x_corr: float, y_corr: float) -> float:
-        """Returns the interpolated focal surface height Z_raw for given corrected (X, Y)."""
+    def set_chip_z_plane(self, plane: Optional[Tuple[float, float, float]]) -> None:
+        """Sets the temporary chip Z leveling plane coefficients (a, b, c) where Delta_Z = a*x + b*y + c."""
+        if plane is None:
+            self._chip_z_plane = None
+        else:
+            self._chip_z_plane = (float(plane[0]), float(plane[1]), float(plane[2]))
+
+    def get_chip_z_plane(self) -> Optional[Tuple[float, float, float]]:
+        """Returns the temporary chip Z leveling plane coefficients (a, b, c), or None if not set."""
+        return self._chip_z_plane
+
+    def clear_chip_z_plane(self) -> None:
+        """Clears the temporary chip Z leveling plane."""
+        self._chip_z_plane = None
+
+    def get_base_z_offset(self, x_corr: float, y_corr: float) -> float:
+        """Returns the base interpolated focal surface height Z_raw for given corrected (X, Y) without chip plane offset."""
         assert self._z_focus_grid.size != 0
         assert self._nx >= 2 or self._ny >= 2
 
         # Map corrected XY to raw XY to evaluate the raw grid height map
         x_raw, y_raw = x_corr, y_corr
         # x_raw, y_raw = self.inverse_map_xy(x_corr, y_corr)
-        return self._interpolate_grid_bilinear(
-            x_raw, y_raw, self._z_focus_grid, self._raw_x_coords, self._raw_y_coords
+        return float(
+            self._interpolate_grid_bilinear(
+                x_raw, y_raw, self._z_focus_grid, self._raw_x_coords, self._raw_y_coords
+            )
         )
+
+    def get_z_offset(self, x_corr: float, y_corr: float) -> float:
+        """Returns the interpolated focal surface height Z_raw for given corrected (X, Y),
+        including any active temporary chip Z leveling plane offset."""
+        base_z = self.get_base_z_offset(x_corr, y_corr)
+        if self._chip_z_plane is not None:
+            a, b, c = self._chip_z_plane
+            return float(base_z + a * x_corr + b * y_corr + c)
+        return float(base_z)
 
     def corr_to_raw(
         self,

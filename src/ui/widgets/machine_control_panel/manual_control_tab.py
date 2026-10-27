@@ -24,6 +24,7 @@ from core.engine import StepperEngine
 from core.events import ColorMode, ProjectorImageSource
 from operations import (
     AutofocusOperation,
+    ChipZLevelingOperation,
     HomeOperation,
     JogOperation,
     MaximizeImageSharpnessOperation,
@@ -218,7 +219,29 @@ class ManualControlTabWidget(QScrollArea):
 
         manual_layout.addWidget(proj_box)
 
-        # 4. Maximize Image Sharpness Group Box
+        # 4. Chip Z Leveling Group Box
+        chip_box = QGroupBox("Chip Z Leveling")
+        chip_layout = QVBoxLayout(chip_box)
+        chip_layout.setContentsMargins(6, 6, 6, 6)
+        chip_layout.setSpacing(6)
+
+        chip_size_layout = QHBoxLayout()
+        chip_size_layout.addWidget(QLabel("Chip Size (mm):"))
+        self.spin_chip_size = QDoubleSpinBox()
+        self.spin_chip_size.setRange(0.1, 500.0)
+        self.spin_chip_size.setDecimals(2)
+        self.spin_chip_size.setSingleStep(1.0)
+        self.spin_chip_size.setValue(10.0)
+        self.spin_chip_size.setSuffix(" mm")
+        chip_size_layout.addWidget(self.spin_chip_size)
+        chip_layout.addLayout(chip_size_layout)
+
+        self.btn_chip_z_leveling = QPushButton("Chip Z Leveling")
+        self.btn_chip_z_leveling.clicked.connect(self._on_chip_z_leveling_clicked)
+        chip_layout.addWidget(self.btn_chip_z_leveling)
+        manual_layout.addWidget(chip_box)
+
+        # 5. Maximize Image Sharpness Group Box
         sharp_box = QGroupBox("Maximize Image Sharpness")
         sharp_layout = QVBoxLayout(sharp_box)
         sharp_layout.setContentsMargins(6, 6, 6, 6)
@@ -276,6 +299,12 @@ class ManualControlTabWidget(QScrollArea):
 
     def _on_home_clicked(self):
         op = HomeOperation()
+        self.bridge.start_operation(op)
+
+    def _on_chip_z_leveling_clicked(self):
+        op = ChipZLevelingOperation(
+            chip_size_mm=self.spin_chip_size.value(),
+        )
         self.bridge.start_operation(op)
 
     def _on_maximize_sharpness_clicked(self):
@@ -389,6 +418,8 @@ class ManualControlTabWidget(QScrollArea):
             self.btn_z_pos,
             self.btn_z_neg,
             self.btn_home,
+            self.spin_chip_size,
+            self.btn_chip_z_leveling,
             self.btn_maximize_sharpness,
             self.spin_sharp_z_range,
             self.spin_sharp_threshold,
