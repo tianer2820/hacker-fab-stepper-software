@@ -63,7 +63,7 @@ class TestStageCalibration(unittest.TestCase):
 
     def test_surface_relative_z(self):
         # At raw midpoint (500, 500), Z_focus should be average of (100, 110, 120, 130) = 115.0
-        z_surf = self.cal.get_z_surface(510.0, 520.0)
+        z_surf = self.cal.get_z_offset(510.0, 520.0)
         self.assertAlmostEqual(z_surf, 115.0, places=2)
 
         # to_raw with Z=0 (focal plane) should return raw Z = 115.0
@@ -185,7 +185,7 @@ class TestStageControllerCalibration(unittest.TestCase):
     def test_single_point_z_surface(self):
         points = [StageCalibrationPoint((0, 0), 0, (0.0, 0.0), (0.0, 0.0), 45.0)]
         cal = StageCalibration((1, 1), points)
-        self.assertAlmostEqual(cal.get_z_surface(100.0, 200.0), 45.0)
+        self.assertAlmostEqual(cal.get_z_offset(100.0, 200.0), 45.0)
 
 
 class MockProjector:

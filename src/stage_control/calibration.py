@@ -154,18 +154,19 @@ class StageCalibration:
         return (x_corr, y_corr)
 
 
-    def get_z_surface(self, x_corr: float, y_corr: float) -> float:
+    def get_z_offset(self, x_corr: float, y_corr: float) -> float:
         """Returns the interpolated focal surface height Z_raw for given corrected (X, Y)."""
         assert self._z_focus_grid.size != 0
         assert self._nx >= 2 or self._ny >= 2
 
         # Map corrected XY to raw XY to evaluate the raw grid height map
-        x_raw, y_raw = self.inverse_map_xy(x_corr, y_corr)
+        x_raw, y_raw = x_corr, y_corr
+        # x_raw, y_raw = self.inverse_map_xy(x_corr, y_corr)
         return self._interpolate_grid_bilinear(
             x_raw, y_raw, self._z_focus_grid, self._raw_x_coords, self._raw_y_coords
         )
 
-    def to_raw(
+    def corr_to_raw(
         self,
         corr_coords: list[float],
     ) -> Dict[str, float]:
@@ -174,7 +175,7 @@ class StageCalibration:
         Z is surface-relative: Z_raw = Z_surface(X_corr, Y_corr) + Z_corr.
         """
         corr_x, corr_y, corr_z = corr_coords
-        z_surf = self.get_z_surface(corr_x, corr_y)
+        z_surf = self.get_z_offset(corr_x, corr_y)
 
         raw_dict = {
             'x': corr_x,

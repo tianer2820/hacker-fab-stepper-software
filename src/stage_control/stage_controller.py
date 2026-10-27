@@ -70,7 +70,7 @@ class StageController(EngineModule):
             self.__true_target_coord[2] = dz
 
         if self._calibration is not None and self._calibration.enabled:
-            raw_target = self._calibration.to_raw(self.__true_target_coord)
+            raw_target = self._calibration.corr_to_raw(self.__true_target_coord)
             return self._move_absolute_raw(raw_target)
         return self._move_absolute_raw({
             'x': self.__true_target_coord[0],
