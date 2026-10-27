@@ -9,12 +9,14 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QPushButton,
     QScrollArea,
-    QSpinBox,
     QDoubleSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -23,6 +25,7 @@ from core.engine import StepperEngine
 from core.events import Event
 from core.machine_config import (
     AutofocusMachineConfig,
+    AutofocusStageConfig,
     MachineConfig,
     OpticsMachineConfig,
 )
@@ -70,36 +73,33 @@ class MachineConfigTabWidget(QScrollArea):
         main_layout.addWidget(optics_box)
 
         # ---------------------------------------------------------------------
-        # 2. Autofocus Configuration
+        # 2. Autofocus Progression Stages
         # ---------------------------------------------------------------------
-        af_box = QGroupBox("Autofocus Configuration")
-        af_layout = QFormLayout(af_box)
+        af_box = QGroupBox("Autofocus Progression Stages")
+        af_layout = QVBoxLayout(af_box)
         af_layout.setContentsMargins(8, 8, 8, 8)
         af_layout.setSpacing(6)
 
-        self.spin_af_grid_n = QSpinBox()
-        self.spin_af_grid_n.setRange(1, 16)
-        self.spin_af_grid_n.setValue(2)
-        self.spin_af_grid_n.valueChanged.connect(self._on_ui_changed)
-        af_layout.addRow("Grid Dimension (NxN):", self.spin_af_grid_n)
+        self.table_af_stages = QTableWidget(0, 3)
+        self.table_af_stages.setHorizontalHeaderLabels([
+            "Grid Dimension (NxN)",
+            "Sweep Range (±µm)",
+            "Convergence Threshold (µm)",
+        ])
+        self.table_af_stages.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table_af_stages.setFixedHeight(120)
+        af_layout.addWidget(self.table_af_stages)
 
-        self.spin_af_sweep_range = QDoubleSpinBox()
-        self.spin_af_sweep_range.setRange(0.1, 1000.0)
-        self.spin_af_sweep_range.setDecimals(1)
-        self.spin_af_sweep_range.setSingleStep(1.0)
-        self.spin_af_sweep_range.setSuffix(" µm")
-        self.spin_af_sweep_range.setValue(250.0)
-        self.spin_af_sweep_range.valueChanged.connect(self._on_ui_changed)
-        af_layout.addRow("Sweep Range (±):", self.spin_af_sweep_range)
+        btn_row_af = QHBoxLayout()
+        self.btn_add_stage = QPushButton("+ Add Stage")
+        self.btn_add_stage.clicked.connect(self._on_add_stage_clicked)
+        btn_row_af.addWidget(self.btn_add_stage)
 
-        self.spin_af_threshold = QDoubleSpinBox()
-        self.spin_af_threshold.setRange(0.01, 100.0)
-        self.spin_af_threshold.setDecimals(2)
-        self.spin_af_threshold.setSingleStep(0.1)
-        self.spin_af_threshold.setSuffix(" µm")
-        self.spin_af_threshold.setValue(5.0)
-        self.spin_af_threshold.valueChanged.connect(self._on_ui_changed)
-        af_layout.addRow("Convergence Threshold:", self.spin_af_threshold)
+        self.btn_remove_stage = QPushButton("- Remove Stage")
+        self.btn_remove_stage.clicked.connect(self._on_remove_stage_clicked)
+        btn_row_af.addWidget(self.btn_remove_stage)
+        btn_row_af.addStretch()
+        af_layout.addLayout(btn_row_af)
 
         main_layout.addWidget(af_box)
 
@@ -204,11 +204,6 @@ class MachineConfigTabWidget(QScrollArea):
             self.spin_uv_offset.setValue(opt.uv_z_offset)
             self.spin_settle_delay.setValue(opt.settle_delay)
 
-            af = config.autofocus
-            self.spin_af_grid_n.setValue(af.grid_n)
-            self.spin_af_sweep_range.setValue(af.sweep_range)
-            self.spin_af_threshold.setValue(af.threshold)
-
             exp = config.exposure
             self.spin_default_exposure.setValue(exp.default_exposure_time_ms)
 
@@ -216,10 +211,47 @@ class MachineConfigTabWidget(QScrollArea):
             self.txt_cal_file.setText(sc.calibration_file_path)
             self.spin_camera_pixel_size.setValue(sc.camera_pixel_size)
 
+            # Populate stages table
+            self._populate_stages_table(config.autofocus.stages)
+
             # Update stage calibration status label
             self._refresh_calibration_status()
         finally:
             self._syncing = False
+
+    def _populate_stages_table(self, stages: List[AutofocusStageConfig]):
+        self.table_af_stages.blockSignals(True)
+        self.table_af_stages.setRowCount(len(stages))
+        for r, s in enumerate(stages):
+            item_grid = QTableWidgetItem(str(s.grid_n))
+            item_grid.setTextAlignment(Qt.AlignCenter)
+            item_range = QTableWidgetItem(f"{s.sweep_range:.1f}")
+            item_range.setTextAlignment(Qt.AlignCenter)
+            item_thresh = QTableWidgetItem(f"{s.threshold:.2f}")
+            item_thresh.setTextAlignment(Qt.AlignCenter)
+
+            self.table_af_stages.setItem(r, 0, item_grid)
+            self.table_af_stages.setItem(r, 1, item_range)
+            self.table_af_stages.setItem(r, 2, item_thresh)
+        self.table_af_stages.blockSignals(False)
+
+    def _collect_stages_from_table(self) -> List[AutofocusStageConfig]:
+        stages = []
+        for r in range(self.table_af_stages.rowCount()):
+            try:
+                g_item = self.table_af_stages.item(r, 0)
+                r_item = self.table_af_stages.item(r, 1)
+                t_item = self.table_af_stages.item(r, 2)
+                g = int(g_item.text()) if g_item else 2
+                sr = float(r_item.text()) if r_item else 250.0
+                th = float(t_item.text()) if t_item else 5.0
+                stages.append(AutofocusStageConfig(grid_n=g, sweep_range=sr, threshold=th))
+            except Exception:
+                pass
+        return stages or [
+            AutofocusStageConfig(grid_n=2, sweep_range=250.0, threshold=5.0),
+            AutofocusStageConfig(grid_n=4, sweep_range=10.0, threshold=0.5),
+        ]
 
     def _refresh_calibration_status(self):
         cal = self.engine.stage.get_calibration() if self.engine.stage else None
@@ -242,14 +274,29 @@ class MachineConfigTabWidget(QScrollArea):
         cfg.optics.uv_z_offset = self.spin_uv_offset.value()
         cfg.optics.settle_delay = self.spin_settle_delay.value()
 
-        cfg.autofocus.grid_n = self.spin_af_grid_n.value()
-        cfg.autofocus.sweep_range = self.spin_af_sweep_range.value()
-        cfg.autofocus.threshold = self.spin_af_threshold.value()
+        cfg.autofocus.stages = self._collect_stages_from_table()
 
         cfg.exposure.default_exposure_time_ms = self.spin_default_exposure.value()
 
         cfg.stage_calibration.calibration_file_path = self.txt_cal_file.text().strip()
         cfg.stage_calibration.camera_pixel_size = self.spin_camera_pixel_size.value()
+
+    def _on_add_stage_clicked(self):
+        stages = self._collect_stages_from_table()
+        last = stages[-1] if stages else AutofocusStageConfig()
+        new_grid = min(16, last.grid_n * 2)
+        new_range = max(1.0, last.sweep_range / 5.0)
+        new_thresh = max(0.1, last.threshold / 2.0)
+        stages.append(AutofocusStageConfig(grid_n=new_grid, sweep_range=new_range, threshold=new_thresh))
+        self.engine.machine_config.autofocus.stages = stages
+        self._populate_stages_table(stages)
+
+    def _on_remove_stage_clicked(self):
+        stages = self._collect_stages_from_table()
+        if len(stages) > 1:
+            stages.pop()
+            self.engine.machine_config.autofocus.stages = stages
+            self._populate_stages_table(stages)
 
     def _on_browse_cal_clicked(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -286,6 +333,7 @@ class MachineConfigTabWidget(QScrollArea):
 
     def _on_save_config_clicked(self):
         self._on_ui_changed()
+        self.engine.machine_config.autofocus.stages = self._collect_stages_from_table()
         self.engine.save_machine_config("machine_config.toml")
         self.bridge.status_message.emit("Machine configuration saved to machine_config.toml")
 
@@ -315,9 +363,9 @@ class MachineConfigTabWidget(QScrollArea):
         for widget in [
             self.spin_uv_offset,
             self.spin_settle_delay,
-            self.spin_af_grid_n,
-            self.spin_af_sweep_range,
-            self.spin_af_threshold,
+            self.table_af_stages,
+            self.btn_add_stage,
+            self.btn_remove_stage,
             self.spin_default_exposure,
             self.txt_cal_file,
             self.btn_browse_cal,

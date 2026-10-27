@@ -27,9 +27,9 @@ class TestMachineConfigDataclass(unittest.TestCase):
         cfg = MachineConfig()
         self.assertEqual(cfg.optics.uv_z_offset, 0.0)
         self.assertEqual(cfg.optics.settle_delay, 0.1)
-        self.assertEqual(cfg.autofocus.grid_n, 2)
-        self.assertEqual(cfg.autofocus.sweep_range, 250.0)
-        self.assertEqual(cfg.autofocus.threshold, 5.0)
+        self.assertEqual(len(cfg.autofocus.stages), 2)
+        self.assertEqual(cfg.autofocus.stages[0].grid_n, 2)
+        self.assertEqual(cfg.autofocus.stages[1].grid_n, 4)
         self.assertEqual(cfg.exposure.default_exposure_time_ms, 8000.0)
         self.assertEqual(cfg.stage_calibration.calibration_file_path, "stage_calibration.json")
         self.assertEqual(cfg.stage_calibration.camera_pixel_size, 1.0)
@@ -41,9 +41,11 @@ class TestMachineConfigDataclass(unittest.TestCase):
                 settle_delay=0.2,
             ),
             autofocus=AutofocusMachineConfig(
-                grid_n=4,
-                sweep_range=150.0,
-                threshold=1.5,
+                stages=[
+                    AutofocusStageConfig(grid_n=2, sweep_range=300.0, threshold=4.0),
+                    AutofocusStageConfig(grid_n=4, sweep_range=50.0, threshold=1.0),
+                    AutofocusStageConfig(grid_n=8, sweep_range=5.0, threshold=0.1),
+                ]
             ),
             exposure=ExposureMachineConfig(default_exposure_time_ms=6500.0),
             stage_calibration=StageCalibrationMachineConfig(
@@ -57,9 +59,8 @@ class TestMachineConfigDataclass(unittest.TestCase):
 
         self.assertEqual(loaded.optics.uv_z_offset, 12.5)
         self.assertEqual(loaded.optics.settle_delay, 0.2)
-        self.assertEqual(loaded.autofocus.grid_n, 4)
-        self.assertEqual(loaded.autofocus.sweep_range, 150.0)
-        self.assertEqual(loaded.autofocus.threshold, 1.5)
+        self.assertEqual(len(loaded.autofocus.stages), 3)
+        self.assertEqual(loaded.autofocus.stages[2].grid_n, 8)
         self.assertEqual(loaded.exposure.default_exposure_time_ms, 6500.0)
         self.assertEqual(loaded.stage_calibration.camera_pixel_size, 0.85)
 
@@ -68,7 +69,11 @@ class TestMachineConfigDataclass(unittest.TestCase):
             path = os.path.join(tmpdir, "test_machine_config.toml")
             cfg = MachineConfig(
                 optics=OpticsMachineConfig(uv_z_offset=15.0, settle_delay=0.15),
-                autofocus=AutofocusMachineConfig(grid_n=3, sweep_range=100.0, threshold=2.0),
+                autofocus=AutofocusMachineConfig(
+                    stages=[
+                        AutofocusStageConfig(grid_n=3, sweep_range=100.0, threshold=2.0),
+                    ]
+                ),
                 exposure=ExposureMachineConfig(default_exposure_time_ms=4500.0),
             )
             cfg.save(path)
@@ -76,7 +81,8 @@ class TestMachineConfigDataclass(unittest.TestCase):
             loaded = MachineConfig.load(path)
             self.assertEqual(loaded.optics.uv_z_offset, 15.0)
             self.assertEqual(loaded.optics.settle_delay, 0.15)
-            self.assertEqual(loaded.autofocus.grid_n, 3)
+            self.assertEqual(len(loaded.autofocus.stages), 1)
+            self.assertEqual(loaded.autofocus.stages[0].grid_n, 3)
             self.assertEqual(loaded.exposure.default_exposure_time_ms, 4500.0)
 
     def test_load_or_default_fallback(self):
@@ -95,7 +101,12 @@ class TestMachineConfigUI(unittest.TestCase):
         self.camera = DummyCamera()
         self.config = MachineConfig(
             optics=OpticsMachineConfig(uv_z_offset=8.5, settle_delay=0.25),
-            autofocus=AutofocusMachineConfig(grid_n=4, sweep_range=180.0, threshold=2.5),
+            autofocus=AutofocusMachineConfig(
+                stages=[
+                    AutofocusStageConfig(grid_n=2, sweep_range=250.0, threshold=5.0),
+                    AutofocusStageConfig(grid_n=4, sweep_range=10.0, threshold=0.5),
+                ]
+            ),
             exposure=ExposureMachineConfig(default_exposure_time_ms=7500.0),
         )
         self.engine = StepperEngine(
@@ -110,9 +121,7 @@ class TestMachineConfigUI(unittest.TestCase):
     def test_ui_initialization_from_config(self):
         self.assertEqual(self.tab.spin_uv_offset.value(), 8.5)
         self.assertEqual(self.tab.spin_settle_delay.value(), 0.25)
-        self.assertEqual(self.tab.spin_af_grid_n.value(), 4)
-        self.assertEqual(self.tab.spin_af_sweep_range.value(), 180.0)
-        self.assertEqual(self.tab.spin_af_threshold.value(), 2.5)
+        self.assertEqual(self.tab.table_af_stages.rowCount(), 2)
         self.assertEqual(self.tab.spin_default_exposure.value(), 7500.0)
         self.assertEqual(self.tab.spin_camera_pixel_size.value(), 1.0)
 
@@ -123,37 +132,38 @@ class TestMachineConfigUI(unittest.TestCase):
         self.tab.spin_settle_delay.setValue(0.5)
         self.assertEqual(self.engine.machine_config.optics.settle_delay, 0.5)
 
-        self.tab.spin_af_grid_n.setValue(6)
-        self.assertEqual(self.engine.machine_config.autofocus.grid_n, 6)
-
-        self.tab.spin_af_sweep_range.setValue(120.0)
-        self.assertEqual(self.engine.machine_config.autofocus.sweep_range, 120.0)
-
-        self.tab.spin_af_threshold.setValue(1.2)
-        self.assertEqual(self.engine.machine_config.autofocus.threshold, 1.2)
-
         self.tab.spin_default_exposure.setValue(9200.0)
         self.assertEqual(self.engine.machine_config.exposure.default_exposure_time_ms, 9200.0)
 
         self.tab.spin_camera_pixel_size.setValue(1.25)
         self.assertEqual(self.engine.machine_config.stage_calibration.camera_pixel_size, 1.25)
 
+    def test_add_and_remove_af_stages(self):
+        init_count = self.tab.table_af_stages.rowCount()
+        self.tab.btn_add_stage.click()
+        self.assertEqual(self.tab.table_af_stages.rowCount(), init_count + 1)
+        self.assertEqual(len(self.engine.machine_config.autofocus.stages), init_count + 1)
+
+        self.tab.btn_remove_stage.click()
+        self.assertEqual(self.tab.table_af_stages.rowCount(), init_count)
+        self.assertEqual(len(self.engine.machine_config.autofocus.stages), init_count)
+
     def test_lock_state(self):
         self.tab.update_lock_state(is_busy=True)
         self.assertFalse(self.tab.spin_uv_offset.isEnabled())
         self.assertFalse(self.tab.spin_settle_delay.isEnabled())
-        self.assertFalse(self.tab.spin_af_grid_n.isEnabled())
-        self.assertFalse(self.tab.spin_af_sweep_range.isEnabled())
-        self.assertFalse(self.tab.spin_af_threshold.isEnabled())
+        self.assertFalse(self.tab.table_af_stages.isEnabled())
+        self.assertFalse(self.tab.btn_add_stage.isEnabled())
+        self.assertFalse(self.tab.btn_remove_stage.isEnabled())
         self.assertFalse(self.tab.spin_default_exposure.isEnabled())
         self.assertFalse(self.tab.btn_save_config.isEnabled())
 
         self.tab.update_lock_state(is_busy=False)
         self.assertTrue(self.tab.spin_uv_offset.isEnabled())
         self.assertTrue(self.tab.spin_settle_delay.isEnabled())
-        self.assertTrue(self.tab.spin_af_grid_n.isEnabled())
-        self.assertTrue(self.tab.spin_af_sweep_range.isEnabled())
-        self.assertTrue(self.tab.spin_af_threshold.isEnabled())
+        self.assertTrue(self.tab.table_af_stages.isEnabled())
+        self.assertTrue(self.tab.btn_add_stage.isEnabled())
+        self.assertTrue(self.tab.btn_remove_stage.isEnabled())
         self.assertTrue(self.tab.spin_default_exposure.isEnabled())
         self.assertTrue(self.tab.btn_save_config.isEnabled())
 

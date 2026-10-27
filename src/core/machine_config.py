@@ -30,36 +30,51 @@ except ImportError:
 
 
 @dataclass
-class AutofocusMachineConfig:
+class AutofocusStageConfig:
     grid_n: int = 2
     sweep_range: float = 250.0
     threshold: float = 5.0
 
     @classmethod
-    def from_dict(cls, d: Optional[Dict[str, Any]]) -> AutofocusMachineConfig:
+    def from_dict(cls, d: Optional[Dict[str, Any]]) -> AutofocusStageConfig:
         if not d:
             return cls()
-        stages_data = d.get("stages", [])
-        if stages_data and isinstance(stages_data, list) and len(stages_data) > 0:
-            first = stages_data[0]
-            if isinstance(first, dict):
-                return cls(
-                    grid_n=int(first.get("grid_n", d.get("grid_n", 2))),
-                    sweep_range=float(first.get("sweep_range", d.get("sweep_range", 250.0))),
-                    threshold=float(first.get("threshold", d.get("threshold", 5.0))),
-                )
         return cls(
             grid_n=int(d.get("grid_n", 2)),
             sweep_range=float(d.get("sweep_range", 250.0)),
             threshold=float(d.get("threshold", 5.0)),
         )
 
-    @property
-    def stages(self) -> List[AutofocusMachineConfig]:
-        return [self]
 
+@dataclass
+class AutofocusMachineConfig:
+    stages: List[AutofocusStageConfig] = field(
+        default_factory=lambda: [
+            AutofocusStageConfig(grid_n=2, sweep_range=250.0, threshold=5.0),
+            AutofocusStageConfig(grid_n=4, sweep_range=10.0, threshold=0.5),
+        ]
+    )
 
-AutofocusStageConfig = AutofocusMachineConfig
+    @classmethod
+    def from_dict(cls, d: Optional[Dict[str, Any]]) -> AutofocusMachineConfig:
+        if not d:
+            return cls()
+        stages_data = d.get("stages", [])
+        if stages_data and isinstance(stages_data, list):
+            stages = [
+                AutofocusStageConfig.from_dict(s)
+                for s in stages_data
+                if isinstance(s, dict)
+            ]
+            return cls(
+                stages=stages if stages else [
+                    AutofocusStageConfig(grid_n=2, sweep_range=250.0, threshold=5.0),
+                    AutofocusStageConfig(grid_n=4, sweep_range=10.0, threshold=0.5),
+                ]
+            )
+        if "grid_n" in d or "sweep_range" in d or "threshold" in d:
+            return cls(stages=[AutofocusStageConfig.from_dict(d)])
+        return cls()
 
 
 @dataclass
@@ -116,9 +131,7 @@ class MachineConfig:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "autofocus": {
-                "grid_n": self.autofocus.grid_n,
-                "sweep_range": self.autofocus.sweep_range,
-                "threshold": self.autofocus.threshold,
+                "stages": [asdict(s) for s in self.autofocus.stages],
             },
             "optics": {
                 "uv_z_offset": self.optics.uv_z_offset,

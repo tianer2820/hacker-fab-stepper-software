@@ -16,7 +16,7 @@ class AutofocusOperation(Operation):
         self,
         log: bool = False,
         uv_z_offset: Optional[float] = None,
-        stages: Optional[Sequence[AutofocusMachineConfig]] = None,
+        stages: Optional[Sequence[AutofocusStageConfig]] = None,
     ):
         super().__init__("Autofocus")
         self.log = log
@@ -45,12 +45,13 @@ class AutofocusOperation(Operation):
         effective_stages = self.stages
         if effective_stages is None:
             if context.machine_config is not None:
-                effective_stages = [context.machine_config.autofocus]
+                effective_stages = context.machine_config.autofocus.stages
             else:
                 effective_stages = [
-                    AutofocusMachineConfig(grid_n=2, sweep_range=250.0, threshold=5.0),
+                    AutofocusStageConfig(grid_n=2, sweep_range=250.0, threshold=5.0),
+                    AutofocusStageConfig(grid_n=4, sweep_range=10.0, threshold=0.5),
                 ]
-        elif isinstance(effective_stages, AutofocusMachineConfig):
+        elif isinstance(effective_stages, AutofocusStageConfig):
             effective_stages = [effective_stages]
 
         effective_uv_offset = self.uv_z_offset

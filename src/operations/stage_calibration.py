@@ -4,12 +4,12 @@
 # Stage 2: Optical Alignment, Distortion Correction, and ArUco Tag Grid Patterning (using Stage 1 Z Surface)
 # Stage 3: Chip Pose Estimation, Multi-Tag Camera Scanning, Relative Least Squares Global Reconstruction
 
-from datetime import datetime
 import json
 import os
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import cv2
 import numpy as np
+import pathlib
 
 from core.events import ColorMode, ProjectorImageSource
 from core.operation import ExecutionContext, Operation, sub_progress
@@ -28,21 +28,98 @@ from operations.autofocus import AutofocusOperation
 from operations.exposure import ExposureOperation
 from stage_control.calibration import StageCalibration, StageCalibrationPoint
 
-def get_aruco_dict(dict_id: Any = None) -> cv2.aruco.Dictionary:
-    """Returns a custom ArUco dictionary generated with 5x5 markers and 10000 IDs."""
+
+ARUCO_DICT_CACHE_FILE = pathlib.Path(__file__).parent.parent.parent / 'aruco_dict_6x6_10000.yml'
+
+
+def _get_cache_path(filename: str = ARUCO_DICT_CACHE_FILE) -> str:
+    if os.path.exists(filename):
+        return filename
+    module_dir_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
+    if os.path.exists(module_dir_file):
+        return module_dir_file
+    return filename
+
+
+def load_aruco_dict_from_file(file_path: str = ARUCO_DICT_CACHE_FILE) -> Optional[cv2.aruco.Dictionary]:
+    """Loads an ArUco dictionary from a FileStorage YAML/XML/JSON file."""
+    actual_path = _get_cache_path(file_path)
+    if not os.path.exists(actual_path):
+        return None
+    fs = None
+    try:
+        read_flag = getattr(cv2, "FILE_STORAGE_READ", getattr(cv2, "FileStorage_READ", 0))
+        fs = cv2.FileStorage(actual_path, read_flag)
+        if not fs.isOpened():
+            return None
+        root = fs.root()
+        if hasattr(root, "empty") and root.empty():
+            return None
+        dictionary = cv2.aruco.Dictionary()
+        if hasattr(dictionary, "readDictionary"):
+            ok = dictionary.readDictionary(root)
+            if ok is False:
+                return None
+            return dictionary
+    except Exception as e:
+        print(f"[Stage Calibration] Could not load ArUco dictionary from {actual_path}: {e}", flush=True)
+        return None
+    finally:
+        if fs is not None and hasattr(fs, "release"):
+            fs.release()
+    return None
+
+
+def save_aruco_dict_to_file(dictionary: cv2.aruco.Dictionary, file_path: str = ARUCO_DICT_CACHE_FILE) -> bool:
+    """Saves an ArUco dictionary to a local FileStorage file using writeDictionary."""
+    fs = None
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+        write_flag = getattr(cv2, "FILE_STORAGE_WRITE", getattr(cv2, "FileStorage_WRITE", 1))
+        fs = cv2.FileStorage(file_path, write_flag)
+        if not fs.isOpened():
+            return False
+        if hasattr(dictionary, "writeDictionary"):
+            dictionary.writeDictionary(fs)
+        return True
+    except Exception as e:
+        print(f"[Stage Calibration] Could not save ArUco dictionary to {file_path}: {e}", flush=True)
+        return False
+    finally:
+        if fs is not None and hasattr(fs, "release"):
+            fs.release()
+
+
+def get_aruco_dict(dict_id: Any = None, cache_file: str = ARUCO_DICT_CACHE_FILE) -> cv2.aruco.Dictionary:
+    """Returns a custom ArUco dictionary generated with 5x5 markers and 10000 IDs,
+    loading from a local cached FileStorage file if available."""
     dict_type = getattr(cv2.aruco, "Dictionary", None)
     if isinstance(dict_type, type) and isinstance(dict_id, dict_type):
         return dict_id
+
+    # 1. Try loading from cached local file first
+    loaded = load_aruco_dict_from_file(cache_file)
+    if loaded is not None:
+        return loaded
+
+    # 2. Generate custom dictionary (5x5, 10000 IDs)
     if hasattr(cv2.aruco, "Dictionary") and hasattr(cv2.aruco.Dictionary, "create"):
-        return cv2.aruco.Dictionary.create(10000, 5, 12345)
+        dictionary = cv2.aruco.Dictionary.create(10000, 6, 12345)
     elif hasattr(cv2.aruco, "extendDictionary"):
-        return cv2.aruco.extendDictionary(10000, 5, 12345)
+        dictionary = cv2.aruco.extendDictionary(10000, 6, cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_1000), 12345)
     elif hasattr(cv2.aruco, "Dictionary_create"):
-        return cv2.aruco.Dictionary_create(10000, 5, 12345)
-    return cv2.aruco.Dictionary.create(10000, 5, 12345)
+        dictionary = cv2.aruco.Dictionary_create(10000, 6, 12345)
+    else:
+        dictionary = cv2.aruco.Dictionary.create(10000, 6, 12345)
+
+    # 3. Save to local file using cv2.FileStorage and writeDictionary
+    save_aruco_dict_to_file(dictionary, cache_file)
+
+    return dictionary
 
 
 DEFAULT_ARUCO_DICT = get_aruco_dict()
+# DEFAULT_ARUCO_DICT = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_1000)
 
 
 def compute_calibration_grid_params(
@@ -117,7 +194,7 @@ def generate_spiral_grid_indices(nx: int, ny: int) -> List[Tuple[int, int]]:
 
 def generate_canonical_ar_tag(
     marker_id: int,
-    dict_id: int = DEFAULT_ARUCO_DICT,
+    dictionary: cv2.aruco.Dictionary = DEFAULT_ARUCO_DICT,
     size: int = 400,
     quiet_ratio: float = 0.2,
 ) -> Tuple[np.ndarray, np.ndarray]:
@@ -125,7 +202,6 @@ def generate_canonical_ar_tag(
 
     Corners order: Top-Left, Top-Right, Bottom-Right, Bottom-Left.
     """
-    dictionary = get_aruco_dict(dict_id)
     quiet = max(4, int(size * quiet_ratio))
     total_sz = size + 2 * quiet
 
@@ -150,11 +226,11 @@ def warp_marker_to_projector(
     marker_id: int,
     target_proj_corners: np.ndarray,
     canvas_size: Tuple[int, int],
-    dict_id: int = DEFAULT_ARUCO_DICT,
+    dictionary: cv2.aruco.Dictionary = DEFAULT_ARUCO_DICT,
 ) -> np.ndarray:
     """Warps an ArUco marker onto the projector canvas to match target_proj_corners."""
     pw, ph = canvas_size
-    canonical_img, canonical_corners = generate_canonical_ar_tag(marker_id, dict_id=dict_id, size=300)
+    canonical_img, canonical_corners = generate_canonical_ar_tag(marker_id, dictionary=dictionary, size=300)
 
     M = cv2.getPerspectiveTransform(canonical_corners, target_proj_corners.astype(np.float32))
     warped_gray = cv2.warpPerspective(canonical_img, M, (pw, ph), flags=cv2.INTER_LINEAR)
@@ -243,7 +319,7 @@ class StageCalibrationZFocusOperation(Operation):
         apply_to_stage: bool = True,
         grid_size: Optional[int] = None,
         step_distance: Optional[float] = None,
-        dict_id: Any = DEFAULT_ARUCO_DICT,
+        dictionary: cv2.aruco.Dictionary = DEFAULT_ARUCO_DICT,
     ):
         super().__init__("Stage Calibration - Stage 1 (Z Focus)")
         self.calibration_range = float(calibration_range)
@@ -253,10 +329,8 @@ class StageCalibrationZFocusOperation(Operation):
         self.apply_to_stage = bool(apply_to_stage)
         self.grid_size = int(grid_size) if grid_size is not None else None
         self.step_distance = float(step_distance) if step_distance is not None else None
-        if isinstance(dict_id, (int, float)) and not isinstance(dict_id, bool):
-            self.dict_id = int(dict_id)
-        else:
-            self.dict_id = dict_id
+        
+        self.dict_id = dictionary
 
         self._current_sub_op: Optional[Operation] = None
         self.calibration: Optional[StageCalibration] = None
@@ -411,17 +485,15 @@ class StageCalibrationPatternOperation(Operation):
         exposure_time: Optional[float] = None,
         stabilization_delay: float = 1.0,
         uv_z_offset: Optional[float] = None,
-        dict_id: Any = DEFAULT_ARUCO_DICT,
+        dictionary: cv2.aruco.Dictionary = DEFAULT_ARUCO_DICT,
     ):
         super().__init__("Stage Calibration - Stage 2 (Patterning)")
         self.input_json_path = input_json_path
         self.exposure_time = float(exposure_time) if exposure_time is not None else None
         self.stabilization_delay = float(stabilization_delay)
         self.uv_z_offset = float(uv_z_offset) if uv_z_offset is not None else None
-        if isinstance(dict_id, (int, float)) and not isinstance(dict_id, bool):
-            self.dict_id = int(dict_id)
-        else:
-            self.dict_id = dict_id
+        
+        self.dict_id = dictionary
 
         self._current_sub_op: Optional[Operation] = None
         self.corrected_proj_corners: Optional[np.ndarray] = None
@@ -543,7 +615,7 @@ class StageCalibrationPatternOperation(Operation):
 
             # 3-step iterative correction so marker 0 sits with top-left at camera center
             report_progress(0.08, "Iteratively correcting tag projection alignment (3 passes)...")
-            tag_sz_cam = max(24.0, min(cam_w, cam_h) * 0.15)
+            tag_sz_cam = max(24.0, min(cam_w, cam_h) * 0.2)
             cam_corners = np.array([
                 [u_c, v_c],
                 [u_c + tag_sz_cam, v_c],
@@ -665,7 +737,7 @@ class StageCalibrationScanOperation(Operation):
         camera_pixel_size: Optional[float] = None,
         stabilization_delay: float = 0.5,
         apply_to_stage: bool = True,
-        dict_id: Any = DEFAULT_ARUCO_DICT,
+        dictionary: cv2.aruco.Dictionary = DEFAULT_ARUCO_DICT,
         edge_detector_params: Optional[EdgeDetectorParameters] = None,
     ):
         super().__init__("Stage Calibration - Stage 3 (Optical Scan)")
@@ -674,10 +746,8 @@ class StageCalibrationScanOperation(Operation):
         self.camera_pixel_size = float(camera_pixel_size) if camera_pixel_size is not None else None
         self.stabilization_delay = float(stabilization_delay)
         self.apply_to_stage = bool(apply_to_stage)
-        if isinstance(dict_id, (int, float)) and not isinstance(dict_id, bool):
-            self.dict_id = int(dict_id)
-        else:
-            self.dict_id = dict_id
+        
+        self.dict_id = dictionary
         self.edge_detector_params = edge_detector_params
         self.calibration: Optional[StageCalibration] = None
         self.flip_horizontal: bool = False
