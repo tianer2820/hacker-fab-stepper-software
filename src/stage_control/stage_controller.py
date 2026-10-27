@@ -21,6 +21,7 @@ class StageController(EngineModule):
     def __init__(self):
         super().__init__()
         self._calibration: Optional["StageCalibration"] = None
+        self.__true_target_coord: list[float] = [0.0, 0.0, 0.0]
 
     def set_calibration(self, calibration: Optional["StageCalibration"]) -> None:
         """Sets or clears the stage coordinate calibration."""
@@ -34,38 +35,51 @@ class StageController(EngineModule):
     def has_homing(self) -> bool:
         pass
 
-    @abstractmethod
     def home(self) -> bool:
-        pass
+        self.__true_target_coord = [0.0, 0.0, 0.0]
 
     def move_relative(self, microns: dict[str, float]) -> bool:
-        if self._calibration is not None and self._calibration.enabled:
-            curr_pos = self.get_position()
-            dx = microns.get("x", microns.get("X", 0.0))
-            dy = microns.get("y", microns.get("Y", 0.0))
-            dz = microns.get("z", microns.get("Z", 0.0))
-            target = {
-                "x": curr_pos[0] + dx,
-                "y": curr_pos[1] + dy,
-                "z": curr_pos[2] + dz,
-            }
-            for k in ("F", "f"):
-                if k in microns:
-                    target[k] = microns[k]
-            return self.move_absolute(target)
-        return self._move_relative_raw(microns)
+        dx = microns.get("x", microns.get("X", 0.0))
+        dy = microns.get("y", microns.get("Y", 0.0))
+        dz = microns.get("z", microns.get("Z", 0.0))
+        self.__true_target_coord[0] += dx
+        self.__true_target_coord[1] += dy
+        self.__true_target_coord[2] += dz
+
+        target = {
+            "x": self.__true_target_coord[0],
+            "y": self.__true_target_coord[1],
+            "z": self.__true_target_coord[2],
+        }
+        # pass over the feed number
+        for k in ("F", "f"):
+            if k in microns:
+                target[k] = microns[k]
+        return self.move_absolute(target)
 
     def move_absolute(self, microns: dict[str, float]) -> bool:
+        dx = microns.get("x", microns.get("X", None))
+        dy = microns.get("y", microns.get("Y", None))
+        dz = microns.get("z", microns.get("Z", None))
+
+        if dx is not None:
+            self.__true_target_coord[0] = dx
+        if dy is not None:
+            self.__true_target_coord[1] = dy
+        if dz is not None:
+            self.__true_target_coord[2] = dz
+
         if self._calibration is not None and self._calibration.enabled:
-            raw_target = self._calibration.to_raw(microns, current_raw=self._get_position_raw())
+            raw_target = self._calibration.to_raw(self.__true_target_coord)
             return self._move_absolute_raw(raw_target)
-        return self._move_absolute_raw(microns)
+        return self._move_absolute_raw({
+            'x': self.__true_target_coord[0],
+            'y': self.__true_target_coord[1],
+            'z': self.__true_target_coord[2],
+        })
 
     def get_position(self) -> tuple[float, float, float]:
-        raw_pos = self._get_position_raw()
-        if self._calibration is not None and self._calibration.enabled:
-            return self._calibration.to_corr(raw_pos)
-        return raw_pos
+        return self.__true_target_coord
 
     def move_absolute_raw(self, microns: dict[str, float]) -> bool:
         """Directly commands raw machine coordinates, bypassing calibration."""

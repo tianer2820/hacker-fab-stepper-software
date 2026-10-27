@@ -153,28 +153,6 @@ class StageCalibration:
         )
         return (x_corr, y_corr)
 
-    def inverse_map_xy(self, x_corr: float, y_corr: float, max_iter: int = 5) -> Tuple[float, float]:
-        """Maps corrected optical coordinates (X, Y) to raw machine coordinates (X, Y).
-
-        Uses fixed-point iteration since optical distortion is smooth and small.
-        """
-        if not self.has_xy_calibration or self._nx < 2 or self._ny < 2:
-            return (float(x_corr), float(y_corr))
-
-        # Initial guess
-        cur_x = float(x_corr)
-        cur_y = float(y_corr)
-
-        for _ in range(max_iter):
-            fwd_x, fwd_y = self.forward_map_xy(cur_x, cur_y)
-            err_x = fwd_x - x_corr
-            err_y = fwd_y - y_corr
-            if abs(err_x) < 1e-4 and abs(err_y) < 1e-4:
-                break
-            cur_x -= err_x
-            cur_y -= err_y
-
-        return (cur_x, cur_y)
 
     def get_z_surface(self, x_corr: float, y_corr: float) -> float:
         """Returns the interpolated focal surface height Z_raw for given corrected (X, Y)."""
@@ -189,62 +167,22 @@ class StageCalibration:
 
     def to_raw(
         self,
-        corr_coords: Dict[str, float],
-        current_raw: Optional[Tuple[float, float, float]] = None,
+        corr_coords: list[float],
     ) -> Dict[str, float]:
         """Translates corrected target coordinates to raw machine target coordinates.
 
         Z is surface-relative: Z_raw = Z_surface(X_corr, Y_corr) + Z_corr.
         """
-        raw_dict = dict(corr_coords)
+        corr_x, corr_y, corr_z = corr_coords
+        z_surf = self.get_z_surface(corr_x, corr_y)
 
-        # Standardize keys
-        has_x = "x" in corr_coords or "X" in corr_coords
-        has_y = "y" in corr_coords or "Y" in corr_coords
-        has_z = "z" in corr_coords or "Z" in corr_coords
-
-        x_key = "x" if "x" in corr_coords else ("X" if "X" in corr_coords else None)
-        y_key = "y" if "y" in corr_coords else ("Y" if "Y" in corr_coords else None)
-        z_key = "z" if "z" in corr_coords else ("Z" if "Z" in corr_coords else None)
-
-        cur_raw_x = current_raw[0] if current_raw is not None else 0.0
-        cur_raw_y = current_raw[1] if current_raw is not None else 0.0
-        cur_corr_x, cur_corr_y = self.forward_map_xy(cur_raw_x, cur_raw_y)
-
-        target_corr_x = float(corr_coords[x_key]) if x_key else cur_corr_x
-        target_corr_y = float(corr_coords[y_key]) if y_key else cur_corr_y
-
-        if has_x or has_y:
-            raw_x, raw_y = self.inverse_map_xy(target_corr_x, target_corr_y)
-            if x_key:
-                raw_dict[x_key] = raw_x
-            if y_key:
-                raw_dict[y_key] = raw_y
-
-        if has_z and z_key:
-            target_corr_z = float(corr_coords[z_key])
-            z_surf = self.get_z_surface(target_corr_x, target_corr_y)
-            raw_dict[z_key] = z_surf + target_corr_z
-        elif (has_x or has_y) and current_raw is not None:
-            # When moving in XY without specifying Z, maintain the current surface-relative Z distance
-            cur_raw_z = float(current_raw[2])
-            cur_z_surf = self.get_z_surface(cur_corr_x, cur_corr_y)
-            cur_corr_z = cur_raw_z - cur_z_surf
-            out_z_key = "Z" if ("X" in corr_coords or "Y" in corr_coords) and not ("x" in corr_coords or "y" in corr_coords) else "z"
-            raw_dict[out_z_key] = self.get_z_surface(target_corr_x, target_corr_y) + cur_corr_z
-
+        raw_dict = {
+            'x': corr_x,
+            'y': corr_y,
+            'z': corr_z + z_surf,
+        }
         return raw_dict
 
-    def to_corr(self, raw_coords: Tuple[float, float, float]) -> Tuple[float, float, float]:
-        """Translates raw machine position (X, Y, Z) to corrected optical position (X, Y, Z).
-
-        Z_corr = Z_raw - Z_surface(X_corr, Y_corr).
-        """
-        rx, ry, rz = raw_coords
-        cx, cy = self.forward_map_xy(rx, ry)
-        z_surf = self.get_z_surface(cx, cy)
-        cz = rz - z_surf
-        return (cx, cy, cz)
 
     @property
     def has_xy_calibration(self) -> bool:
