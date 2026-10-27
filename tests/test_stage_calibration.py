@@ -124,6 +124,69 @@ class TestStageControllerCalibration(unittest.TestCase):
         stage.move_absolute_raw({"x": 0.0, "y": 0.0, "z": 0.0})
         self.assertEqual(stage.get_raw_position(), (0.0, 0.0, 0.0))
 
+    def test_z_leveling_only_move_absolute_without_z(self):
+        stage = DummyStage(delay=0.0)
+        # Z-leveling only: raw_xy == corr_xy, tilted Z plane (100 at x=0, 120 at x=1000)
+        points = [
+            StageCalibrationPoint((0, 0), 0, (0.0, 0.0), (0.0, 0.0), 100.0),
+            StageCalibrationPoint((0, 1), 1, (1000.0, 0.0), (1000.0, 0.0), 120.0),
+            StageCalibrationPoint((1, 0), 2, (0.0, 1000.0), (0.0, 1000.0), 100.0),
+            StageCalibrationPoint((1, 1), 3, (1000.0, 1000.0), (1000.0, 1000.0), 120.0),
+        ]
+        cal = StageCalibration((2, 2), points, stage_type="dummy")
+        self.assertFalse(cal.has_xy_calibration)
+        stage.set_calibration(cal)
+
+        # Move to origin at focal plane (corrected z = 0.0 -> raw z = 100.0)
+        stage.move_absolute({"x": 0.0, "y": 0.0, "z": 0.0})
+        self.assertAlmostEqual(stage.get_position()[2], 0.0, places=2)
+        self.assertAlmostEqual(stage.get_raw_position()[2], 100.0, places=2)
+
+        # Move absolute in XY without specifying Z (e.g. from Stage Map or Tiling)
+        stage.move_absolute({"x": 500.0, "y": 0.0})
+
+        # Corrected Z should remain at 0.0 (surface maintained)
+        corr_pos = stage.get_position()
+        self.assertAlmostEqual(corr_pos[0], 500.0, places=2)
+        self.assertAlmostEqual(corr_pos[1], 0.0, places=2)
+        self.assertAlmostEqual(corr_pos[2], 0.0, places=2)
+
+        # Raw Z should have moved to 110.0 to follow surface tilt
+        raw_pos = stage.get_raw_position()
+        self.assertAlmostEqual(raw_pos[0], 500.0, places=2)
+        self.assertAlmostEqual(raw_pos[1], 0.0, places=2)
+        self.assertAlmostEqual(raw_pos[2], 110.0, places=2)
+
+    def test_z_leveling_only_identity_outside_grid(self):
+        # Grid defined on [1000, 2000]
+        points = [
+            StageCalibrationPoint((0, 0), 0, (1000.0, 1000.0), (1000.0, 1000.0), 50.0),
+            StageCalibrationPoint((0, 1), 1, (2000.0, 1000.0), (2000.0, 1000.0), 60.0),
+            StageCalibrationPoint((1, 0), 2, (1000.0, 2000.0), (1000.0, 2000.0), 70.0),
+            StageCalibrationPoint((1, 1), 3, (2000.0, 2000.0), (2000.0, 2000.0), 80.0),
+        ]
+        cal = StageCalibration((2, 2), points)
+        self.assertFalse(cal.has_xy_calibration)
+
+        # Points outside the grid boundary must not be clamped or distorted for XY
+        fwd_x, fwd_y = cal.forward_map_xy(0.0, 0.0)
+        self.assertAlmostEqual(fwd_x, 0.0)
+        self.assertAlmostEqual(fwd_y, 0.0)
+
+        inv_x, inv_y = cal.inverse_map_xy(0.0, 0.0)
+        self.assertAlmostEqual(inv_x, 0.0)
+        self.assertAlmostEqual(inv_y, 0.0)
+
+        raw_dict = cal.to_raw({"x": 0.0, "y": 0.0, "z": 0.0})
+        self.assertAlmostEqual(raw_dict["x"], 0.0)
+        self.assertAlmostEqual(raw_dict["y"], 0.0)
+        self.assertAlmostEqual(raw_dict["z"], 50.0)  # clamped to edge height
+
+    def test_single_point_z_surface(self):
+        points = [StageCalibrationPoint((0, 0), 0, (0.0, 0.0), (0.0, 0.0), 45.0)]
+        cal = StageCalibration((1, 1), points)
+        self.assertAlmostEqual(cal.get_z_surface(100.0, 200.0), 45.0)
+
 
 class MockProjector:
     def __init__(self):

@@ -114,7 +114,7 @@ class StageCalibration:
             u = 0.0
         elif x >= x_coords[-1]:
             i = nx - 2
-            u = (x - x_coords[i]) / max(x_coords[i + 1] - x_coords[i], 1e-9)
+            u = 1.0
         else:
             i = int(np.searchsorted(x_coords, x) - 1)
             i = max(0, min(i, nx - 2))
@@ -126,7 +126,7 @@ class StageCalibration:
             v = 0.0
         elif y >= y_coords[-1]:
             j = ny - 2
-            v = (y - y_coords[j]) / max(y_coords[j + 1] - y_coords[j], 1e-9)
+            v = 1.0
         else:
             j = int(np.searchsorted(y_coords, y) - 1)
             j = max(0, min(j, ny - 2))
@@ -142,7 +142,7 @@ class StageCalibration:
 
     def forward_map_xy(self, x_raw: float, y_raw: float) -> Tuple[float, float]:
         """Maps raw machine coordinates (X, Y) to corrected optical coordinates (X, Y)."""
-        if self._nx < 2 or self._ny < 2:
+        if not self.has_xy_calibration or self._nx < 2 or self._ny < 2:
             return (float(x_raw), float(y_raw))
 
         x_corr = self._interpolate_grid_bilinear(
@@ -158,7 +158,7 @@ class StageCalibration:
 
         Uses fixed-point iteration since optical distortion is smooth and small.
         """
-        if self._nx < 2 or self._ny < 2:
+        if not self.has_xy_calibration or self._nx < 2 or self._ny < 2:
             return (float(x_corr), float(y_corr))
 
         # Initial guess
@@ -178,8 +178,8 @@ class StageCalibration:
 
     def get_z_surface(self, x_corr: float, y_corr: float) -> float:
         """Returns the interpolated focal surface height Z_raw for given corrected (X, Y)."""
-        if self._nx < 2 or self._ny < 2:
-            return 0.0
+        assert self._z_focus_grid.size != 0
+        assert self._nx >= 2 or self._ny >= 2
 
         # Map corrected XY to raw XY to evaluate the raw grid height map
         x_raw, y_raw = self.inverse_map_xy(x_corr, y_corr)
@@ -225,6 +225,13 @@ class StageCalibration:
             target_corr_z = float(corr_coords[z_key])
             z_surf = self.get_z_surface(target_corr_x, target_corr_y)
             raw_dict[z_key] = z_surf + target_corr_z
+        elif (has_x or has_y) and current_raw is not None:
+            # When moving in XY without specifying Z, maintain the current surface-relative Z distance
+            cur_raw_z = float(current_raw[2])
+            cur_z_surf = self.get_z_surface(cur_corr_x, cur_corr_y)
+            cur_corr_z = cur_raw_z - cur_z_surf
+            out_z_key = "Z" if ("X" in corr_coords or "Y" in corr_coords) and not ("x" in corr_coords or "y" in corr_coords) else "z"
+            raw_dict[out_z_key] = self.get_z_surface(target_corr_x, target_corr_y) + cur_corr_z
 
         return raw_dict
 
