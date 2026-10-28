@@ -555,10 +555,9 @@ class StageCalibrationPatternOperation(Operation):
 
         ny, nx = cal.grid_shape
         step_dist = cal.step_distance or 1000.0
-        pts_by_id: Dict[int, StageCalibrationPoint] = {p.marker_id: p for p in cal.points}
-
-        total_points = nx * ny
-        start_x, start_y, start_z = stage.get_raw_position()
+        pts_by_grid: Dict[Tuple[int, int], StageCalibrationPoint] = {
+            tuple(p.grid_index): p for p in cal.points
+        }
 
         try:
             # =========================================================================
@@ -657,25 +656,37 @@ class StageCalibrationPatternOperation(Operation):
             report_progress(0.15, f"Step 2/2: Patterning grid using Stage 1 calibrated Z heights...")
             loop_span = 0.85
             base_offset = 0.15
-            c0 = (nx - 1) // 2
-            r0 = (ny - 1) // 2
-            spiral_indices = generate_spiral_grid_indices(nx, ny)
+
+            # Find closest calibration grid node to current stage XY
+            cur_raw_x, cur_raw_y = stage.get_raw_position()[:2]
+            closest_pt = min(
+                cal.points,
+                key=lambda p: (p.raw_xy[0] - cur_raw_x) ** 2 + (p.raw_xy[1] - cur_raw_y) ** 2,
+            )
+            r_center, c_center = closest_pt.grid_index
 
             # Determine grid size if pattern_range is specified
             eff_grid_size = self.grid_size
             if eff_grid_size is None and self.pattern_range is not None and self.pattern_range > 0:
                 eff_grid_size = max(1, int(round(self.pattern_range / step_dist)) + 1)
 
-            if eff_grid_size is not None and eff_grid_size < nx:
+            if eff_grid_size is not None and eff_grid_size < max(nx, ny):
                 n_sub = eff_grid_size
-                r_min = r0 - n_sub // 2
+                r_min = max(0, min(ny - n_sub, r_center - n_sub // 2))
                 r_max = r_min + n_sub - 1
-                c_min = c0 - n_sub // 2
+                c_min = max(0, min(nx - n_sub, c_center - n_sub // 2))
                 c_max = c_min + n_sub - 1
-                pattern_indices = [(r, c) for (r, c) in spiral_indices if r_min <= r <= r_max and c_min <= c <= c_max]
+                selected_set = {
+                    (r, c)
+                    for r in range(r_min, r_max + 1)
+                    for c in range(c_min, c_max + 1)
+                    if (r, c) in pts_by_grid
+                }
             else:
-                pattern_indices = spiral_indices
+                selected_set = set(pts_by_grid.keys())
 
+            spiral_indices = generate_spiral_grid_indices(nx, ny)
+            pattern_indices = [(r, c) for (r, c) in spiral_indices if (r, c) in selected_set]
             total_points = len(pattern_indices)
 
             for point_idx, (r, c) in enumerate(pattern_indices):
@@ -683,11 +694,10 @@ class StageCalibrationPatternOperation(Operation):
                     return "Stage 2 calibration aborted"
 
                 prog_frac = base_offset + (point_idx / total_points) * loop_span
-                marker_id = r * nx + c
-
-                pt = pts_by_id.get(marker_id)
-                target_raw_x = pt.raw_xy[0] if pt else (start_x + (c - c0) * step_dist)
-                target_raw_y = pt.raw_xy[1] if pt else (start_y + (r - r0) * step_dist)
+                pt = pts_by_grid[(r, c)]
+                marker_id = pt.marker_id
+                target_raw_x = float(pt.raw_xy[0])
+                target_raw_y = float(pt.raw_xy[1])
 
                 report_progress(
                     prog_frac,

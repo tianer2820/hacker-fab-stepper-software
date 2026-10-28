@@ -616,6 +616,103 @@ class TestStageCalibrationOperations(unittest.TestCase):
                 # 1 initial autofocus + 4 per-node autofocus = 5 autofocus calls
                 self.assertEqual(mock_af_cls.call_count, 5)
 
+    def test_stage2_subgrid_centered_on_current_stage_xy(self):
+        from unittest.mock import patch, MagicMock
+        from core.operation import ExecutionContext
+        from operations.stage_calibration import (
+            StageCalibrationPatternOperation,
+            generate_canonical_ar_tag,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s1_path = os.path.join(tmpdir, "stage1.json")
+            # 5x5 grid with step_distance = 1000.0, IDs offset by 500
+            pts = []
+            for r in range(5):
+                for c in range(5):
+                    mid = 500 + r * 5 + c
+                    pts.append(
+                        StageCalibrationPoint(
+                            (r, c),
+                            mid,
+                            (c * 1000.0, r * 1000.0),
+                            (c * 1000.0, r * 1000.0),
+                            100.0,
+                        )
+                    )
+            cal = StageCalibration(
+                grid_shape=(5, 5),
+                points=pts,
+                stage_type="dummy",
+                step_distance=1000.0,
+            )
+            cal.save_to_json(s1_path)
+
+            stage = DummyStage(delay=0.0)
+            # Position stage near r=4, c=3 (3000, 4000), far from center (2000, 2000)
+            stage.move_absolute_raw({"x": 3100.0, "y": 3900.0, "z": 0.0})
+
+            projector = MockProjector()
+            tag_img, _ = generate_canonical_ar_tag(marker_id=0, size=100)
+            frame = np.zeros((480, 640, 3), dtype=np.uint8)
+            h, w = tag_img.shape
+            frame[100 : 100 + h, 100 : 100 + w, 0] = tag_img
+            frame[100 : 100 + h, 100 : 100 + w, 1] = tag_img
+            frame[100 : 100 + h, 100 : 100 + w, 2] = tag_img
+            camera = MockCamera(frame=frame)
+            ctx = ExecutionContext(stage=stage, camera=camera, projector=projector, delay_func=lambda s: None)
+
+            # Subgrid 3x3 around (3000, 4000) -> rows [2, 3, 4], cols [2, 3, 4]
+            op = StageCalibrationPatternOperation(
+                input_json_path=s1_path,
+                exposure_time=0.01,
+                stabilization_delay=0.0,
+                autofocus=False,
+                pattern_range=2000.0,
+            )
+
+            exposed_ids = []
+            moved_coords = []
+
+            original_warp = __import__("operations.stage_calibration", fromlist=["warp_marker_to_projector"]).warp_marker_to_projector
+            def mock_warp(*args, **kwargs):
+                exposed_ids.append(kwargs.get("marker_id", args[0] if args else None))
+                return original_warp(*args, **kwargs)
+
+            original_move = stage.move_absolute
+            def mock_move(microns, *args, **kwargs):
+                if "x" in microns and "y" in microns:
+                    moved_coords.append((microns["x"], microns["y"]))
+                return original_move(microns, *args, **kwargs)
+
+            stage.move_absolute = mock_move
+
+            with patch("operations.stage_calibration.warp_marker_to_projector", side_effect=mock_warp), \
+                 patch("operations.stage_calibration.AutofocusOperation") as mock_af_cls:
+                mock_af_instance = MagicMock()
+                mock_af_instance.execute.return_value = None
+                mock_af_cls.return_value = mock_af_instance
+
+                err = op.execute(ctx, lambda p, m: None)
+                self.assertIsNone(err)
+
+                # 3 homography test warps + 9 pattern exposures = 12 total warps
+                # The 9 pattern exposures correspond to the 3x3 subgrid
+                pattern_exposed_ids = exposed_ids[-9:]
+                self.assertEqual(len(pattern_exposed_ids), 9)
+                self.assertEqual(len(moved_coords), 9)
+
+                # Expected rows: [2, 3, 4], expected cols: [2, 3, 4]
+                expected_pts = {
+                    500 + r * 5 + c: (c * 1000.0, r * 1000.0)
+                    for r in range(2, 5)
+                    for c in range(2, 5)
+                }
+
+                for mid, coord in zip(pattern_exposed_ids, moved_coords):
+                    self.assertIn(mid, expected_pts)
+                    self.assertEqual(coord, expected_pts[mid])
+
     def test_pass2_multi_tag_pose_averaging(self):
         from core.operation import ExecutionContext
         from operations.stage_calibration import (
