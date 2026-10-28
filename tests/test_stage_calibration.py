@@ -758,16 +758,22 @@ class TestStageCalibrationOperations(unittest.TestCase):
             projector = MockProjector()
             ctx = ExecutionContext(stage=stage, camera=camera, projector=projector, delay_func=lambda s: None)
 
+            save_dir = os.path.join(tmpdir, "scanned_photos")
             op2 = StageCalibrationScanOperation(
                 input_json_path=p1_path,
                 output_json_path=p2_path,
                 camera_pixel_size=1.0,
                 stabilization_delay=0.0,
                 apply_to_stage=True,
+                save_images_dir=save_dir,
             )
             err = op2.execute(ctx, lambda p, m: None)
             self.assertIsNone(err)
             self.assertTrue(os.path.exists(p2_path))
+            self.assertTrue(os.path.exists(save_dir))
+            # Verify scanned cell image was saved
+            saved_files = os.listdir(save_dir)
+            self.assertIn("scan_cell_r0_c0.png", saved_files)
 
 
 
@@ -850,6 +856,12 @@ class TestStageCalibrationUI(unittest.TestCase):
         self.assertEqual(panel.config_tab.spin_camera_pixel_size.value(), 1.0)
         self.assertIn("Computed Grid", stage_cal_tab.lbl_grid_info.text())
         self.assertFalse(hasattr(stage_cal_tab, "progress_bar"))
+        self.assertTrue(hasattr(stage_cal_tab, "chk_s3_save_images"))
+        self.assertFalse(stage_cal_tab.chk_s3_save_images.isChecked())
+        self.assertFalse(stage_cal_tab.txt_s3_save_dir.isEnabled())
+        stage_cal_tab.chk_s3_save_images.setChecked(True)
+        self.assertTrue(stage_cal_tab.txt_s3_save_dir.isEnabled())
+        self.assertTrue(stage_cal_tab.btn_browse_s3_save_dir.isEnabled())
 
 
 

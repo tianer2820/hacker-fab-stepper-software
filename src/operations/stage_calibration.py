@@ -782,6 +782,7 @@ class StageCalibrationScanOperation(Operation):
         apply_to_stage: bool = True,
         grid_size: Optional[int] = None,
         scan_range: Optional[float] = None,
+        save_images_dir: Optional[str] = None,
         edge_detector_params: Optional[EdgeDetectorParameters] = None,
     ):
         super().__init__("Stage Calibration - Stage 3 (Optical Scan)")
@@ -792,6 +793,7 @@ class StageCalibrationScanOperation(Operation):
         self.apply_to_stage = bool(apply_to_stage)
         self.grid_size = int(grid_size) if grid_size is not None and int(grid_size) > 0 else None
         self.scan_range = float(scan_range) if scan_range is not None and float(scan_range) > 0 else None
+        self.save_images_dir = str(save_images_dir).strip() if save_images_dir else None
 
         self.edge_detector_params = edge_detector_params
         self.calibration: Optional[StageCalibration] = None
@@ -878,6 +880,10 @@ class StageCalibrationScanOperation(Operation):
 
         cam_h, cam_w = frame.shape[:2]
         u_c, v_c = cam_w / 2.0, cam_h / 2.0
+
+        if self.save_images_dir:
+            os.makedirs(self.save_images_dir, exist_ok=True)
+            cv2.imwrite(os.path.join(self.save_images_dir, "scan_initial_pose.png"), frame)
 
         det_count, corners, ids = self._detect_markers(frame, flip_horizontal=False)
         flip_horizontal = False
@@ -1034,6 +1040,10 @@ class StageCalibrationScanOperation(Operation):
             cell_frame = camera.get_latest_frame()
             if cell_frame is None:
                 continue
+
+            if self.save_images_dir:
+                img_path = os.path.join(self.save_images_dir, f"scan_cell_r{r}_c{c}.png")
+                cv2.imwrite(img_path, cell_frame)
 
             det_cnt, det_corners, det_ids = self._detect_markers(
                 cell_frame, flip_horizontal=self.flip_horizontal
