@@ -71,6 +71,7 @@ class OMMStage(StageController):
 
     def home(self) -> bool:
         """Home all axes on the stage."""
+        super().home()
         if self.omm is None:
             return False
 

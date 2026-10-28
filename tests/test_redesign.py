@@ -210,6 +210,7 @@ class MockStage(StageController):
         return True
 
     def home(self):
+        super().home()
         self.moves.append(("home", {}))
         self.pos = (0.0, 0.0, 0.0)
         return True

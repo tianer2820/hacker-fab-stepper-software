@@ -59,6 +59,7 @@ class DummyStage(StageController):
         return True
 
     def home(self) -> bool:
+        super().home()
         self._simulate_move(0.0, 0.0, 0.0)
         return True
 

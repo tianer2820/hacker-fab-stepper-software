@@ -455,6 +455,7 @@ class GrblStage(StageController):
         For more info, please visit GRBL documentation wiki. 
 
         """
+        super().home()
         print("Sending Home Command...")
         if self.enable_homing:
             self._send_msg(b"$H\n")
