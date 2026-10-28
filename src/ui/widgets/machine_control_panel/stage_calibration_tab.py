@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -136,6 +137,30 @@ class StageCalibrationTabWidget(QScrollArea):
         exp_row.addWidget(self.spin_exposure_time, 1)
         s2_layout.addLayout(exp_row)
 
+        self.chk_s2_autofocus = QCheckBox("Perform autofocus on every node")
+        self.chk_s2_autofocus.setChecked(False)
+        self.chk_s2_autofocus.setToolTip(
+            "Initial autofocus is always performed at the start. "
+            "Check this to also run autofocus at every individual grid point (slower)."
+        )
+        s2_layout.addWidget(self.chk_s2_autofocus)
+
+        s2_range_row = QHBoxLayout()
+        s2_range_row.addWidget(QLabel("Pattern Range (0 for full):"))
+        self.spin_s2_range = QDoubleSpinBox()
+        self.spin_s2_range.setRange(0.0, 100000.0)
+        self.spin_s2_range.setValue(0.0)
+        self.spin_s2_range.setSingleStep(1000.0)
+        self.spin_s2_range.setSuffix(" µm")
+        self.spin_s2_range.setSpecialValueText("Full (from Stage 1)")
+        self.spin_s2_range.valueChanged.connect(self._update_s2_grid_label)
+        s2_range_row.addWidget(self.spin_s2_range, 1)
+        s2_layout.addLayout(s2_range_row)
+
+        self.lbl_s2_grid_info = QLabel("Computed Grid: Full (from Stage 1)")
+        self.lbl_s2_grid_info.setStyleSheet("color: #4da6ff; font-weight: bold; font-size: 11px;")
+        s2_layout.addWidget(self.lbl_s2_grid_info)
+
         self.btn_start_s2 = QPushButton("Run Stage 2 (Expose ArUco Grid)")
         self.btn_start_s2.setStyleSheet("font-weight: bold; padding: 6px;")
         self.btn_start_s2.clicked.connect(self._on_start_s2_clicked)
@@ -169,6 +194,22 @@ class StageCalibrationTabWidget(QScrollArea):
         self.chk_apply_now = QCheckBox("Apply calibration to stage immediately upon completion")
         self.chk_apply_now.setChecked(True)
         s3_layout.addWidget(self.chk_apply_now)
+
+        s3_range_row = QHBoxLayout()
+        s3_range_row.addWidget(QLabel("Scan Range (0 for full):"))
+        self.spin_s3_range = QDoubleSpinBox()
+        self.spin_s3_range.setRange(0.0, 100000.0)
+        self.spin_s3_range.setValue(0.0)
+        self.spin_s3_range.setSingleStep(1000.0)
+        self.spin_s3_range.setSuffix(" µm")
+        self.spin_s3_range.setSpecialValueText("Full (from Stage 1/2)")
+        self.spin_s3_range.valueChanged.connect(self._update_s3_grid_label)
+        s3_range_row.addWidget(self.spin_s3_range, 1)
+        s3_layout.addLayout(s3_range_row)
+
+        self.lbl_s3_grid_info = QLabel("Scan Grid: Full (from Stage 1/2)")
+        self.lbl_s3_grid_info.setStyleSheet("color: #4da6ff; font-weight: bold; font-size: 11px;")
+        s3_layout.addWidget(self.lbl_s3_grid_info)
 
         self.btn_start_s3 = QPushButton("Run Stage 3 (Scan & Reconstruct Global Map)")
         self.btn_start_s3.setStyleSheet("font-weight: bold; padding: 6px;")
@@ -221,6 +262,47 @@ class StageCalibrationTabWidget(QScrollArea):
             f"Computed Grid: {n} x {n} ({n*n} tags) | Step: {d:.1f} µm (FOV: {fov_um:.1f} µm)"
         )
 
+    def _get_step_distance_for_path(self, json_path: str, fallback_range: float) -> float:
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, "r") as f:
+                    data = json.load(f)
+                d = data.get("step_distance")
+                if d and float(d) > 0:
+                    return float(d)
+            except Exception:
+                pass
+        pixel_scale = (
+            self.engine.machine_config.stage_calibration.camera_pixel_size
+            if hasattr(self.engine, "machine_config")
+            else 1.0
+        )
+        cam_w, cam_h = 1920, 1080
+        if self.engine.camera is not None:
+            frame = self.engine.camera.get_latest_frame()
+            if frame is not None:
+                cam_h, cam_w = frame.shape[:2]
+        _, d = compute_calibration_grid_params(max(1000.0, fallback_range), pixel_scale, (cam_w, cam_h))
+        return d
+
+    def _update_s2_grid_label(self):
+        val = self.spin_s2_range.value()
+        if val <= 0.0:
+            self.lbl_s2_grid_info.setText("Computed Grid: Full (from Stage 1)")
+            return
+        step_dist = self._get_step_distance_for_path(self.txt_s2_input.text().strip(), val)
+        n = max(1, int(round(val / step_dist)) + 1)
+        self.lbl_s2_grid_info.setText(f"Computed Grid: {n} x {n} ({n*n} tags) | Step: {step_dist:.1f} µm")
+
+    def _update_s3_grid_label(self):
+        val = self.spin_s3_range.value()
+        if val <= 0.0:
+            self.lbl_s3_grid_info.setText("Scan Grid: Full (from Stage 1/2)")
+            return
+        step_dist = self._get_step_distance_for_path(self.txt_s3_input.text().strip(), val)
+        n = max(1, int(round(val / step_dist)) + 1)
+        self.lbl_s3_grid_info.setText(f"Scan Grid: {n} x {n} ({n*n} tags) | Step: {step_dist:.1f} µm")
+
     def _on_browse_s1_clicked(self):
         path, _ = QFileDialog.getSaveFileName(
             self, "Select Stage 1 Output JSON", self.txt_s1_file.text(), "JSON Files (*.json)"
@@ -234,6 +316,7 @@ class StageCalibrationTabWidget(QScrollArea):
         )
         if path:
             self.txt_s2_input.setText(path)
+            self._update_s2_grid_label()
 
     def _on_browse_s3_input_clicked(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -241,6 +324,7 @@ class StageCalibrationTabWidget(QScrollArea):
         )
         if path:
             self.txt_s3_input.setText(path)
+            self._update_s3_grid_label()
 
     def _on_browse_s3_output_clicked(self):
         path, _ = QFileDialog.getSaveFileName(
@@ -267,9 +351,12 @@ class StageCalibrationTabWidget(QScrollArea):
         self.bridge.start_operation(op)
 
     def _on_start_s2_clicked(self):
+        s2_range = self.spin_s2_range.value()
         op = StageCalibrationPatternOperation(
             input_json_path=self.txt_s2_input.text().strip(),
             exposure_time=self.spin_exposure_time.value(),
+            autofocus=self.chk_s2_autofocus.isChecked(),
+            pattern_range=s2_range if s2_range > 0 else None,
         )
         self._active_op = op
         self.lbl_status.setText("Status: Starting Stage 2 (Patterning)...")
@@ -282,11 +369,13 @@ class StageCalibrationTabWidget(QScrollArea):
             if hasattr(self.engine, "machine_config")
             else 1.0
         )
+        s3_range = self.spin_s3_range.value()
         op = StageCalibrationScanOperation(
             input_json_path=self.txt_s3_input.text().strip(),
             output_json_path=self.txt_s3_output.text().strip(),
             camera_pixel_size=pixel_scale,
             apply_to_stage=self.chk_apply_now.isChecked(),
+            scan_range=s3_range if s3_range > 0 else None,
         )
         self._active_op = op
         self.lbl_status.setText("Status: Starting Stage 3 (Optical Scan)...")
@@ -326,3 +415,6 @@ class StageCalibrationTabWidget(QScrollArea):
         self.txt_s3_output.setEnabled(not is_busy)
         self.btn_browse_s3_output.setEnabled(not is_busy)
         self.chk_apply_now.setEnabled(not is_busy)
+        self.chk_s2_autofocus.setEnabled(not is_busy)
+        self.spin_s2_range.setEnabled(not is_busy)
+        self.spin_s3_range.setEnabled(not is_busy)

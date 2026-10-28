@@ -6,8 +6,11 @@ from typing import Optional, Tuple
 from core.events import ColorMode
 
 
-def get_aruco_dict(dict_id: int = cv2.aruco.DICT_4X4_250) -> cv2.aruco.Dictionary:
-    """Returns the predefined OpenCV ArUco dictionary."""
+def get_aruco_dict(dict_id: int | cv2.aruco.Dictionary = cv2.aruco.DICT_4X4_250) -> cv2.aruco.Dictionary:
+    """Returns the predefined OpenCV ArUco dictionary or returns the dictionary object directly."""
+    dict_type = getattr(cv2.aruco, "Dictionary", None)
+    if dict_type is not None and isinstance(dict_id, dict_type):
+        return dict_id
     return cv2.aruco.getPredefinedDictionary(dict_id)
 
 

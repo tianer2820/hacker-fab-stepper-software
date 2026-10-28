@@ -6,6 +6,7 @@ import numpy as np
 import tempfile
 
 import unittest
+from unittest.mock import MagicMock, patch
 from pathlib import Path
 
 # Add src to sys.path
@@ -13,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from stage_control.calibration import StageCalibration, StageCalibrationPoint
 from stage_control.dummy_stage import DummyStage
+from operations.exposure import ExposureOperation
 
 
 class TestStageCalibration(unittest.TestCase):
@@ -78,6 +80,45 @@ class TestStageCalibration(unittest.TestCase):
         self.assertAlmostEqual(corr_pos[0], 510.0, places=2)
         self.assertAlmostEqual(corr_pos[1], 520.0, places=2)
         self.assertAlmostEqual(corr_pos[2], 0.0, places=2)
+
+    def test_corr_to_raw_strict_list(self):
+        # Strict list of 3 floats
+        raw_dict = self.cal.corr_to_raw([510.0, 520.0, 0.0])
+        self.assertAlmostEqual(raw_dict["x"], 500.0, places=2)
+        self.assertAlmostEqual(raw_dict["y"], 500.0, places=2)
+        self.assertAlmostEqual(raw_dict["z"], 115.0, places=2)
+
+        # Non-3-element input raises ValueError
+        with self.assertRaises(ValueError):
+            self.cal.corr_to_raw([510.0, 520.0])
+        with self.assertRaises(ValueError):
+            self.cal.corr_to_raw({"x": 510.0, "y": 520.0, "z": 0.0})
+
+    def test_90_degree_rotated_matrix_mapping(self):
+        # Stage +X is Camera +Y: [x_stage, y_stage]^T = [[0, -1], [1, 0]] * [x_cam, y_cam]^T
+        M_rot = np.array([[0.0, -1.0], [1.0, 0.0]])
+        cal = StageCalibration(
+            grid_shape=(2, 2),
+            points=self.points,
+            cam_to_stage_matrix=M_rot,
+        )
+        self.assertIsNotNone(cal.cam_to_stage_matrix)
+
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
+            path = tf.name
+        try:
+            cal.save_to_json(path)
+            with open(path, "r") as f:
+                saved = json.load(f)
+            self.assertNotIn("dict_id", saved)
+            self.assertIn("cam_to_stage_matrix", saved)
+
+            loaded = StageCalibration.load_from_json(path)
+            self.assertIsNotNone(loaded.cam_to_stage_matrix)
+            np.testing.assert_allclose(loaded.cam_to_stage_matrix, M_rot)
+        finally:
+            if os.path.exists(path):
+                os.remove(path)
 
 
 class TestStageControllerCalibration(unittest.TestCase):
@@ -156,6 +197,39 @@ class TestStageControllerCalibration(unittest.TestCase):
         self.assertAlmostEqual(raw_pos[0], 500.0, places=2)
         self.assertAlmostEqual(raw_pos[1], 0.0, places=2)
         self.assertAlmostEqual(raw_pos[2], 110.0, places=2)
+
+    def test_z_calib_only_move_absolute_and_relative(self):
+        stage = DummyStage(delay=0.0)
+        # Stage with both XY shift (10 in x, 20 in y) and Z surface (100.0)
+        points = [
+            StageCalibrationPoint((0, 0), 0, (0.0, 0.0), (10.0, 20.0), 100.0),
+            StageCalibrationPoint((0, 1), 1, (1000.0, 0.0), (1010.0, 20.0), 100.0),
+            StageCalibrationPoint((1, 0), 2, (0.0, 1000.0), (10.0, 1020.0), 100.0),
+            StageCalibrationPoint((1, 1), 3, (1000.0, 1000.0), (1010.0, 1020.0), 100.0),
+        ]
+        cal = StageCalibration((2, 2), points, stage_type="dummy")
+        self.assertTrue(cal.has_xy_calibration)
+        stage.set_calibration(cal)
+
+        # Normal move_absolute applies XY and Z calibration:
+        stage.move_absolute({"x": 510.0, "y": 520.0, "z": 0.0}, z_calib_only=False)
+        self.assertAlmostEqual(stage.get_raw_position()[0], 500.0, places=2)
+        self.assertAlmostEqual(stage.get_raw_position()[1], 500.0, places=2)
+        self.assertAlmostEqual(stage.get_raw_position()[2], 100.0, places=2)
+
+        # With z_calib_only=True: XY calibration is skipped, only Z calibration is applied
+        stage.move_absolute({"x": 500.0, "y": 500.0, "z": 5.0}, z_calib_only=True)
+        raw_pos = stage.get_raw_position()
+        self.assertAlmostEqual(raw_pos[0], 500.0, places=2)
+        self.assertAlmostEqual(raw_pos[1], 500.0, places=2)
+        self.assertAlmostEqual(raw_pos[2], 105.0, places=2)
+
+        # With z_calib_only=True on move_relative:
+        stage.move_relative({"x": 50.0, "y": -50.0, "z": 2.0}, z_calib_only=True)
+        raw_pos2 = stage.get_raw_position()
+        self.assertAlmostEqual(raw_pos2[0], 550.0, places=2)
+        self.assertAlmostEqual(raw_pos2[1], 450.0, places=2)
+        self.assertAlmostEqual(raw_pos2[2], 107.0, places=2)
 
     def test_z_leveling_only_identity_outside_grid(self):
         # Grid defined on [1000, 2000]
@@ -470,7 +544,12 @@ class TestStageCalibrationOperations(unittest.TestCase):
                 stabilization_delay=0.0,
             )
 
-            with patch("operations.stage_calibration.ExposureOperation", wraps=ExposureOperation) as mock_exp_cls:
+            with patch("operations.stage_calibration.ExposureOperation", wraps=ExposureOperation) as mock_exp_cls, \
+                 patch("operations.stage_calibration.AutofocusOperation") as mock_af_cls:
+                mock_af_instance = MagicMock()
+                mock_af_instance.execute.return_value = None
+                mock_af_cls.return_value = mock_af_instance
+
                 err = op.execute(ctx, lambda p, m: None)
                 self.assertIsNone(err)
                 self.assertEqual(mock_exp_cls.call_count, 4)
@@ -478,6 +557,64 @@ class TestStageCalibrationOperations(unittest.TestCase):
                 call_args = mock_exp_cls.call_args_list[0]
                 self.assertIsNone(call_args.kwargs.get("layer_index"))
                 self.assertAlmostEqual(call_args.kwargs.get("exposure_time"), 10.0)
+                # Verify initial autofocus is ALWAYS called exactly once when autofocus=False
+                self.assertEqual(mock_af_cls.call_count, 1)
+
+    def test_stage2_per_node_autofocus_and_pattern_range(self):
+        from unittest.mock import patch, MagicMock
+        from core.operation import ExecutionContext
+        from operations.stage_calibration import (
+            StageCalibrationPatternOperation,
+            generate_canonical_ar_tag,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s1_path = os.path.join(tmpdir, "stage1.json")
+            # 3x3 grid with step_distance = 1000.0
+            pts = []
+            for r in range(3):
+                for c in range(3):
+                    pts.append(StageCalibrationPoint((r, c), r * 3 + c, (c * 1000.0, r * 1000.0), (c * 1000.0, r * 1000.0), 100.0))
+            cal = StageCalibration(
+                grid_shape=(3, 3),
+                points=pts,
+                stage_type="dummy",
+                step_distance=1000.0,
+            )
+            cal.save_to_json(s1_path)
+
+            stage = DummyStage(delay=0.0)
+            projector = MockProjector()
+            tag_img, _ = generate_canonical_ar_tag(marker_id=0, size=100)
+            frame = np.zeros((480, 640, 3), dtype=np.uint8)
+            h, w = tag_img.shape
+            frame[100 : 100 + h, 100 : 100 + w, 0] = tag_img
+            frame[100 : 100 + h, 100 : 100 + w, 1] = tag_img
+            frame[100 : 100 + h, 100 : 100 + w, 2] = tag_img
+            camera = MockCamera(frame=frame)
+            ctx = ExecutionContext(stage=stage, camera=camera, projector=projector, delay_func=lambda s: None)
+
+            # Test 1: pattern_range in um specifies smaller subgrid (e.g. 1000 um on 1000 um step = 2x2 = 4 tags)
+            op = StageCalibrationPatternOperation(
+                input_json_path=s1_path,
+                exposure_time=0.01,
+                stabilization_delay=0.0,
+                autofocus=True,  # per-node autofocus enabled
+                pattern_range=1000.0,
+            )
+
+            with patch("operations.stage_calibration.ExposureOperation", wraps=ExposureOperation) as mock_exp_cls, \
+                 patch("operations.stage_calibration.AutofocusOperation") as mock_af_cls:
+                mock_af_instance = MagicMock()
+                mock_af_instance.execute.return_value = None
+                mock_af_cls.return_value = mock_af_instance
+
+                err = op.execute(ctx, lambda p, m: None)
+                self.assertIsNone(err)
+                # 2x2 subgrid exposed -> 4 exposures
+                self.assertEqual(mock_exp_cls.call_count, 4)
+                # 1 initial autofocus + 4 per-node autofocus = 5 autofocus calls
+                self.assertEqual(mock_af_cls.call_count, 5)
 
     def test_pass2_multi_tag_pose_averaging(self):
         from core.operation import ExecutionContext

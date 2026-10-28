@@ -90,12 +90,12 @@ def save_aruco_dict_to_file(dictionary: cv2.aruco.Dictionary, file_path: str = A
             fs.release()
 
 
-def get_aruco_dict(dict_id: Any = None, cache_file: str = ARUCO_DICT_CACHE_FILE) -> cv2.aruco.Dictionary:
+def get_aruco_dict(dictionary: Any = None, cache_file: str = ARUCO_DICT_CACHE_FILE) -> cv2.aruco.Dictionary:
     """Returns a custom ArUco dictionary generated with 5x5 markers and 10000 IDs,
     loading from a local cached FileStorage file if available."""
     dict_type = getattr(cv2.aruco, "Dictionary", None)
-    if isinstance(dict_type, type) and isinstance(dict_id, dict_type):
-        return dict_id
+    if isinstance(dict_type, type) and isinstance(dictionary, dict_type):
+        return dictionary
 
     # 1. Try loading from cached local file first
     loaded = load_aruco_dict_from_file(cache_file)
@@ -329,8 +329,6 @@ class StageCalibrationZFocusOperation(Operation):
         self.apply_to_stage = bool(apply_to_stage)
         self.grid_size = int(grid_size) if grid_size is not None else None
         self.step_distance = float(step_distance) if step_distance is not None else None
-        
-        self.dict_id = dictionary
 
         self._current_sub_op: Optional[Operation] = None
         self.calibration: Optional[StageCalibration] = None
@@ -455,7 +453,6 @@ class StageCalibrationZFocusOperation(Operation):
             stage_type=type(stage).__name__,
             step_distance=step_dist,
             calibration_range=self.calibration_range,
-            dict_id=self.dict_id,
         )
         self.calibration.save_to_json(output_path)
 
@@ -484,16 +481,17 @@ class StageCalibrationPatternOperation(Operation):
         input_json_path: Optional[str] = None,
         exposure_time: Optional[float] = None,
         stabilization_delay: float = 1.0,
-        uv_z_offset: Optional[float] = None,
-        dictionary: cv2.aruco.Dictionary = DEFAULT_ARUCO_DICT,
+        autofocus: bool = False,
+        grid_size: Optional[int] = None,
+        pattern_range: Optional[float] = None,
     ):
         super().__init__("Stage Calibration - Stage 2 (Patterning)")
         self.input_json_path = input_json_path
         self.exposure_time = float(exposure_time) if exposure_time is not None else None
         self.stabilization_delay = float(stabilization_delay)
-        self.uv_z_offset = float(uv_z_offset) if uv_z_offset is not None else None
-        
-        self.dict_id = dictionary
+        self.autofocus = bool(autofocus)
+        self.grid_size = int(grid_size) if grid_size is not None and int(grid_size) > 0 else None
+        self.pattern_range = float(pattern_range) if pattern_range is not None and float(pattern_range) > 0 else None
 
         self._current_sub_op: Optional[Operation] = None
         self.corrected_proj_corners: Optional[np.ndarray] = None
@@ -536,6 +534,7 @@ class StageCalibrationPatternOperation(Operation):
             return f"No points found in calibration file: {input_path}"
 
         stage = context.stage
+        stage.set_calibration(cal)
         projector = context.projector
         camera = context.camera
         pw, ph = projector.projector_size()
@@ -549,15 +548,6 @@ class StageCalibrationPatternOperation(Operation):
                 else 8.0
             )
         )
-        effective_uv_offset = (
-            self.uv_z_offset
-            if self.uv_z_offset is not None
-            else (
-                context.machine_config.autofocus.uv_z_offset
-                if context.machine_config is not None
-                else 0.0
-            )
-        )
 
         init_frame = camera.get_latest_frame()
         cam_h, cam_w = init_frame.shape[:2] if init_frame is not None else (1080, 1920)
@@ -565,7 +555,6 @@ class StageCalibrationPatternOperation(Operation):
 
         ny, nx = cal.grid_shape
         step_dist = cal.step_distance or 1000.0
-        dict_id = cal.dict_id or self.dict_id
         pts_by_id: Dict[int, StageCalibrationPoint] = {p.marker_id: p for p in cal.points}
 
         total_points = nx * ny
@@ -579,7 +568,7 @@ class StageCalibrationPatternOperation(Operation):
             grid_img, tag_coords = generate_calibration_tag_grid_with_coords(
                 grid_n=2,
                 canvas_size=(pw, ph),
-                dict_id=cv2.aruco.DICT_4X4_250,
+                dict_id=DEFAULT_ARUCO_DICT,
             )
             projector.set_generated_image(grid_img)
             projector.set_color_mode(ColorMode.RED)
@@ -589,10 +578,10 @@ class StageCalibrationPatternOperation(Operation):
 
             cal_frame = camera.get_latest_frame()
             flip_horizontal = False
-            det_count, corners, ids = detect_ar_tags(cal_frame, dict_id=cv2.aruco.DICT_4X4_250, flip_horizontal=False)
+            det_count, corners, ids = detect_ar_tags(cal_frame, dict_id=DEFAULT_ARUCO_DICT, flip_horizontal=False)
             if det_count < 2:
                 det_count_flip, corners_flip, ids_flip = detect_ar_tags(
-                    cal_frame, dict_id=cv2.aruco.DICT_4X4_250, flip_horizontal=True
+                    cal_frame, dict_id=DEFAULT_ARUCO_DICT, flip_horizontal=True
                 )
                 if det_count_flip > det_count:
                     det_count, corners, ids = det_count_flip, corners_flip, ids_flip
@@ -634,7 +623,7 @@ class StageCalibrationPatternOperation(Operation):
                     marker_id=0,
                     target_proj_corners=proj_pts,
                     canvas_size=(pw, ph),
-                    dict_id=dict_id,
+                    dictionary=DEFAULT_ARUCO_DICT,
                 )
                 projector.set_generated_image(test_img)
                 projector.set_color_mode(ColorMode.RED)
@@ -642,7 +631,7 @@ class StageCalibrationPatternOperation(Operation):
                 context.delay_func(self.stabilization_delay)
 
                 iter_frame = camera.get_latest_frame()
-                c_cnt, c_corners, _ = detect_ar_tags(iter_frame, dict_id=dict_id, flip_horizontal=self.flip_horizontal)
+                c_cnt, c_corners, _ = detect_ar_tags(iter_frame, dict_id=DEFAULT_ARUCO_DICT, flip_horizontal=self.flip_horizontal)
                 if c_cnt > 0 and c_corners:
                     detected_tl = c_corners[0].reshape(-1, 2)[0]
                     err = detected_tl - np.array([u_c, v_c])
@@ -653,17 +642,43 @@ class StageCalibrationPatternOperation(Operation):
 
             self.corrected_proj_corners = transform_points_projector_to_camera(cam_corners, H_cam_to_proj)
 
+            # Initial autofocus is ALWAYS performed before patterning
+            report_progress(0.12, f"Performing initial autofocus...")
+            af_op = AutofocusOperation()
+            af_err = self._run_sub_op(af_op, context, sub_progress(report_progress, 0.12, 0.15, prefix="Initial AF"))
+            if af_err or self.is_aborted:
+                return af_err or "Stage 2 calibration aborted during initial autofocus"
+
+            af_start_z = stage.get_raw_position()[2]
+
             # =========================================================================
             # STEP 2: EXPOSE ARUCO GRID USING CALIBRATED Z FOCUS SURFACE
             # =========================================================================
-            report_progress(0.15, f"Step 2/2: Patterning {nx}x{ny} grid using Stage 1 calibrated Z heights...")
+            report_progress(0.15, f"Step 2/2: Patterning grid using Stage 1 calibrated Z heights...")
             loop_span = 0.85
             base_offset = 0.15
             c0 = (nx - 1) // 2
             r0 = (ny - 1) // 2
             spiral_indices = generate_spiral_grid_indices(nx, ny)
 
-            for point_idx, (r, c) in enumerate(spiral_indices):
+            # Determine grid size if pattern_range is specified
+            eff_grid_size = self.grid_size
+            if eff_grid_size is None and self.pattern_range is not None and self.pattern_range > 0:
+                eff_grid_size = max(1, int(round(self.pattern_range / step_dist)) + 1)
+
+            if eff_grid_size is not None and eff_grid_size < nx:
+                n_sub = eff_grid_size
+                r_min = r0 - n_sub // 2
+                r_max = r_min + n_sub - 1
+                c_min = c0 - n_sub // 2
+                c_max = c_min + n_sub - 1
+                pattern_indices = [(r, c) for (r, c) in spiral_indices if r_min <= r <= r_max and c_min <= c <= c_max]
+            else:
+                pattern_indices = spiral_indices
+
+            total_points = len(pattern_indices)
+
+            for point_idx, (r, c) in enumerate(pattern_indices):
                 if self.is_aborted:
                     return "Stage 2 calibration aborted"
 
@@ -673,30 +688,49 @@ class StageCalibrationPatternOperation(Operation):
                 pt = pts_by_id.get(marker_id)
                 target_raw_x = pt.raw_xy[0] if pt else (start_x + (c - c0) * step_dist)
                 target_raw_y = pt.raw_xy[1] if pt else (start_y + (r - r0) * step_dist)
-                calibrated_z = (pt.z_focus if pt else start_z) + effective_uv_offset
 
                 report_progress(
                     prog_frac,
-                    f"Point {point_idx + 1}/{total_points} (Grid [{r}, {c}], Tag ID {marker_id}): Moving to ({target_raw_x:.1f}, {target_raw_y:.1f}, {calibrated_z:.1f} µm)...",
+                    f"Point {point_idx + 1}/{total_points} (Grid [{r}, {c}], Tag ID {marker_id}): Moving to ({target_raw_x:.1f}, {target_raw_y:.1f})...",
                 )
-                stage.move_absolute_raw({"x": target_raw_x, "y": target_raw_y, "z": calibrated_z})
+                stage.move_absolute(
+                    {"x": target_raw_x, "y": target_raw_y},
+                    z_calib_only=True,
+                )
                 context.delay_func(self.stabilization_delay)
 
-                # Expose single ArUco marker directly (no autofocus sweep needed!)
+                pt_span = loop_span / total_points
+                # If autofocus checkbox is enabled, perform autofocus at every node
+                if self.autofocus:
+                    report_progress(
+                        prog_frac + 0.02 * pt_span,
+                        f"Point {point_idx + 1}/{total_points} (Grid [{r}, {c}], Tag ID {marker_id}): Autofocusing...",
+                    )
+                    node_af_op = AutofocusOperation()
+                    af_reporter = sub_progress(
+                        report_progress,
+                        prog_frac + 0.02 * pt_span,
+                        prog_frac + 0.3 * pt_span,
+                        prefix=f"AF Point {point_idx + 1}/{total_points}",
+                    )
+                    af_err = self._run_sub_op(node_af_op, context, af_reporter)
+                    if af_err or self.is_aborted:
+                        return af_err or "Stage 2 calibration aborted during per-node autofocus"
+
+                # Expose single ArUco marker directly
                 tag_img = warp_marker_to_projector(
                     marker_id=marker_id,
                     target_proj_corners=self.corrected_proj_corners,
                     canvas_size=(pw, ph),
-                    dict_id=dict_id,
+                    dictionary=DEFAULT_ARUCO_DICT,
                 )
                 projector.set_generated_image(tag_img)
                 projector.set_image_source(ProjectorImageSource.GENERATED)
 
                 exp_op = ExposureOperation(layer_index=None, exposure_time=effective_exp_time * 1000.0)
-                pt_span = loop_span / total_points
                 exp_reporter = sub_progress(
                     report_progress,
-                    prog_frac + 0.1 * pt_span,
+                    prog_frac + (0.35 if self.autofocus else 0.1) * pt_span,
                     prog_frac + pt_span,
                     prefix=f"Point {point_idx + 1}/{total_points} (Grid [{r}, {c}], Tag ID {marker_id})",
                 )
@@ -704,9 +738,8 @@ class StageCalibrationPatternOperation(Operation):
                 if exp_err or self.is_aborted:
                     return exp_err or "Stage 2 calibration aborted during exposure"
 
-            # Update calibration file to record dict_id and flip_horizontal
+            # Update calibration file to record flip_horizontal
             cal.flip_horizontal = self.flip_horizontal
-            cal.dict_id = dict_id
             cal.save_to_json(input_path)
 
             report_progress(
@@ -737,7 +770,8 @@ class StageCalibrationScanOperation(Operation):
         camera_pixel_size: Optional[float] = None,
         stabilization_delay: float = 0.5,
         apply_to_stage: bool = True,
-        dictionary: cv2.aruco.Dictionary = DEFAULT_ARUCO_DICT,
+        grid_size: Optional[int] = None,
+        scan_range: Optional[float] = None,
         edge_detector_params: Optional[EdgeDetectorParameters] = None,
     ):
         super().__init__("Stage Calibration - Stage 3 (Optical Scan)")
@@ -746,16 +780,17 @@ class StageCalibrationScanOperation(Operation):
         self.camera_pixel_size = float(camera_pixel_size) if camera_pixel_size is not None else None
         self.stabilization_delay = float(stabilization_delay)
         self.apply_to_stage = bool(apply_to_stage)
-        
-        self.dict_id = dictionary
+        self.grid_size = int(grid_size) if grid_size is not None and int(grid_size) > 0 else None
+        self.scan_range = float(scan_range) if scan_range is not None and float(scan_range) > 0 else None
+
         self.edge_detector_params = edge_detector_params
         self.calibration: Optional[StageCalibration] = None
         self.flip_horizontal: bool = False
+        self.cam_to_stage_matrix: Optional[np.ndarray] = None
 
     def _detect_markers(
         self,
         frame: Optional[np.ndarray],
-        dict_id: Any = None,
         flip_horizontal: bool = False,
     ) -> Tuple[int, List[np.ndarray], Optional[np.ndarray]]:
         """Detects ArUco markers using edge_artag detector."""
@@ -763,16 +798,15 @@ class StageCalibrationScanOperation(Operation):
             return 0, [], None
 
         img = cv2.flip(frame, 1) if flip_horizontal else frame
-        dictionary = get_aruco_dict(dict_id)
         corners, ids, _ = detect_edge_markers(
             img,
-            dictionary=dictionary,
+            dictionary=DEFAULT_ARUCO_DICT,
             parameters=self.edge_detector_params,
         )
         count = len(ids) if ids is not None else 0
         if count == 0:
             # Fall back to standard OpenCV detector as safety net
-            count, corners, ids = detect_ar_tags(frame, dict_id=dict_id, flip_horizontal=flip_horizontal)
+            count, corners, ids = detect_ar_tags(frame, dict_id=DEFAULT_ARUCO_DICT, flip_horizontal=flip_horizontal)
         return count, corners, ids
 
     def execute(self, context: ExecutionContext, report_progress: Callable[[float, str], None]) -> Optional[str]:
@@ -808,11 +842,6 @@ class StageCalibrationScanOperation(Operation):
         grid_shape = tuple(stage1_data.get("grid_shape", (0, 0)))
         ny, nx = grid_shape
         step_dist = float(stage1_data.get("step_distance", 5000.0))
-        raw_dict_id = stage1_data.get("dict_id", self.dict_id)
-        if isinstance(raw_dict_id, (int, float)) and not isinstance(raw_dict_id, bool):
-            dict_id = int(raw_dict_id)
-        else:
-            dict_id = raw_dict_id
         raw_points = stage1_data.get("points", [])
 
         if len(raw_points) == 0:
@@ -823,9 +852,10 @@ class StageCalibrationScanOperation(Operation):
         nominal_pos: Dict[int, Tuple[float, float]] = {
             int(p["marker_id"]): (float(p["raw_xy"][0]), float(p["raw_xy"][1])) for p in raw_points
         }
-        z_dict: Dict[int, float] = {int(p["marker_id"]): float(p["z_focus"]) for p in raw_points}
 
+        cal = StageCalibration.load_from_json(input_path)
         stage = context.stage
+        stage.set_calibration(cal)
         camera = context.camera
 
         # =========================================================================
@@ -839,10 +869,10 @@ class StageCalibrationScanOperation(Operation):
         cam_h, cam_w = frame.shape[:2]
         u_c, v_c = cam_w / 2.0, cam_h / 2.0
 
-        det_count, corners, ids = self._detect_markers(frame, dict_id=dict_id, flip_horizontal=False)
+        det_count, corners, ids = self._detect_markers(frame, flip_horizontal=False)
         flip_horizontal = False
         if det_count == 0:
-            det_count, corners, ids = self._detect_markers(frame, dict_id=dict_id, flip_horizontal=True)
+            det_count, corners, ids = self._detect_markers(frame, flip_horizontal=True)
             flip_horizontal = True
         self.flip_horizontal = flip_horizontal
 
@@ -874,81 +904,149 @@ class StageCalibrationScanOperation(Operation):
         R_chip = np.array([[cos_t, -sin_t], [sin_t, cos_t]], dtype=np.float64)
         R_inv = np.linalg.inv(R_chip)
 
-        # Estimate wafer origin from matched tags
+        # =========================================================================
+        # STEP 1.5: TEST MOVE (STAGE +X, +Y BY HALF FOV) TO SOLVE STAGE-CAMERA MATRIX
+        # =========================================================================
+        report_progress(0.10, "Performing test moves (half FOV) to estimate stage-to-camera transform...")
+        track_id = matched_tags[0][0]
+        track_c0 = np.mean(matched_tags[0][1], axis=0)
+        d_test = max(50.0, 0.3 * min(cam_w, cam_h) * effective_pixel_scale)
+        M_cam_to_stage = np.eye(2, dtype=np.float64)
+
+        try:
+            # Step along stage +X
+            if stage.move_absolute({"x": cur_stage_x + d_test, "y": cur_stage_y}, z_calib_only=True):
+                context.delay_func(self.stabilization_delay)
+                fx = camera.get_latest_frame()
+                cnt_x, crn_x, ids_x = self._detect_markers(fx, flip_horizontal=self.flip_horizontal)
+                cx_pos = None
+                if cnt_x > 0 and ids_x is not None:
+                    for idx_t, mid_val in enumerate(ids_x.flatten()):
+                        if int(mid_val) == track_id:
+                            cx_pos = np.mean(crn_x[idx_t].reshape(-1, 2), axis=0)
+                            break
+
+                # Step along stage +Y
+                if stage.move_absolute({"x": cur_stage_x, "y": cur_stage_y + d_test}, z_calib_only=True):
+                    context.delay_func(self.stabilization_delay)
+                    fy = camera.get_latest_frame()
+                    cnt_y, crn_y, ids_y = self._detect_markers(fy, flip_horizontal=self.flip_horizontal)
+                    cy_pos = None
+                    if cnt_y > 0 and ids_y is not None:
+                        for idx_t, mid_val in enumerate(ids_y.flatten()):
+                            if int(mid_val) == track_id:
+                                cy_pos = np.mean(crn_y[idx_t].reshape(-1, 2), axis=0)
+                                break
+
+                    if cx_pos is not None and cy_pos is not None:
+                        delta_px_x = (cx_pos - track_c0) * effective_pixel_scale
+                        delta_px_y = (cy_pos - track_c0) * effective_pixel_scale
+                        J_stage_to_cam = np.array([
+                            [float(delta_px_x[0]) / d_test, float(delta_px_y[0]) / d_test],
+                            [float(delta_px_x[1]) / d_test, float(delta_px_y[1]) / d_test],
+                        ], dtype=np.float64)
+                        if abs(np.linalg.det(J_stage_to_cam)) > 1e-6:
+                            M_cam_to_stage = np.linalg.inv(J_stage_to_cam)
+        finally:
+            stage.move_absolute({"x": cur_stage_x, "y": cur_stage_y}, z_calib_only=True)
+            context.delay_func(self.stabilization_delay)
+
+        self.cam_to_stage_matrix = M_cam_to_stage
+
+        # Estimate wafer origin from matched tags using M_cam_to_stage
         wafer_origin_estimates = []
         for mid_int, tag_corners in matched_tags:
             tag_cam_center = np.mean(tag_corners, axis=0)
             delta_cam_px = tag_cam_center - np.array([u_c, v_c])
             delta_cam_um = delta_cam_px * effective_pixel_scale
-            tag_stage_pos = np.array([cur_stage_x + delta_cam_um[0], cur_stage_y + delta_cam_um[1]], dtype=np.float64)
+            tag_stage_shift = M_cam_to_stage @ delta_cam_um
+            tag_stage_pos = np.array([cur_stage_x + tag_stage_shift[0], cur_stage_y + tag_stage_shift[1]], dtype=np.float64)
 
             ref_grid_r, ref_grid_c = nominal_dict[mid_int]["grid_index"]
             tag_wafer_offset = np.array([ref_grid_c * step_dist, ref_grid_r * step_dist], dtype=np.float64)
-            origin_est = tag_stage_pos - (R_chip @ tag_wafer_offset)
+            wafer_cam_vec = R_chip @ tag_wafer_offset
+            origin_est = tag_stage_pos - (M_cam_to_stage @ wafer_cam_vec)
             wafer_origin_estimates.append(origin_est)
 
         wafer_stage_origin = np.mean(wafer_origin_estimates, axis=0)
 
         report_progress(
             0.12,
-            f"Pose estimated from {len(matched_tags)} tag(s) (IDs {[t[0] for t in matched_tags]}): "
-            f"angle {np.degrees(theta):.2f}°, origin ({wafer_stage_origin[0]:.1f}, {wafer_stage_origin[1]:.1f}) µm",
+            f"Pose estimated from {len(matched_tags)} tag(s): angle {np.degrees(theta):.2f}°, "
+            f"origin ({wafer_stage_origin[0]:.1f}, {wafer_stage_origin[1]:.1f}) µm",
         )
 
         def wafer_to_stage_pos(wafer_xy: np.ndarray) -> np.ndarray:
-            return wafer_stage_origin + (R_chip @ wafer_xy)
+            return wafer_stage_origin + (M_cam_to_stage @ (R_chip @ wafer_xy))
 
         # =========================================================================
-        # STEP 2: SCAN 2x2 CELLS & RECORD RELATIVE INTRA-FRAME MEASUREMENTS
+        # STEP 2: SCAN CELLS & RECORD RELATIVE INTRA-FRAME MEASUREMENTS
         # =========================================================================
         measurements: List[Tuple[int, int, float, float]] = []
-        num_cells = max(1, (ny - 1) * (nx - 1))
-        cell_idx = 0
 
-        for r in range(ny - 1):
-            for c in range(nx - 1):
-                if self.is_aborted:
-                    return "Stage 3 calibration aborted"
+        eff_grid_size = self.grid_size
+        if eff_grid_size is None and self.scan_range is not None and self.scan_range > 0:
+            eff_grid_size = max(1, int(round(self.scan_range / step_dist)) + 1)
 
-                cell_idx += 1
-                prog = 0.15 + (cell_idx / num_cells) * 0.70
+        if eff_grid_size is not None and eff_grid_size < nx:
+            n_sub = eff_grid_size
+            r0 = (ny - 1) // 2
+            c0 = (nx - 1) // 2
+            r_min = max(0, r0 - n_sub // 2)
+            r_max = min(ny - 2, r_min + n_sub - 2)
+            c_min = max(0, c0 - n_sub // 2)
+            c_max = min(nx - 2, c_min + n_sub - 2)
+            cell_list = [(r, c) for r in range(r_min, r_max + 1) for c in range(c_min, c_max + 1)]
+        else:
+            cell_list = [(r, c) for r in range(ny - 1) for c in range(nx - 1)]
 
-                cell_center_wafer = np.array([(c + 0.5) * step_dist, (r + 0.5) * step_dist], dtype=np.float64)
-                target_stage_pos = wafer_to_stage_pos(cell_center_wafer)
+        num_cells = max(1, len(cell_list))
 
-                avg_z = z_dict.get(r * nx + c, stage.get_raw_position()[2])
-                report_progress(
-                    prog,
-                    f"Scanning Cell [{r}, {c}] ({cell_idx}/{num_cells}): Moving to cluster center...",
-                )
-                stage.move_absolute_raw({"x": float(target_stage_pos[0]), "y": float(target_stage_pos[1]), "z": avg_z})
-                context.delay_func(self.stabilization_delay)
+        for cell_idx, (r, c) in enumerate(cell_list, start=1):
+            if self.is_aborted:
+                return "Stage 3 calibration aborted"
 
-                cell_frame = camera.get_latest_frame()
-                if cell_frame is None:
-                    continue
+            prog = 0.15 + (cell_idx / num_cells) * 0.70
 
-                det_cnt, det_corners, det_ids = self._detect_markers(
-                    cell_frame, dict_id=dict_id, flip_horizontal=self.flip_horizontal
-                )
+            cell_center_wafer = np.array([(c + 0.5) * step_dist, (r + 0.5) * step_dist], dtype=np.float64)
+            target_stage_pos = wafer_to_stage_pos(cell_center_wafer)
 
-                if det_cnt >= 2 and det_ids is not None:
-                    centers_in_frame: Dict[int, np.ndarray] = {}
-                    for idx_m, mid_val in enumerate(det_ids.flatten()):
-                        m_int = int(mid_val)
-                        if m_int in nominal_dict:
-                            pts = det_corners[idx_m].reshape(-1, 2)
-                            centers_in_frame[m_int] = np.mean(pts, axis=0)
+            report_progress(
+                prog,
+                f"Scanning Cell [{r}, {c}] ({cell_idx}/{num_cells}): Moving to cluster center...",
+            )
+            stage.move_absolute(
+                {"x": float(target_stage_pos[0]), "y": float(target_stage_pos[1])},
+                z_calib_only=True,
+            )
+            context.delay_func(self.stabilization_delay)
 
-                    marker_ids_found = list(centers_in_frame.keys())
-                    for i in range(len(marker_ids_found)):
-                        for j in range(i + 1, len(marker_ids_found)):
-                            id_a = marker_ids_found[i]
-                            id_b = marker_ids_found[j]
-                            disp_cam_px = centers_in_frame[id_b] - centers_in_frame[id_a]
-                            disp_cam_um = disp_cam_px * effective_pixel_scale
-                            disp_wafer = R_inv @ disp_cam_um
-                            measurements.append((id_a, id_b, float(disp_wafer[0]), float(disp_wafer[1])))
+            cell_frame = camera.get_latest_frame()
+            if cell_frame is None:
+                continue
+
+            det_cnt, det_corners, det_ids = self._detect_markers(
+                cell_frame, flip_horizontal=self.flip_horizontal
+            )
+
+            # Collect all pairwise relative constraints (handles 2x2, 2x3, 2x4, etc.)
+            if det_cnt >= 2 and det_ids is not None:
+                centers_in_frame: Dict[int, np.ndarray] = {}
+                for idx_m, mid_val in enumerate(det_ids.flatten()):
+                    m_int = int(mid_val)
+                    if m_int in nominal_dict:
+                        pts = det_corners[idx_m].reshape(-1, 2)
+                        centers_in_frame[m_int] = np.mean(pts, axis=0)
+
+                marker_ids_found = list(centers_in_frame.keys())
+                for i in range(len(marker_ids_found)):
+                    for j in range(i + 1, len(marker_ids_found)):
+                        id_a = marker_ids_found[i]
+                        id_b = marker_ids_found[j]
+                        disp_cam_px = centers_in_frame[id_b] - centers_in_frame[id_a]
+                        disp_cam_um = disp_cam_px * effective_pixel_scale
+                        disp_wafer = R_inv @ disp_cam_um
+                        measurements.append((id_a, id_b, float(disp_wafer[0]), float(disp_wafer[1])))
 
         report_progress(0.88, f"Collected {len(measurements)} relative tag-to-tag distance measurements.")
 
@@ -991,8 +1089,8 @@ class StageCalibrationScanOperation(Operation):
             stage_type=type(stage).__name__,
             step_distance=step_dist,
             calibration_range=float(stage1_data.get("calibration_range", 10000.0)),
-            dict_id=dict_id,
             flip_horizontal=self.flip_horizontal,
+            cam_to_stage_matrix=M_cam_to_stage,
         )
         self.calibration.save_to_json(output_path)
 

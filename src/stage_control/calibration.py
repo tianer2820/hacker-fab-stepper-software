@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 import json
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 
@@ -29,11 +29,19 @@ class StageCalibrationPoint:
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "StageCalibrationPoint":
+        raw_xy = (float(d["raw_xy"][0]), float(d["raw_xy"][1]))
+        if "corr_xy" in d:
+            corr_xy = (float(d["corr_xy"][0]), float(d["corr_xy"][1]))
+        elif "opt_xy" in d:
+            corr_xy = (float(d["opt_xy"][0]), float(d["opt_xy"][1]))
+        else:
+            corr_xy = raw_xy
+
         return cls(
             grid_index=tuple(d["grid_index"]),
             marker_id=int(d["marker_id"]),
-            raw_xy=(float(d["raw_xy"][0]), float(d["raw_xy"][1])),
-            corr_xy=(float(d["corr_xy"][0]), float(d["corr_xy"][1])),
+            raw_xy=raw_xy,
+            corr_xy=corr_xy,
             z_focus=float(d["z_focus"]),
         )
 
@@ -50,8 +58,8 @@ class StageCalibration:
         enabled: bool = True,
         step_distance: Optional[float] = None,
         calibration_range: Optional[float] = None,
-        dict_id: Optional[int] = None,
         flip_horizontal: bool = False,
+        cam_to_stage_matrix: Optional[Sequence[Sequence[float]] | np.ndarray] = None,
     ):
         self.grid_shape = (int(grid_shape[0]), int(grid_shape[1]))
         self.points = points
@@ -60,11 +68,11 @@ class StageCalibration:
         self.enabled = enabled
         self.step_distance = float(step_distance) if step_distance is not None else None
         self.calibration_range = float(calibration_range) if calibration_range is not None else None
-        try:
-            self.dict_id = int(dict_id) if dict_id is not None else None
-        except (TypeError, ValueError):
-            self.dict_id = None
         self.flip_horizontal = bool(flip_horizontal)
+        if cam_to_stage_matrix is not None:
+            self.cam_to_stage_matrix: Optional[np.ndarray] = np.array(cam_to_stage_matrix, dtype=np.float64)
+        else:
+            self.cam_to_stage_matrix: Optional[np.ndarray] = None
 
         self._ny, self._nx = self.grid_shape
         self._raw_x_grid = np.zeros((self._ny, self._nx), dtype=np.float64)
@@ -155,6 +163,43 @@ class StageCalibration:
         )
         return (x_corr, y_corr)
 
+    def inverse_map_xy(
+        self,
+        x_corr: float,
+        y_corr: float,
+        max_iter: int = 10,
+        tol: float = 1e-4,
+    ) -> Tuple[float, float]:
+        """Maps corrected optical coordinates (X, Y) to raw machine coordinates (X, Y).
+
+        Uses fixed-point iteration, pre-conditioned by cam_to_stage_matrix if available.
+        """
+        if not self.has_xy_calibration or self._nx < 2 or self._ny < 2:
+            return (float(x_corr), float(y_corr))
+
+        if self.cam_to_stage_matrix is not None:
+            init = self.cam_to_stage_matrix @ np.array([x_corr, y_corr], dtype=np.float64)
+            cur_x, cur_y = float(init[0]), float(init[1])
+            step_mat = self.cam_to_stage_matrix
+        else:
+            cur_x, cur_y = float(x_corr), float(y_corr)
+            step_mat = None
+
+        for _ in range(max_iter):
+            fwd_x, fwd_y = self.forward_map_xy(cur_x, cur_y)
+            err_x = fwd_x - x_corr
+            err_y = fwd_y - y_corr
+            if abs(err_x) < tol and abs(err_y) < tol:
+                break
+            if step_mat is not None:
+                delta = step_mat @ np.array([err_x, err_y], dtype=np.float64)
+                cur_x -= float(delta[0])
+                cur_y -= float(delta[1])
+            else:
+                cur_x -= err_x
+                cur_y -= err_y
+
+        return (cur_x, cur_y)
 
     def set_chip_z_plane(self, plane: Optional[Tuple[float, float, float]]) -> None:
         """Sets the temporary chip Z leveling plane coefficients (a, b, c) where Delta_Z = a*x + b*y + c."""
@@ -171,46 +216,83 @@ class StageCalibration:
         """Clears the temporary chip Z leveling plane."""
         self._chip_z_plane = None
 
-    def get_base_z_offset(self, x_corr: float, y_corr: float) -> float:
-        """Returns the base interpolated focal surface height Z_raw for given corrected (X, Y) without chip plane offset."""
+    def get_base_z_offset_raw(self, x_raw: float, y_raw: float) -> float:
+        """Returns base interpolated focal surface height Z_raw for given raw machine coordinates (X, Y)."""
         assert self._z_focus_grid.size != 0
-        assert self._nx >= 2 or self._ny >= 2
 
-        # Map corrected XY to raw XY to evaluate the raw grid height map
-        x_raw, y_raw = x_corr, y_corr
-        # x_raw, y_raw = self.inverse_map_xy(x_corr, y_corr)
         return float(
             self._interpolate_grid_bilinear(
                 x_raw, y_raw, self._z_focus_grid, self._raw_x_coords, self._raw_y_coords
             )
         )
 
-    def get_z_offset(self, x_corr: float, y_corr: float) -> float:
-        """Returns the interpolated focal surface height Z_raw for given corrected (X, Y),
-        including any active temporary chip Z leveling plane offset."""
-        base_z = self.get_base_z_offset(x_corr, y_corr)
+    def get_z_offset_raw(self, x_raw: float, y_raw: float) -> float:
+        """Returns focal surface height Z_raw for given raw (X, Y), including chip Z leveling plane."""
+        base_z = self.get_base_z_offset_raw(x_raw, y_raw)
         if self._chip_z_plane is not None:
             a, b, c = self._chip_z_plane
-            return float(base_z + a * x_corr + b * y_corr + c)
+            return float(base_z + a * x_raw + b * y_raw + c)
         return float(base_z)
+
+    def get_base_z_offset(self, x_corr: float, y_corr: float) -> float:
+        """Returns base focal surface height Z_raw for given corrected (X, Y)."""
+        x_raw, y_raw = self.inverse_map_xy(x_corr, y_corr)
+        return self.get_base_z_offset_raw(x_raw, y_raw)
+
+    def get_z_offset(self, x_corr: float, y_corr: float) -> float:
+        """Returns focal surface height Z_raw for given corrected (X, Y),
+        including any active temporary chip Z leveling plane offset."""
+        x_raw, y_raw = self.inverse_map_xy(x_corr, y_corr)
+        return self.get_z_offset_raw(x_raw, y_raw)
 
     def corr_to_raw(
         self,
         corr_coords: list[float],
+        z_calib_only: bool = False,
     ) -> Dict[str, float]:
-        """Translates corrected target coordinates to raw machine target coordinates.
+        """Translates corrected target coordinates [X, Y, Z] to raw machine target coordinates.
 
-        Z is surface-relative: Z_raw = Z_surface(X_corr, Y_corr) + Z_corr.
+        Z is surface-relative: Z_raw = Z_surface(X_raw, Y_raw) + Z_corr.
+        If z_calib_only is True, skips XY correction: X_raw = X_corr, Y_raw = Y_corr.
         """
-        corr_x, corr_y, corr_z = corr_coords
-        z_surf = self.get_z_offset(corr_x, corr_y)
+        if not isinstance(corr_coords, (list, tuple)) or len(corr_coords) != 3:
+            raise ValueError(f"corr_coords must be a list of 3 floats [x, y, z], got {corr_coords}")
 
-        raw_dict = {
-            'x': corr_x,
-            'y': corr_y,
+        corr_x = float(corr_coords[0])
+        corr_y = float(corr_coords[1])
+        corr_z = float(corr_coords[2])
+
+        if z_calib_only:
+            raw_x, raw_y = corr_x, corr_y
+        else:
+            raw_x, raw_y = self.inverse_map_xy(corr_x, corr_y)
+        z_surf = self.get_z_offset_raw(raw_x, raw_y)
+
+        return {
+            'x': raw_x,
+            'y': raw_y,
             'z': corr_z + z_surf,
         }
-        return raw_dict
+
+    def to_raw(self, corr_coords: list[float] | Dict[str, float], z_calib_only: bool = False) -> Dict[str, float]:
+        """Legacy helper delegating to corr_to_raw."""
+        if isinstance(corr_coords, dict):
+            cx = float(corr_coords.get("x", corr_coords.get("X", 0.0)))
+            cy = float(corr_coords.get("y", corr_coords.get("Y", 0.0)))
+            cz = float(corr_coords.get("z", corr_coords.get("Z", 0.0)))
+            return self.corr_to_raw([cx, cy, cz], z_calib_only=z_calib_only)
+        return self.corr_to_raw(corr_coords, z_calib_only=z_calib_only)
+
+    def to_corr(self, raw_coords: Tuple[float, float, float] | list[float]) -> Tuple[float, float, float]:
+        """Translates raw machine position (X, Y, Z) to corrected optical position (X, Y, Z).
+
+        Z_corr = Z_raw - Z_surface(X_raw, Y_raw).
+        """
+        rx, ry, rz = float(raw_coords[0]), float(raw_coords[1]), float(raw_coords[2])
+        cx, cy = self.forward_map_xy(rx, ry)
+        z_surf = self.get_z_offset_raw(rx, ry)
+        cz = rz - z_surf
+        return (cx, cy, cz)
 
 
     @property
@@ -234,8 +316,8 @@ class StageCalibration:
             "grid_shape": list(self.grid_shape),
             "step_distance": self.step_distance,
             "calibration_range": self.calibration_range,
-            "dict_id": self.dict_id,
             "flip_horizontal": self.flip_horizontal,
+            "cam_to_stage_matrix": self.cam_to_stage_matrix.tolist() if self.cam_to_stage_matrix is not None else None,
             "bounds_raw": {
                 "x_min": float(np.min(self._raw_x_grid)) if self._raw_x_grid.size > 0 else 0.0,
                 "x_max": float(np.max(self._raw_x_grid)) if self._raw_x_grid.size > 0 else 0.0,
@@ -260,8 +342,8 @@ class StageCalibration:
         enabled = data.get("enabled", True)
         step_distance = data.get("step_distance")
         calibration_range = data.get("calibration_range")
-        dict_id = data.get("dict_id")
         flip_horizontal = data.get("flip_horizontal", False)
+        cam_to_stage_matrix = data.get("cam_to_stage_matrix")
 
         return cls(
             grid_shape=grid_shape,
@@ -271,6 +353,6 @@ class StageCalibration:
             enabled=enabled,
             step_distance=step_distance,
             calibration_range=calibration_range,
-            dict_id=dict_id,
             flip_horizontal=flip_horizontal,
+            cam_to_stage_matrix=cam_to_stage_matrix,
         )
