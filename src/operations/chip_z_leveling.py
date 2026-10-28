@@ -112,7 +112,7 @@ class ChipZLevelingOperation(Operation):
                 )
 
                 # Move in corrected coordinates with z=0.0 (surface height)
-                if not stage.move_absolute({"x": px, "y": py, "z": 0.0}):
+                if not stage.move_absolute({"x": px, "y": py, "z": orig_z}):
                     msg = f"Failed to move stage to point {idx + 1} ({px:.1f}, {py:.1f}) µm"
                     if context.warning_callback:
                         context.warning_callback(msg)
@@ -141,7 +141,7 @@ class ChipZLevelingOperation(Operation):
                     z_focus_corr = float(stage.get_position()[2])
 
                 # Since stage was moved to z=0.0, the best Z in corrected coords is delta_z
-                self.measured_points.append((px, py, z_focus_corr))
+                self.measured_points.append((px, py, z_focus_corr - orig_z))
 
             # Move back to original point
             report_progress(0.85, "Returning stage to original position...")
