@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 import json
 import os
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 import numpy as np
 
 
@@ -60,6 +60,7 @@ class StageCalibration:
         calibration_range: Optional[float] = None,
         flip_horizontal: bool = False,
         cam_to_stage_matrix: Optional[Sequence[Sequence[float]] | np.ndarray] = None,
+        detected_marker_ids: Optional[Sequence[int] | Set[int]] = None,
     ):
         self.grid_shape = (int(grid_shape[0]), int(grid_shape[1]))
         self.points = points
@@ -69,6 +70,7 @@ class StageCalibration:
         self.step_distance = float(step_distance) if step_distance is not None else None
         self.calibration_range = float(calibration_range) if calibration_range is not None else None
         self.flip_horizontal = bool(flip_horizontal)
+        self.detected_marker_ids: Set[int] = set(detected_marker_ids) if detected_marker_ids is not None else set()
         if cam_to_stage_matrix is not None:
             self.cam_to_stage_matrix: Optional[np.ndarray] = np.array(cam_to_stage_matrix, dtype=np.float64)
         else:
@@ -178,9 +180,14 @@ class StageCalibration:
             return (float(x_corr), float(y_corr))
 
         if self.cam_to_stage_matrix is not None:
-            init = self.cam_to_stage_matrix @ np.array([x_corr, y_corr], dtype=np.float64)
+            mat = np.array(self.cam_to_stage_matrix, dtype=np.float64)
+            if mat.shape == (3, 3):
+                init = (mat @ np.array([x_corr, y_corr, 1.0], dtype=np.float64))[:2]
+                step_mat = mat[:2, :2]
+            else:
+                init = mat @ np.array([x_corr, y_corr], dtype=np.float64)
+                step_mat = mat
             cur_x, cur_y = float(init[0]), float(init[1])
-            step_mat = self.cam_to_stage_matrix
         else:
             cur_x, cur_y = float(x_corr), float(y_corr)
             step_mat = None
@@ -318,6 +325,7 @@ class StageCalibration:
             "calibration_range": self.calibration_range,
             "flip_horizontal": self.flip_horizontal,
             "cam_to_stage_matrix": self.cam_to_stage_matrix.tolist() if self.cam_to_stage_matrix is not None else None,
+            "detected_marker_ids": sorted(list(self.detected_marker_ids)) if self.detected_marker_ids else None,
             "bounds_raw": {
                 "x_min": float(np.min(self._raw_x_grid)) if self._raw_x_grid.size > 0 else 0.0,
                 "x_max": float(np.max(self._raw_x_grid)) if self._raw_x_grid.size > 0 else 0.0,
@@ -344,6 +352,7 @@ class StageCalibration:
         calibration_range = data.get("calibration_range")
         flip_horizontal = data.get("flip_horizontal", False)
         cam_to_stage_matrix = data.get("cam_to_stage_matrix")
+        detected_marker_ids = data.get("detected_marker_ids")
 
         return cls(
             grid_shape=grid_shape,
@@ -355,4 +364,5 @@ class StageCalibration:
             calibration_range=calibration_range,
             flip_horizontal=flip_horizontal,
             cam_to_stage_matrix=cam_to_stage_matrix,
+            detected_marker_ids=detected_marker_ids,
         )

@@ -616,7 +616,7 @@ class StageCalibrationInspectorWindow(QMainWindow):
         self.lbl_diag_residual.setText(f"Residual Mean: {diag.mean_residual_um:.2f} µm (Max: {diag.max_residual_um:.2f} µm)")
 
         # Update Distortion view
-        self.distortion_view.set_calibration(cal)
+        self.distortion_view.set_calibration(cal, detected_markers=diag.detected_marker_ids)
         self.tabs.setCurrentIndex(1)  # Switch to distortion map tab
         self.lbl_status.setText("Reconstruction completed successfully! Calibration ready to export.")
 

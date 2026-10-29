@@ -357,6 +357,214 @@ class TestStageCalibrationOperations(unittest.TestCase):
         self.assertAlmostEqual(recon[3][0], 100.0, places=2)
         self.assertAlmostEqual(recon[3][1], 100.0, places=2)
 
+    def test_three_step_calibration_solver(self):
+        from lib.stage_calibration_reconstruction.solver import (
+            solve_grid_relative_positions,
+            estimate_camera_to_stage_transform,
+            estimate_global_transform,
+            align_calibrated_origin_to_stage_origin,
+            solve_global_positions,
+        )
+
+        # 1. Test Step 1: Relative grid estimation with undetected anchors
+        # In a 2x2 grid, step_dist = 1000.0:
+        # Only anchors 0 and 1 have a pairwise measurement (dx=1000.0, dy=0.0)
+        # Anchors 2 and 3 are NOT detected
+        measurements = [(0, 1, 1000.0, 0.0)]
+        rel = solve_grid_relative_positions(
+            grid_shape=(2, 2),
+            measurements=measurements,
+            step_distance=1000.0,
+            anchor_id=0,
+            observed_marker_ids={0, 1},
+        )
+        self.assertEqual(len(rel), 4)
+        # Marker 0 is pinned at (0, 0)
+        self.assertAlmostEqual(rel[0][0], 0.0, places=3)
+        self.assertAlmostEqual(rel[0][1], 0.0, places=3)
+        # Marker 1 matches measurement
+        self.assertAlmostEqual(rel[1][0], 1000.0, places=3)
+        self.assertAlmostEqual(rel[1][1], 0.0, places=3)
+        # Undetected Marker 2 constrained by neighbor default: (0, 1000)
+        self.assertAlmostEqual(rel[2][0], 0.0, places=3)
+        self.assertAlmostEqual(rel[2][1], 1000.0, places=3)
+        # Undetected Marker 3 constrained relative to 1 and 2: (1000, 1000)
+        self.assertAlmostEqual(rel[3][0], 1000.0, places=3)
+        self.assertAlmostEqual(rel[3][1], 1000.0, places=3)
+
+        # Distorted measurement (1005.0) preserves measured edge and smoothly pulls unobserved nodes
+        rel_dist = solve_grid_relative_positions(
+            grid_shape=(2, 2),
+            measurements=[(0, 1, 1005.0, 0.0)],
+            step_distance=1000.0,
+            anchor_id=0,
+            observed_marker_ids={0, 1},
+        )
+        self.assertAlmostEqual(rel_dist[0][0], 0.0, places=3)
+        self.assertAlmostEqual(rel_dist[1][0], 1005.0, places=3)
+        self.assertTrue(0.0 <= rel_dist[2][0] <= 5.0)
+        self.assertTrue(1000.0 <= rel_dist[3][0] <= 1005.0)
+
+        # 2. Test Camera-to-Stage transform estimation
+        # Suppose stage moved by (1000, 0) and camera offset changed by (-1000, 0)
+        # T_cam_to_stage @ d_cam = -d_stage -> T = [[1, 0], [0, 1]]
+        multi_obs = [
+            (0, (0.0, 0.0), (0.0, 0.0)),
+            (0, (1000.0, 0.0), (-1000.0, 0.0)),
+            (0, (0.0, 1000.0), (0.0, -1000.0)),
+        ]
+        T_cs = estimate_camera_to_stage_transform(multi_obs)
+        np.testing.assert_allclose(T_cs, np.eye(2), atol=1e-3)
+
+        # 3. Test Step 2: Global transform estimation (90 deg rotation + translation)
+        # Rotated 90 deg: [x', y'] = [-y, x] + [500, 200]
+        # rel: 0 -> (0, 0), 1 -> (1000, 0), 2 -> (0, 1000), 3 -> (1000, 1000)
+        R_true = np.array([[0.0, -1.0], [1.0, 0.0]])
+        t_true = np.array([500.0, 200.0])
+        obs_stage = {m: (float((R_true @ np.array(rel[m]) + t_true)[0]), float((R_true @ np.array(rel[m]) + t_true)[1])) for m in [0, 1]}
+        R_est, t_est, _ = estimate_global_transform(rel, obs_stage)
+        np.testing.assert_allclose(R_est, R_true, atol=1e-3)
+        np.testing.assert_allclose(t_est, t_true, atol=1e-3)
+
+        # 4. Test Step 3: Match calibrated location of grid center to raw grid center
+        cal_pos, cam_to_stage_mat = align_calibrated_origin_to_stage_origin(rel, R_est, t_est, origin_marker_id=0)
+        raw_center = np.mean([rel[m] for m in rel], axis=0)
+        cal_center = np.mean([cal_pos[m] for m in cal_pos], axis=0)
+        np.testing.assert_allclose(cal_center, raw_center, atol=1e-3)
+        np.testing.assert_allclose(cam_to_stage_mat, R_true, atol=1e-3)
+
+        # 5. Full solve_global_positions test
+        nominal = {0: (0.0, 0.0), 1: (1000.0, 0.0), 2: (0.0, 1000.0), 3: (1000.0, 1000.0)}
+        full_cal, full_mat = solve_global_positions(
+            grid_shape=(2, 2),
+            measurements=measurements,
+            anchor_id=0,
+            anchor_pos=(0.0, 0.0),
+            nominal_positions=nominal,
+            observed_positions=obs_stage,
+            step_distance=1000.0,
+        )
+        self.assertEqual(len(full_cal), 4)
+        nom_center = np.mean([nominal[m] for m in nominal], axis=0)
+        full_cal_center = np.mean([full_cal[m] for m in full_cal], axis=0)
+        np.testing.assert_allclose(full_cal_center, nom_center, atol=1e-3)
+        np.testing.assert_allclose(full_mat, R_true, atol=1e-3)
+
+    def test_basis_projection_invariance_to_rotation(self):
+        from lib.stage_calibration_reconstruction.solver import extract_pairwise_measurements
+
+        # Tag 0 at (100, 100), Tag 1 at (300, 100) (horizontal offset +200), Tag 2 at (100, 400) (vertical offset +300)
+        c0_canonical = np.array([[80.0, 80.0], [120.0, 80.0], [120.0, 120.0], [80.0, 120.0]])
+        c1_canonical = np.array([[280.0, 80.0], [320.0, 80.0], [320.0, 120.0], [280.0, 120.0]])
+        c2_canonical = np.array([[80.0, 380.0], [120.0, 380.0], [120.0, 420.0], [80.0, 420.0]])
+
+        # Rotate the whole scene by 37 degrees and shift by (150, -50)
+        ang = np.radians(37.0)
+        R = np.array([[np.cos(ang), -np.sin(ang)], [np.sin(ang), np.cos(ang)]])
+        shift = np.array([150.0, -50.0])
+
+        c0_rot = (c0_canonical @ R.T) + shift
+        c1_rot = (c1_canonical @ R.T) + shift
+        c2_rot = (c2_canonical @ R.T) + shift
+
+        corners = [c0_rot, c1_rot, c2_rot]
+        ids = np.array([[0], [1], [2]])
+        nominal_dict = {0: {}, 1: {}, 2: {}}
+
+        meas = extract_pairwise_measurements(
+            corners=corners,
+            ids=ids,
+            nominal_dict=nominal_dict,
+            pixel_scale=1.0,
+        )
+        meas_dict = {(a, b): (dx, dy) for a, b, dx, dy in meas}
+
+        # Tag 0 -> 1 should be exactly (+200, 0)
+        self.assertIn((0, 1), meas_dict)
+        self.assertAlmostEqual(meas_dict[(0, 1)][0], 200.0, places=3)
+        self.assertAlmostEqual(meas_dict[(0, 1)][1], 0.0, places=3)
+
+        # Tag 0 -> 2 should be exactly (0, +300)
+        self.assertIn((0, 2), meas_dict)
+        self.assertAlmostEqual(meas_dict[(0, 2)][0], 0.0, places=3)
+        self.assertAlmostEqual(meas_dict[(0, 2)][1], 300.0, places=3)
+
+    def test_rotated_grid_untwisted_with_undetected_tags(self):
+        from lib.stage_calibration_reconstruction.solver import (
+            estimate_camera_to_stage_transform,
+            solve_global_positions,
+        )
+
+        # 3x3 grid, step distance 1000.0
+        # Grid indices:
+        # 0: (0, 0), 1: (1000, 0), 2: (2000, 0)
+        # 3: (0, 1000), 4: (1000, 1000), 5: (2000, 1000)
+        # 6: (0, 2000), 7: (1000, 2000), 8: (2000, 2000)
+        nominal = {r * 3 + c: (float(c * 1000.0), float(r * 1000.0)) for r in range(3) for c in range(3)}
+
+        # Wafer placed on stage rotated by 25 degrees, shifted by (12000, 8000)
+        theta = np.radians(25.0)
+        R_true = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
+        t_true = np.array([12000.0, 8000.0])
+
+        # Suppose camera is aligned to stage: T_cam_to_stage = I
+        multi_obs = [
+            (0, (12000.0, 8000.0), (0.0, 0.0)),
+            (0, (12500.0, 8000.0), (-500.0, 0.0)),
+            (0, (12000.0, 8500.0), (0.0, -500.0)),
+        ]
+        T_est = estimate_camera_to_stage_transform(multi_obs)
+        np.testing.assert_allclose(T_est, np.eye(2), atol=1e-3)
+
+        # Only tags 0, 1, and 4 are detected on stage! Tags 2, 3, 5, 6, 7, 8 are undetected.
+        detected_ids = {0, 1, 4}
+        observed_stage_pos = {}
+        for mid in detected_ids:
+            p_stage = R_true @ np.array(nominal[mid]) + t_true
+            observed_stage_pos[mid] = (float(p_stage[0]), float(p_stage[1]))
+
+        # Run solve_global_positions
+        cal_pos, R_est = solve_global_positions(
+            grid_shape=(3, 3),
+            measurements=[],
+            anchor_id=0,
+            anchor_pos=(0.0, 0.0),
+            nominal_positions=nominal,
+            observed_positions=observed_stage_pos,
+            step_distance=1000.0,
+            default_rotation=theta,
+        )
+
+        self.assertEqual(len(cal_pos), 9)
+        # Calibrated location of grid center must match raw grid center (1000.0, 1000.0)
+        cal_center = np.mean([cal_pos[m] for m in cal_pos], axis=0)
+        np.testing.assert_allclose(cal_center, [1000.0, 1000.0], atol=1e-3)
+
+        # Rotation must match true rotation
+        np.testing.assert_allclose(R_est, R_true, atol=1e-3)
+
+        # Verify NO twist or shear:
+        # Every horizontal neighbor distance must be exactly 1000.0 um
+        # Every vertical neighbor distance must be exactly 1000.0 um
+        for r in range(3):
+            for c in range(3):
+                mid = r * 3 + c
+                p = np.array(cal_pos[mid])
+                # Check horizontal neighbor
+                if c + 1 < 3:
+                    p_right = np.array(cal_pos[r * 3 + (c + 1)])
+                    dist_h = float(np.linalg.norm(p_right - p))
+                    self.assertAlmostEqual(dist_h, 1000.0, places=3)
+                    # Vector should be R_true @ [1000, 0]
+                    np.testing.assert_allclose(p_right - p, R_true @ np.array([1000.0, 0.0]), atol=1e-3)
+                # Check vertical neighbor
+                if r + 1 < 3:
+                    p_down = np.array(cal_pos[(r + 1) * 3 + c])
+                    dist_v = float(np.linalg.norm(p_down - p))
+                    self.assertAlmostEqual(dist_v, 1000.0, places=3)
+                    # Vector should be R_true @ [0, 1000]
+                    np.testing.assert_allclose(p_down - p, R_true @ np.array([0.0, 1000.0]), atol=1e-3)
+
     def test_three_stage_calibration_end_to_end(self):
         from core.operation import ExecutionContext
         from operations.stage_calibration import (
@@ -1035,6 +1243,8 @@ class TestStageCalibrationUI(unittest.TestCase):
                 self.assertTrue(win.btn_save_cal.isEnabled())
                 self.assertIn("Unique Tags: 2 / 4", win.lbl_diag_tags.text())
                 self.assertIsNotNone(win.distortion_view._calibration)
+                self.assertEqual(win.distortion_view._detected_markers, {0, 1})
+                self.assertEqual(cal.detected_marker_ids, {0, 1})
 
                 # Test saving calibration
                 out_save = os.path.join(tmpdir, "out_cal.json")
@@ -1043,6 +1253,34 @@ class TestStageCalibrationUI(unittest.TestCase):
 
             finally:
                 win.close()
+
+    def test_distortion_view_detected_vs_undetected_colors(self):
+        from ui.widgets.stage_calibration_inspector import DistortionView
+        from PySide6.QtGui import QImage, QPainter
+
+        pts = [
+            StageCalibrationPoint((0, 0), 0, (0.0, 0.0), (0.0, 0.0), 100.0),
+            StageCalibrationPoint((0, 1), 1, (1000.0, 0.0), (1000.0, 0.0), 100.0),
+            StageCalibrationPoint((1, 0), 2, (0.0, 1000.0), (0.0, 1000.0), 100.0),
+            StageCalibrationPoint((1, 1), 3, (1000.0, 1000.0), (1000.0, 1000.0), 100.0),
+        ]
+        cal = StageCalibration(
+            grid_shape=(2, 2),
+            points=pts,
+            detected_marker_ids={0, 1},
+        )
+        view = DistortionView()
+        view.resize(400, 400)
+        view.set_calibration(cal)
+        self.assertEqual(view._detected_markers, {0, 1})
+
+        # Test paintEvent execution without error
+        img = QImage(400, 400, QImage.Format_ARGB32)
+        view.render(img)
+
+        # Explicitly setting detected_markers overrides calibration
+        view.set_detected_markers({0, 2, 3})
+        self.assertEqual(view._detected_markers, {0, 2, 3})
 
     def test_edge_artag_debug_output_dict_and_list(self):
         from lib.edge_artag import detect_edge_markers

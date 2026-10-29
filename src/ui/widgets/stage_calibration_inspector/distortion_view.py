@@ -1,5 +1,5 @@
 import math
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
@@ -15,6 +15,7 @@ class DistortionView(QWidget):
         self.setStyleSheet("background-color: #15151a; border-radius: 4px;")
 
         self._calibration: Optional[StageCalibration] = None
+        self._detected_markers: Optional[Set[int]] = None
         self.vector_magnification: float = 20.0
 
         # View transform
@@ -24,9 +25,23 @@ class DistortionView(QWidget):
         self._is_panning: bool = False
         self._last_mouse: Optional[QPointF] = None
 
-    def set_calibration(self, cal: Optional[StageCalibration]):
+    def set_calibration(
+        self,
+        cal: Optional[StageCalibration],
+        detected_markers: Optional[Set[int]] = None,
+    ):
         self._calibration = cal
+        if detected_markers is not None:
+            self._detected_markers = set(detected_markers)
+        elif cal is not None and getattr(cal, "detected_marker_ids", None):
+            self._detected_markers = set(cal.detected_marker_ids)
+        else:
+            self._detected_markers = None
         self.fit_view()
+        self.update()
+
+    def set_detected_markers(self, detected_markers: Optional[Set[int]]):
+        self._detected_markers = set(detected_markers) if detected_markers is not None else None
         self.update()
 
     def set_magnification(self, mag: float):
@@ -103,16 +118,16 @@ class DistortionView(QWidget):
 
         # Draw grid connections between adjacent nominal points
         grid_map = {(p.grid_index[0], p.grid_index[1]): p for p in points}
-        painter.setPen(QPen(QColor(60, 60, 80), 1, Qt.DashLine))
-        for (r, c), p in grid_map.items():
-            x0 = p.raw_xy[0] * self.zoom + self.pan_x
-            y0 = p.raw_xy[1] * self.zoom + self.pan_y
-            if (r, c + 1) in grid_map:
-                p_r = grid_map[(r, c + 1)]
-                painter.drawLine(QPointF(x0, y0), QPointF(p_r.raw_xy[0] * self.zoom + self.pan_x, p_r.raw_xy[1] * self.zoom + self.pan_y))
-            if (r + 1, c) in grid_map:
-                p_d = grid_map[(r + 1, c)]
-                painter.drawLine(QPointF(x0, y0), QPointF(p_d.raw_xy[0] * self.zoom + self.pan_x, p_d.raw_xy[1] * self.zoom + self.pan_y))
+        # painter.setPen(QPen(QColor(60, 60, 80), 1, Qt.DashLine))
+        # for (r, c), p in grid_map.items():
+        #     x0 = p.raw_xy[0] * self.zoom + self.pan_x
+        #     y0 = p.raw_xy[1] * self.zoom + self.pan_y
+        #     if (r, c + 1) in grid_map:
+        #         p_r = grid_map[(r, c + 1)]
+        #         painter.drawLine(QPointF(x0, y0), QPointF(p_r.raw_xy[0] * self.zoom + self.pan_x, p_r.raw_xy[1] * self.zoom + self.pan_y))
+        #     if (r + 1, c) in grid_map:
+        #         p_d = grid_map[(r + 1, c)]
+        #         painter.drawLine(QPointF(x0, y0), QPointF(p_d.raw_xy[0] * self.zoom + self.pan_x, p_d.raw_xy[1] * self.zoom + self.pan_y))
 
         # Draw nominal points (Blue), reconstructed points (Green), and distortion vector (Red)
         for p in points:
@@ -125,31 +140,38 @@ class DistortionView(QWidget):
             y_recon = (p.raw_xy[1] + dy) * self.zoom + self.pan_y
 
             # Vector arrow / line
-            if abs(dx) > 1e-4 or abs(dy) > 1e-4:
-                painter.setPen(QPen(QColor(255, 75, 75, 200), 1.5))
-                painter.drawLine(QPointF(x_nom, y_nom), QPointF(x_recon, y_recon))
+            # if abs(dx) > 1e-4 or abs(dy) > 1e-4:
+            #     painter.setPen(QPen(QColor(255, 75, 75, 200), 1.5))
+            #     painter.drawLine(QPointF(x_nom, y_nom), QPointF(x_recon, y_recon))
 
             # Nominal point
             painter.setPen(Qt.NoPen)
             painter.setBrush(QBrush(QColor(70, 140, 255)))
             painter.drawEllipse(QPointF(x_nom, y_nom), 3.5, 3.5)
 
-            # Reconstructed point
-            painter.setBrush(QBrush(QColor(50, 220, 100)))
+            # Reconstructed point: green for detected anchor points (points with constraints), gray otherwise
+            is_detected = (
+                self._detected_markers is not None and p.marker_id in self._detected_markers
+            ) or (
+                getattr(self._calibration, "detected_marker_ids", None)
+                and p.marker_id in self._calibration.detected_marker_ids
+            )
+            recon_color = QColor(50, 220, 100) if is_detected else QColor(130, 130, 140)
+            painter.setBrush(QBrush(recon_color))
             painter.drawEllipse(QPointF(x_recon, y_recon), 3.0, 3.0)
 
             # Label tag ID
-            painter.setPen(QColor(180, 180, 200))
-            font = QFont()
-            font.setPointSize(8)
-            painter.setFont(font)
-            painter.drawText(QPointF(x_nom + 5, y_nom - 5), str(p.marker_id))
+            # painter.setPen(QColor(180, 180, 200))
+            # font = QFont()
+            # font.setPointSize(8)
+            # painter.setFont(font)
+            # painter.drawText(QPointF(x_nom + 5, y_nom - 5), str(p.marker_id))
 
         # Legend overlay in top-right corner
         self._draw_legend(painter)
 
     def _draw_legend(self, painter: QPainter):
-        legend_rect = QRectF(self.width() - 250, 12, 238, 86)
+        legend_rect = QRectF(self.width() - 250, 12, 238, 106)
         painter.setPen(QPen(QColor(60, 60, 75), 1))
         painter.setBrush(QBrush(QColor(25, 25, 32, 220)))
         painter.drawRoundedRect(legend_rect, 6, 6)
@@ -161,20 +183,27 @@ class DistortionView(QWidget):
         # Nominal
         painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(QColor(70, 140, 255)))
-        painter.drawEllipse(QPointF(self.width() - 235, 32), 4, 4)
+        painter.drawEllipse(QPointF(self.width() - 235, 28), 4, 4)
         painter.setPen(QColor(220, 220, 230))
-        painter.drawText(QPointF(self.width() - 220, 36), "Nominal Stage Coordinate")
+        painter.drawText(QPointF(self.width() - 220, 32), "Nominal Stage Coordinate")
 
-        # Reconstructed
+        # Detected Reconstructed (Green)
         painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(QColor(50, 220, 100)))
-        painter.drawEllipse(QPointF(self.width() - 235, 54), 4, 4)
+        painter.drawEllipse(QPointF(self.width() - 235, 48), 4, 4)
         painter.setPen(QColor(220, 220, 230))
-        painter.drawText(QPointF(self.width() - 220, 58), "Reconstructed Optical Coord")
+        painter.drawText(QPointF(self.width() - 220, 52), "Detected Anchor (Green)")
+
+        # Undetected Reconstructed (Gray)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(QColor(130, 130, 140)))
+        painter.drawEllipse(QPointF(self.width() - 235, 68), 4, 4)
+        painter.setPen(QColor(220, 220, 230))
+        painter.drawText(QPointF(self.width() - 220, 72), "Undetected Anchor (Gray)")
 
         # Vector
         painter.setPen(QPen(QColor(255, 75, 75), 2))
-        painter.drawLine(QPointF(self.width() - 240, 76), QPointF(self.width() - 228, 76))
+        painter.drawLine(QPointF(self.width() - 240, 88), QPointF(self.width() - 228, 88))
         painter.setPen(QColor(220, 220, 230))
-        painter.drawText(QPointF(self.width() - 220, 80), f"Distortion Vector ({self.vector_magnification:.0f}x Mag)")
+        painter.drawText(QPointF(self.width() - 220, 92), f"Distortion Vector ({self.vector_magnification:.0f}x Mag)")
 
