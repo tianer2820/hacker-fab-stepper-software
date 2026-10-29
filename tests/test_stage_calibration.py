@@ -17,6 +17,32 @@ from stage_control.dummy_stage import DummyStage
 from operations.exposure import ExposureOperation
 
 
+from operations.stage_calibration import DEFAULT_ARUCO_DICT
+
+
+def generate_etched_ar_tag(marker_id: int, size: int = 160, dictionary=None) -> np.ndarray:
+    dict_obj = dictionary if dictionary is not None else DEFAULT_ARUCO_DICT
+    total_cells = dict_obj.markerSize + 2
+    cell_sz = size // total_cells
+    actual_sz = cell_sz * total_cells
+    img = np.full((actual_sz, actual_sz), 220, dtype=np.uint8)
+    marker = cv2.aruco.generateImageMarker(dict_obj, marker_id, actual_sz)
+    cv2.rectangle(img, (0, 0), (actual_sz - 1, actual_sz - 1), 30, thickness=4)
+    for r in range(total_cells):
+        for c in range(total_cells):
+            if c < total_cells - 1:
+                p1 = marker[(r * cell_sz) + cell_sz // 2, (c * cell_sz) + cell_sz // 2]
+                p2 = marker[(r * cell_sz) + cell_sz // 2, ((c + 1) * cell_sz) + cell_sz // 2]
+                if p1 != p2:
+                    cv2.line(img, ((c + 1) * cell_sz, r * cell_sz), ((c + 1) * cell_sz, (r + 1) * cell_sz), 30, thickness=3)
+            if r < total_cells - 1:
+                p1 = marker[(r * cell_sz) + cell_sz // 2, (c * cell_sz) + cell_sz // 2]
+                p2 = marker[((r + 1) * cell_sz) + cell_sz // 2, (c * cell_sz) + cell_sz // 2]
+                if p1 != p2:
+                    cv2.line(img, (c * cell_sz, (r + 1) * cell_sz), ((c + 1) * cell_sz, (r + 1) * cell_sz), 30, thickness=3)
+    return img
+
+
 class TestStageCalibration(unittest.TestCase):
     def setUp(self):
         # Create a simple 2x2 calibration grid
@@ -389,18 +415,48 @@ class TestStageCalibrationOperations(unittest.TestCase):
             err2 = op2.execute(ctx, lambda p, m: None)
             self.assertIsNone(err2)
 
-            # 3. Run Stage 3 (Optical Scan & Reconstruction)
+            # After Stage 2 (wafer patterned, developed, and remounted):
+            tag0_etched = generate_etched_ar_tag(marker_id=0, size=160)
+            tag1_etched = generate_etched_ar_tag(marker_id=1, size=160)
+            eh, ew = tag0_etched.shape
+            etched_frame = np.full((480, 640, 3), 220, dtype=np.uint8)
+            etched_frame[150 : 150 + eh, 50 : 50 + ew, :] = np.stack([tag0_etched] * 3, axis=-1)
+            etched_frame[150 : 150 + eh, 350 : 350 + ew, :] = np.stack([tag1_etched] * 3, axis=-1)
+            camera.frame = etched_frame
+
+            # 3. Run Stage 3 (Spiral Image Scan)
+            scan_dir = os.path.join(tmpdir, "scanned_photos")
             op3 = StageCalibrationScanOperation(
+                output_dir=scan_dir,
                 input_json_path=s1_path,
-                output_json_path=s3_path,
                 camera_pixel_size=1.0,
                 stabilization_delay=0.0,
-                apply_to_stage=True,
             )
             err3 = op3.execute(ctx, lambda p, m: None)
             self.assertIsNone(err3)
+            self.assertTrue(os.path.exists(scan_dir))
+            manifest_file = os.path.join(scan_dir, "scan_manifest.json")
+            self.assertTrue(os.path.exists(manifest_file))
+
+            # Verify saved photos exist
+            saved_images = [f for f in os.listdir(scan_dir) if f.endswith(".png")]
+            self.assertGreaterEqual(len(saved_images), 1)
+
+            # Test Reconstruction Pipeline
+            from lib.stage_calibration_reconstruction.pipeline import ReconstructionPipeline
+            pipeline = ReconstructionPipeline(
+                images_dir=scan_dir,
+                stage1_json_path=s1_path,
+                camera_pixel_size=1.0,
+            )
+            cal, diag, r_err = pipeline.run()
+            self.assertIsNone(r_err)
+            self.assertIsNotNone(cal)
+            self.assertEqual(cal.grid_shape, (2, 2))
+            self.assertTrue(cal.has_xy_calibration)
+            cal.save_to_json(s3_path)
             self.assertTrue(os.path.exists(s3_path))
-            self.assertIsNotNone(op3.calibration)
+            stage.set_calibration(cal)
             self.assertIsNotNone(stage.get_calibration())
             self.assertEqual(stage.get_calibration().grid_shape, (2, 2))
             self.assertTrue(stage.get_calibration().has_xy_calibration)
@@ -760,20 +816,21 @@ class TestStageCalibrationOperations(unittest.TestCase):
 
             save_dir = os.path.join(tmpdir, "scanned_photos")
             op2 = StageCalibrationScanOperation(
+                output_dir=save_dir,
                 input_json_path=p1_path,
-                output_json_path=p2_path,
                 camera_pixel_size=1.0,
                 stabilization_delay=0.0,
-                apply_to_stage=True,
-                save_images_dir=save_dir,
             )
             err = op2.execute(ctx, lambda p, m: None)
             self.assertIsNone(err)
-            self.assertTrue(os.path.exists(p2_path))
             self.assertTrue(os.path.exists(save_dir))
-            # Verify scanned cell image was saved
-            saved_files = os.listdir(save_dir)
-            self.assertIn("scan_cell_r0_c0.png", saved_files)
+            manifest_path = os.path.join(save_dir, "scan_manifest.json")
+            self.assertTrue(os.path.exists(manifest_path))
+
+            # Verify scanned images were saved
+            saved_files = [f for f in os.listdir(save_dir) if f.endswith(".png")]
+            self.assertGreater(len(saved_files), 0)
+            self.assertTrue(any(f.startswith("scan_0000_") for f in saved_files))
 
 
 
@@ -856,12 +913,105 @@ class TestStageCalibrationUI(unittest.TestCase):
         self.assertEqual(panel.config_tab.spin_camera_pixel_size.value(), 1.0)
         self.assertIn("Computed Grid", stage_cal_tab.lbl_grid_info.text())
         self.assertFalse(hasattr(stage_cal_tab, "progress_bar"))
-        self.assertTrue(hasattr(stage_cal_tab, "chk_s3_save_images"))
-        self.assertFalse(stage_cal_tab.chk_s3_save_images.isChecked())
-        self.assertFalse(stage_cal_tab.txt_s3_save_dir.isEnabled())
-        stage_cal_tab.chk_s3_save_images.setChecked(True)
-        self.assertTrue(stage_cal_tab.txt_s3_save_dir.isEnabled())
-        self.assertTrue(stage_cal_tab.btn_browse_s3_save_dir.isEnabled())
+        self.assertTrue(hasattr(stage_cal_tab, "txt_s3_output_dir"))
+        self.assertTrue(hasattr(stage_cal_tab, "chk_s3_autofocus"))
+        self.assertFalse(stage_cal_tab.chk_s3_autofocus.isChecked())
+        self.assertTrue(hasattr(stage_cal_tab, "btn_open_inspector"))
+
+        # Test opening the inspector window
+        stage_cal_tab._on_open_inspector_clicked()
+        self.assertIsNotNone(stage_cal_tab._inspector_window)
+        self.assertTrue(stage_cal_tab._inspector_window.isVisible())
+        self.assertIsNotNone(stage_cal_tab._inspector_window.viewport)
+        self.assertIsNotNone(stage_cal_tab._inspector_window.distortion_view)
+        stage_cal_tab._inspector_window.close()
+
+    def test_inspector_window_live_tuning_and_reprocess(self):
+        from ui.widgets.stage_calibration_inspector import StageCalibrationInspectorWindow
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p1_path = os.path.join(tmpdir, "stage1.json")
+            images_dir = os.path.join(tmpdir, "images")
+            os.makedirs(images_dir, exist_ok=True)
+
+            stage1_data = {
+                "version": "2.0",
+                "timestamp": "2026-10-14T12:00:00",
+                "grid_shape": [2, 2],
+                "step_distance": 1000.0,
+                "calibration_range": 2000.0,
+                "pixel_scale": 1.0,
+                "dict_id": 0,
+                "points": [
+                    {"grid_index": [0, 0], "marker_id": 0, "raw_xy": [0.0, 0.0], "z_focus": 100.0},
+                    {"grid_index": [0, 1], "marker_id": 1, "raw_xy": [1000.0, 0.0], "z_focus": 100.0},
+                    {"grid_index": [1, 0], "marker_id": 2, "raw_xy": [0.0, 1000.0], "z_focus": 100.0},
+                    {"grid_index": [1, 1], "marker_id": 3, "raw_xy": [1000.0, 1000.0], "z_focus": 100.0},
+                ],
+            }
+            with open(p1_path, "w", encoding="utf-8") as f:
+                json.dump(stage1_data, f)
+
+            tag0 = generate_etched_ar_tag(0, 160)
+            tag1 = generate_etched_ar_tag(1, 160)
+            h, w = tag0.shape
+
+            # Frame 1: tag 0 and tag 1
+            f1 = np.full((480, 640, 3), 220, dtype=np.uint8)
+            f1[150 : 150 + h, 50 : 50 + w, :] = np.stack([tag0] * 3, axis=-1)
+            f1[150 : 150 + h, 350 : 350 + w, :] = np.stack([tag1] * 3, axis=-1)
+            cv2.imwrite(os.path.join(images_dir, "scan_0000.png"), f1)
+
+            # Frame 2: tag 0 alone
+            f2 = np.full((480, 640, 3), 220, dtype=np.uint8)
+            f2[150 : 150 + h, 200 : 200 + w, :] = np.stack([tag0] * 3, axis=-1)
+            cv2.imwrite(os.path.join(images_dir, "scan_0001.png"), f2)
+
+            # Open Inspector Window
+            win = StageCalibrationInspectorWindow(
+                initial_images_dir=images_dir,
+                initial_stage1_json=p1_path,
+                camera_pixel_size=1.0,
+            )
+            try:
+                self.assertEqual(win.list_images.count(), 2)
+
+                # Test preview on first image
+                win.list_images.setCurrentRow(0)
+                self.assertIn("scan_0000.png", win.lbl_image_info.text())
+                self.assertIn("Detected: 2 tags", win.lbl_image_info.text())
+                self.assertIsNotNone(win.viewport._annotated_frame)
+
+                # Test live parameter adjustment (updates only current preview)
+                win.spin_fine_c.setValue(8.0)
+                self.assertIn("scan_0000.png", win.lbl_image_info.text())
+
+                # Test synchronous reprocessing using ReconstructionPipeline directly to verify UI integration
+                from lib.stage_calibration_reconstruction.pipeline import ReconstructionPipeline
+                pipeline = ReconstructionPipeline(
+                    images_dir=images_dir,
+                    stage1_json_path=p1_path,
+                    camera_pixel_size=1.0,
+                    detector_params=win._get_current_detector_parameters(),
+                )
+                cal, diag, err = pipeline.run()
+                self.assertIsNone(err)
+                self.assertIsNotNone(cal)
+
+                # Feed results into window
+                win._on_worker_finished(cal, diag, "")
+                self.assertIsNotNone(win._last_calibration)
+                self.assertTrue(win.btn_save_cal.isEnabled())
+                self.assertIn("Unique Tags: 2 / 4", win.lbl_diag_tags.text())
+                self.assertIsNotNone(win.distortion_view._calibration)
+
+                # Test saving calibration
+                out_save = os.path.join(tmpdir, "out_cal.json")
+                win._last_calibration.save_to_json(out_save)
+                self.assertTrue(os.path.exists(out_save))
+
+            finally:
+                win.close()
 
 
 

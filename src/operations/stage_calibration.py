@@ -766,80 +766,74 @@ class StageCalibrationPatternOperation(Operation):
 
 
 # =============================================================================
-# STAGE 3: SCANNING & RECONSTRUCTION OPERATION
+# STAGE 3: SPIRAL IMAGE SCAN OPERATION (HARDWARE ACQUISITION ONLY)
 # =============================================================================
 
 
 class StageCalibrationScanOperation(Operation):
-    """Stage 3: Chip pose estimation, multi-tag camera scanning, and Least Squares global reconstruction."""
+    """Stage 3: Outward spiral image scan with Z-offset tracking, saving all photos to a folder."""
 
     def __init__(
         self,
-        input_json_path: Optional[str] = None,
-        output_json_path: Optional[str] = None,
+        output_dir: str = "",
+        scan_range: Optional[float] = None,
         camera_pixel_size: Optional[float] = None,
         stabilization_delay: float = 0.5,
-        apply_to_stage: bool = True,
+        autofocus: bool = False,
         grid_size: Optional[int] = None,
-        scan_range: Optional[float] = None,
+        input_json_path: Optional[str] = None,
+        # Legacy parameter compatibility if called from older signatures
+        output_json_path: Optional[str] = None,
+        apply_to_stage: bool = False,
         save_images_dir: Optional[str] = None,
-        edge_detector_params: Optional[EdgeDetectorParameters] = None,
+        edge_detector_params: Optional[Any] = None,
     ):
-        super().__init__("Stage Calibration - Stage 3 (Optical Scan)")
-        self.input_json_path = input_json_path
-        self.output_json_path = output_json_path
+        super().__init__("Stage Calibration - Stage 3 (Spiral Image Scan)")
+        resolved_dir = save_images_dir or output_dir
+        self.output_dir = str(resolved_dir).strip() if resolved_dir else ""
+        self.scan_range = float(scan_range) if scan_range is not None and float(scan_range) > 0 else None
         self.camera_pixel_size = float(camera_pixel_size) if camera_pixel_size is not None else None
         self.stabilization_delay = float(stabilization_delay)
-        self.apply_to_stage = bool(apply_to_stage)
+        self.autofocus = bool(autofocus)
         self.grid_size = int(grid_size) if grid_size is not None and int(grid_size) > 0 else None
-        self.scan_range = float(scan_range) if scan_range is not None and float(scan_range) > 0 else None
-        self.save_images_dir = str(save_images_dir).strip() if save_images_dir else None
+        self.input_json_path = input_json_path
+        self._current_sub_op: Optional[Operation] = None
 
-        self.edge_detector_params = edge_detector_params
-        self.calibration: Optional[StageCalibration] = None
-        self.flip_horizontal: bool = False
-        self.cam_to_stage_matrix: Optional[np.ndarray] = None
+    def abort(self):
+        super().abort()
+        if self._current_sub_op is not None:
+            self._current_sub_op.abort()
 
-    def _detect_markers(
+    def _run_sub_op(
         self,
-        frame: Optional[np.ndarray],
-        flip_horizontal: bool = False,
-    ) -> Tuple[int, List[np.ndarray], Optional[np.ndarray]]:
-        """Detects ArUco markers using edge_artag detector."""
-        if frame is None or getattr(frame, "size", 0) == 0:
-            return 0, [], None
-
-        img = cv2.flip(frame, 1) if flip_horizontal else frame
-        corners, ids, _ = detect_edge_markers(
-            img,
-            dictionary=DEFAULT_ARUCO_DICT,
-            parameters=self.edge_detector_params,
-        )
-        count = len(ids) if ids is not None else 0
-        if count == 0:
-            # Fall back to standard OpenCV detector as safety net
-            count, corners, ids = detect_ar_tags(frame, dict_id=DEFAULT_ARUCO_DICT, flip_horizontal=flip_horizontal)
-        return count, corners, ids
+        op: Operation,
+        context: ExecutionContext,
+        report_progress: Callable[[float, str], None],
+    ) -> Optional[str]:
+        self._current_sub_op = op
+        err = op.execute(context, report_progress)
+        self._current_sub_op = None
+        return err
 
     def execute(self, context: ExecutionContext, report_progress: Callable[[float, str], None]) -> Optional[str]:
         if context.stage is None or context.camera is None:
             return "Stage or Camera not available in execution context"
 
-        input_path = (
-            self.input_json_path
-            or (
-                context.machine_config.stage_calibration.calibration_file_path
-                if context.machine_config is not None
-                else "stage_calibration.json"
-            )
-        )
-        output_path = self.output_json_path or input_path
+        if not self.output_dir:
+            return "Output directory is required for saving scanned images"
 
-        if not os.path.exists(input_path):
-            return f"Stage calibration input file not found: {input_path}"
+        os.makedirs(self.output_dir, exist_ok=True)
 
-        with open(input_path, "r", encoding="utf-8") as f:
-            stage1_data = json.load(f)
+        stage = context.stage
+        camera = context.camera
+
+        # Load Stage 1 calibration onto stage if provided so z_calib_only uses the measured surface
+        if self.input_json_path and os.path.exists(self.input_json_path):
+            try:
+                cal = StageCalibration.load_from_json(self.input_json_path)
+                stage.set_calibration(cal)
+            except Exception as e:
+                print(f"[StageCalibrationScan] Warning: could not load Stage 1 calibration: {e}")
 
         effective_pixel_scale = (
             self.camera_pixel_size
@@ -851,272 +845,92 @@ class StageCalibrationScanOperation(Operation):
             )
         )
 
-        grid_shape = tuple(stage1_data.get("grid_shape", (0, 0)))
-        ny, nx = grid_shape
-        step_dist = float(stage1_data.get("step_distance", 5000.0))
-        raw_points = stage1_data.get("points", [])
+        init_frame = camera.get_latest_frame()
+        cam_h, cam_w = init_frame.shape[:2] if init_frame is not None else (1080, 1920)
 
-        if len(raw_points) == 0:
-            return "No calibration points found in input file"
+        # Step size strictly 0.4 * FOV
+        fov_min = min(cam_w, cam_h) * effective_pixel_scale
+        step_dist = max(50.0, 0.4 * fov_min)
 
-        # Lookup dicts for nominal data
-        nominal_dict: Dict[int, Dict[str, Any]] = {int(p["marker_id"]): p for p in raw_points}
-        nominal_pos: Dict[int, Tuple[float, float]] = {
-            int(p["marker_id"]): (float(p["raw_xy"][0]), float(p["raw_xy"][1])) for p in raw_points
-        }
-
-        cal = StageCalibration.load_from_json(input_path)
-        stage = context.stage
-        stage.set_calibration(cal)
-        camera = context.camera
-
-        # =========================================================================
-        # STEP 1: INITIAL CHIP POSE ESTIMATION FROM CURRENT CAMERA VIEW
-        # =========================================================================
-        report_progress(0.05, "Step 1/3: Detecting visible tag to estimate chip orientation and pose...")
-        frame = camera.get_latest_frame()
-        if frame is None:
-            return "Failed to acquire camera frame"
-
-        cam_h, cam_w = frame.shape[:2]
-        u_c, v_c = cam_w / 2.0, cam_h / 2.0
-
-        if self.save_images_dir:
-            os.makedirs(self.save_images_dir, exist_ok=True)
-            cv2.imwrite(os.path.join(self.save_images_dir, "scan_initial_pose.png"), frame)
-
-        det_count, corners, ids = self._detect_markers(frame, flip_horizontal=False)
-        flip_horizontal = False
-        if det_count == 0:
-            det_count, corners, ids = self._detect_markers(frame, flip_horizontal=True)
-            flip_horizontal = True
-        self.flip_horizontal = flip_horizontal
-
-        if det_count == 0 or ids is None or len(ids) == 0:
-            return (
-                "No ArUco tags detected in camera field of view. "
-                "Please jog stage to bring at least one patterned tag into view."
-            )
-
-        cur_stage_x, cur_stage_y, cur_stage_z = stage.get_raw_position()
-
-        # Find all detected tags that exist in nominal points
-        matched_tags: List[Tuple[int, np.ndarray]] = []
-        for idx_det, mid_val in enumerate(ids.flatten()):
-            mid_int = int(mid_val)
-            if mid_int in nominal_dict:
-                matched_tags.append((mid_int, corners[idx_det].reshape(-1, 2)))
-
-        if not matched_tags:
-            return f"Detected tag IDs {ids.flatten().tolist()} do not belong to the patterned calibration grid."
-
-        # Estimate rotation angle theta
-        angles = []
-        for _, tag_corners in matched_tags:
-            edge_top = tag_corners[1] - tag_corners[0]
-            angles.append(np.arctan2(edge_top[1], edge_top[0]))
-        theta = float(np.median(angles))
-        cos_t, sin_t = np.cos(theta), np.sin(theta)
-        R_chip = np.array([[cos_t, -sin_t], [sin_t, cos_t]], dtype=np.float64)
-        R_inv = np.linalg.inv(R_chip)
-
-        # =========================================================================
-        # STEP 1.5: TEST MOVE (STAGE +X, +Y BY HALF FOV) TO SOLVE STAGE-CAMERA MATRIX
-        # =========================================================================
-        report_progress(0.10, "Performing test moves (half FOV) to estimate stage-to-camera transform...")
-        track_id = matched_tags[0][0]
-        track_c0 = np.mean(matched_tags[0][1], axis=0)
-        d_test = max(50.0, 0.3 * min(cam_w, cam_h) * effective_pixel_scale)
-        M_cam_to_stage = np.eye(2, dtype=np.float64)
-
-        try:
-            # Step along stage +X
-            if stage.move_absolute({"x": cur_stage_x + d_test, "y": cur_stage_y}, z_calib_only=True):
-                context.delay_func(self.stabilization_delay)
-                fx = camera.get_latest_frame()
-                cnt_x, crn_x, ids_x = self._detect_markers(fx, flip_horizontal=self.flip_horizontal)
-                cx_pos = None
-                if cnt_x > 0 and ids_x is not None:
-                    for idx_t, mid_val in enumerate(ids_x.flatten()):
-                        if int(mid_val) == track_id:
-                            cx_pos = np.mean(crn_x[idx_t].reshape(-1, 2), axis=0)
-                            break
-
-                # Step along stage +Y
-                if stage.move_absolute({"x": cur_stage_x, "y": cur_stage_y + d_test}, z_calib_only=True):
-                    context.delay_func(self.stabilization_delay)
-                    fy = camera.get_latest_frame()
-                    cnt_y, crn_y, ids_y = self._detect_markers(fy, flip_horizontal=self.flip_horizontal)
-                    cy_pos = None
-                    if cnt_y > 0 and ids_y is not None:
-                        for idx_t, mid_val in enumerate(ids_y.flatten()):
-                            if int(mid_val) == track_id:
-                                cy_pos = np.mean(crn_y[idx_t].reshape(-1, 2), axis=0)
-                                break
-
-                    if cx_pos is not None and cy_pos is not None:
-                        delta_px_x = (cx_pos - track_c0) * effective_pixel_scale
-                        delta_px_y = (cy_pos - track_c0) * effective_pixel_scale
-                        J_stage_to_cam = np.array([
-                            [float(delta_px_x[0]) / d_test, float(delta_px_y[0]) / d_test],
-                            [float(delta_px_x[1]) / d_test, float(delta_px_y[1]) / d_test],
-                        ], dtype=np.float64)
-                        if abs(np.linalg.det(J_stage_to_cam)) > 1e-6:
-                            M_cam_to_stage = np.linalg.inv(J_stage_to_cam)
-        finally:
-            stage.move_absolute({"x": cur_stage_x, "y": cur_stage_y}, z_calib_only=True)
-            context.delay_func(self.stabilization_delay)
-
-        self.cam_to_stage_matrix = M_cam_to_stage
-
-        # Estimate wafer origin from matched tags using M_cam_to_stage
-        wafer_origin_estimates = []
-        for mid_int, tag_corners in matched_tags:
-            tag_cam_center = np.mean(tag_corners, axis=0)
-            delta_cam_px = tag_cam_center - np.array([u_c, v_c])
-            delta_cam_um = delta_cam_px * effective_pixel_scale
-            tag_stage_shift = M_cam_to_stage @ delta_cam_um
-            tag_stage_pos = np.array([cur_stage_x + tag_stage_shift[0], cur_stage_y + tag_stage_shift[1]], dtype=np.float64)
-
-            ref_grid_r, ref_grid_c = nominal_dict[mid_int]["grid_index"]
-            tag_wafer_offset = np.array([ref_grid_c * step_dist, ref_grid_r * step_dist], dtype=np.float64)
-            wafer_cam_vec = R_chip @ tag_wafer_offset
-            origin_est = tag_stage_pos - (M_cam_to_stage @ wafer_cam_vec)
-            wafer_origin_estimates.append(origin_est)
-
-        wafer_stage_origin = np.mean(wafer_origin_estimates, axis=0)
-
-        report_progress(
-            0.12,
-            f"Pose estimated from {len(matched_tags)} tag(s): angle {np.degrees(theta):.2f}°, "
-            f"origin ({wafer_stage_origin[0]:.1f}, {wafer_stage_origin[1]:.1f}) µm",
-        )
-
-        def wafer_to_stage_pos(wafer_xy: np.ndarray) -> np.ndarray:
-            return wafer_stage_origin + (M_cam_to_stage @ (R_chip @ wafer_xy))
-
-        # =========================================================================
-        # STEP 2: SCAN CELLS & RECORD RELATIVE INTRA-FRAME MEASUREMENTS
-        # =========================================================================
-        measurements: List[Tuple[int, int, float, float]] = []
-
-        eff_grid_size = self.grid_size
-        if eff_grid_size is None and self.scan_range is not None and self.scan_range > 0:
-            eff_grid_size = max(1, int(round(self.scan_range / step_dist)) + 1)
-
-        if eff_grid_size is not None and eff_grid_size < nx:
-            n_sub = eff_grid_size
-            r0 = (ny - 1) // 2
-            c0 = (nx - 1) // 2
-            r_min = max(0, r0 - n_sub // 2)
-            r_max = min(ny - 2, r_min + n_sub - 2)
-            c_min = max(0, c0 - n_sub // 2)
-            c_max = min(nx - 2, c_min + n_sub - 2)
-            cell_list = [(r, c) for r in range(r_min, r_max + 1) for c in range(c_min, c_max + 1)]
+        eff_range = self.scan_range or 10000.0
+        if self.grid_size is not None and self.grid_size > 0:
+            nx = ny = self.grid_size
         else:
-            cell_list = [(r, c) for r in range(ny - 1) for c in range(nx - 1)]
+            nx = ny = max(1, int(round(eff_range / step_dist)) + 1)
 
-        num_cells = max(1, len(cell_list))
+        total_points = nx * ny
+        start_x, start_y = stage.get_raw_position()[:2]
+        c0 = (nx - 1) // 2
+        r0 = (ny - 1) // 2
 
-        for cell_idx, (r, c) in enumerate(cell_list, start=1):
+        spiral_indices = generate_spiral_grid_indices(nx, ny)
+        manifest: List[Dict[str, Any]] = []
+
+        report_progress(0.0, f"Starting spiral scan on {nx}x{ny} grid ({total_points} photos, step {step_dist:.1f} µm)...")
+
+        for point_idx, (r, c) in enumerate(spiral_indices):
             if self.is_aborted:
                 return "Stage 3 calibration aborted"
 
-            prog = 0.15 + (cell_idx / num_cells) * 0.70
-
-            cell_center_wafer = np.array([(c + 0.5) * step_dist, (r + 0.5) * step_dist], dtype=np.float64)
-            target_stage_pos = wafer_to_stage_pos(cell_center_wafer)
+            prog = point_idx / total_points
+            dx = (c - c0) * step_dist
+            dy = (r - r0) * step_dist
+            target_x = start_x + dx
+            target_y = start_y + dy
 
             report_progress(
                 prog,
-                f"Scanning Cell [{r}, {c}] ({cell_idx}/{num_cells}): Moving to cluster center...",
+                f"Photo {point_idx + 1}/{total_points} (Grid [{r}, {c}]): Moving to ({target_x:.1f}, {target_y:.1f}) µm...",
             )
-            stage.move_absolute(
-                {"x": float(target_stage_pos[0]), "y": float(target_stage_pos[1])},
-                z_calib_only=True,
-            )
+            stage.move_absolute({"x": target_x, "y": target_y}, z_calib_only=True)
             context.delay_func(self.stabilization_delay)
 
-            cell_frame = camera.get_latest_frame()
-            if cell_frame is None:
+            # Optional autofocus before each photo
+            if self.autofocus:
+                report_progress(prog + 0.02 / total_points, f"Autofocusing at point {point_idx + 1}/{total_points}...")
+                af_op = AutofocusOperation()
+                af_reporter = sub_progress(
+                    report_progress,
+                    prog + 0.02 / total_points,
+                    prog + 0.5 / total_points,
+                    prefix=f"AF {point_idx + 1}/{total_points}",
+                )
+                af_err = self._run_sub_op(af_op, context, af_reporter)
+                if af_err and self.is_aborted:
+                    return "Stage 3 calibration aborted during autofocus"
+
+            frame = camera.get_latest_frame()
+            if frame is None:
                 continue
 
-            if self.save_images_dir:
-                img_path = os.path.join(self.save_images_dir, f"scan_cell_r{r}_c{c}.png")
-                cv2.imwrite(img_path, cell_frame)
+            img_filename = f"scan_{point_idx:04d}_r{r}_c{c}_x{target_x:.1f}_y{target_y:.1f}.png"
+            img_path = os.path.join(self.output_dir, img_filename)
+            cv2.imwrite(img_path, frame)
 
-            det_cnt, det_corners, det_ids = self._detect_markers(
-                cell_frame, flip_horizontal=self.flip_horizontal
-            )
+            actual_pos = stage.get_raw_position()
+            manifest.append({
+                "step": point_idx,
+                "grid_index": [r, c],
+                "filename": img_filename,
+                "target_xy": [target_x, target_y],
+                "actual_raw_pos": list(actual_pos),
+            })
 
-            # Collect all pairwise relative constraints (handles 2x2, 2x3, 2x4, etc.)
-            if det_cnt >= 2 and det_ids is not None:
-                centers_in_frame: Dict[int, np.ndarray] = {}
-                for idx_m, mid_val in enumerate(det_ids.flatten()):
-                    m_int = int(mid_val)
-                    if m_int in nominal_dict:
-                        pts = det_corners[idx_m].reshape(-1, 2)
-                        centers_in_frame[m_int] = np.mean(pts, axis=0)
+        # Save manifest
+        manifest_path = os.path.join(self.output_dir, "scan_manifest.json")
+        try:
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "version": "1.0",
+                    "total_photos": len(manifest),
+                    "grid_shape": [ny, nx],
+                    "step_distance": step_dist,
+                    "fov_min": fov_min,
+                    "pixel_size": effective_pixel_scale,
+                    "photos": manifest,
+                }, f, indent=2)
+        except Exception as e:
+            print(f"[StageCalibrationScan] Warning: could not write scan_manifest.json: {e}")
 
-                marker_ids_found = list(centers_in_frame.keys())
-                for i in range(len(marker_ids_found)):
-                    for j in range(i + 1, len(marker_ids_found)):
-                        id_a = marker_ids_found[i]
-                        id_b = marker_ids_found[j]
-                        disp_cam_px = centers_in_frame[id_b] - centers_in_frame[id_a]
-                        disp_cam_um = disp_cam_px * effective_pixel_scale
-                        disp_wafer = R_inv @ disp_cam_um
-                        measurements.append((id_a, id_b, float(disp_wafer[0]), float(disp_wafer[1])))
-
-        report_progress(0.88, f"Collected {len(measurements)} relative tag-to-tag distance measurements.")
-
-        # =========================================================================
-        # STEP 3: RECONSTRUCT GLOBAL OPTICAL COORDINATES VIA LEAST SQUARES
-        # =========================================================================
-        report_progress(0.92, "Step 3/3: Solving global coordinates via Least Squares...")
-        anchor_id = 0
-        anchor_pos = nominal_pos.get(0, (cur_stage_x, cur_stage_y))
-
-        reconstructed_positions = solve_global_positions_from_relative_measurements(
-            grid_size=nx,
-            measurements=measurements,
-            anchor_id=anchor_id,
-            anchor_pos=anchor_pos,
-            nominal_positions=nominal_pos,
-        )
-
-        cal_points: List[StageCalibrationPoint] = []
-        for p in raw_points:
-            m_id = int(p["marker_id"])
-            grid_idx = tuple(p["grid_index"])
-            raw_xy = (float(p["raw_xy"][0]), float(p["raw_xy"][1]))
-            corr_xy = reconstructed_positions.get(m_id, raw_xy)
-            z_focus = float(p["z_focus"])
-
-            cal_points.append(
-                StageCalibrationPoint(
-                    grid_index=grid_idx,
-                    marker_id=m_id,
-                    raw_xy=raw_xy,
-                    corr_xy=corr_xy,
-                    z_focus=z_focus,
-                )
-            )
-
-        self.calibration = StageCalibration(
-            grid_shape=grid_shape,
-            points=cal_points,
-            stage_type=type(stage).__name__,
-            step_distance=step_dist,
-            calibration_range=float(stage1_data.get("calibration_range", 10000.0)),
-            flip_horizontal=self.flip_horizontal,
-            cam_to_stage_matrix=M_cam_to_stage,
-        )
-        self.calibration.save_to_json(output_path)
-
-        if self.apply_to_stage:
-            stage.set_calibration(self.calibration)
-            print("[Stage Calibration] Applied new calibration directly to stage controller.")
-
-        report_progress(1.0, f"Stage 3 complete! Calibration map saved to {output_path}.")
+        report_progress(1.0, f"Spiral scan complete! Saved {len(manifest)} photos to {self.output_dir}.")
         return None

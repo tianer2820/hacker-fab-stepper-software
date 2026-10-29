@@ -1,3 +1,4 @@
+import json
 import os
 from typing import Optional
 
@@ -25,6 +26,7 @@ from operations.stage_calibration import (
     compute_calibration_grid_params,
 )
 from ui.bridge import QtEngineBridge
+from ui.widgets.stage_calibration_inspector import StageCalibrationInspectorWindow
 
 
 class StageCalibrationTabWidget(QScrollArea):
@@ -35,6 +37,7 @@ class StageCalibrationTabWidget(QScrollArea):
         self.engine = engine
         self.bridge = bridge
         self._active_op: Optional[object] = None
+        self._inspector_window: Optional[StageCalibrationInspectorWindow] = None
 
         self.setWidgetResizable(True)
         self.setFrameShape(QScrollArea.NoFrame)
@@ -169,11 +172,11 @@ class StageCalibrationTabWidget(QScrollArea):
         main_layout.addWidget(s2_box)
 
         # 4. Stage 3 Group
-        s3_box = QGroupBox("Stage 3: Optical Scan & Least Squares Map")
+        s3_box = QGroupBox("Stage 3: Spiral Image Scan")
         s3_layout = QVBoxLayout(s3_box)
         s3_layout.setSpacing(6)
 
-        s3_layout.addWidget(QLabel("Input JSON (with Stage 1 Z Heights):"))
+        s3_layout.addWidget(QLabel("Stage 1 Input JSON (for calibrated Z-leveling):"))
         s3_in_row = QHBoxLayout()
         self.txt_s3_input = QLineEdit(os.path.abspath(default_cal_file))
         s3_in_row.addWidget(self.txt_s3_input, 1)
@@ -182,18 +185,15 @@ class StageCalibrationTabWidget(QScrollArea):
         s3_in_row.addWidget(self.btn_browse_s3_input)
         s3_layout.addLayout(s3_in_row)
 
-        s3_layout.addWidget(QLabel("Final Calibration Output JSON:"))
+        s3_layout.addWidget(QLabel("Output Folder for Scanned Photos:"))
         s3_out_row = QHBoxLayout()
-        self.txt_s3_output = QLineEdit(os.path.abspath(default_cal_file))
-        s3_out_row.addWidget(self.txt_s3_output, 1)
-        self.btn_browse_s3_output = QPushButton("Browse...")
-        self.btn_browse_s3_output.clicked.connect(self._on_browse_s3_output_clicked)
-        s3_out_row.addWidget(self.btn_browse_s3_output)
+        default_scan_dir = os.path.abspath("scanned_calibration_photos")
+        self.txt_s3_output_dir = QLineEdit(default_scan_dir)
+        s3_out_row.addWidget(self.txt_s3_output_dir, 1)
+        self.btn_browse_s3_output_dir = QPushButton("Browse...")
+        self.btn_browse_s3_output_dir.clicked.connect(self._on_browse_s3_output_dir_clicked)
+        s3_out_row.addWidget(self.btn_browse_s3_output_dir)
         s3_layout.addLayout(s3_out_row)
-
-        self.chk_apply_now = QCheckBox("Apply calibration to stage immediately upon completion")
-        self.chk_apply_now.setChecked(True)
-        s3_layout.addWidget(self.chk_apply_now)
 
         s3_range_row = QHBoxLayout()
         s3_range_row.addWidget(QLabel("Scan Range (0 for full):"))
@@ -211,23 +211,14 @@ class StageCalibrationTabWidget(QScrollArea):
         self.lbl_s3_grid_info.setStyleSheet("color: #4da6ff; font-weight: bold; font-size: 11px;")
         s3_layout.addWidget(self.lbl_s3_grid_info)
 
-        self.chk_s3_save_images = QCheckBox("Save scanned photos to folder")
-        self.chk_s3_save_images.setChecked(False)
-        self.chk_s3_save_images.toggled.connect(self._on_s3_save_images_toggled)
-        s3_layout.addWidget(self.chk_s3_save_images)
+        self.chk_s3_autofocus = QCheckBox("Perform autofocus before every photo taken")
+        self.chk_s3_autofocus.setChecked(False)
+        self.chk_s3_autofocus.setToolTip(
+            "Check this to run autofocus at every spiral scan position instead of relying purely on Stage 1 Z-leveling."
+        )
+        s3_layout.addWidget(self.chk_s3_autofocus)
 
-        s3_save_row = QHBoxLayout()
-        self.txt_s3_save_dir = QLineEdit()
-        self.txt_s3_save_dir.setPlaceholderText("Select folder to save scanned photos...")
-        self.txt_s3_save_dir.setEnabled(False)
-        s3_save_row.addWidget(self.txt_s3_save_dir, 1)
-        self.btn_browse_s3_save_dir = QPushButton("Browse...")
-        self.btn_browse_s3_save_dir.setEnabled(False)
-        self.btn_browse_s3_save_dir.clicked.connect(self._on_browse_s3_save_dir_clicked)
-        s3_save_row.addWidget(self.btn_browse_s3_save_dir)
-        s3_layout.addLayout(s3_save_row)
-
-        self.btn_start_s3 = QPushButton("Run Stage 3 (Scan & Reconstruct Global Map)")
+        self.btn_start_s3 = QPushButton("Run Stage 3 (Spiral Image Scan)")
         self.btn_start_s3.setStyleSheet("font-weight: bold; padding: 6px;")
         self.btn_start_s3.clicked.connect(self._on_start_s3_clicked)
         s3_layout.addWidget(self.btn_start_s3)
@@ -248,6 +239,23 @@ class StageCalibrationTabWidget(QScrollArea):
         status_layout.addWidget(self.btn_abort)
 
         main_layout.addWidget(status_box)
+
+        # 6. Standalone Inspector & Reconstruction Tool
+        inspector_box = QGroupBox("Reconstruction & Analysis")
+        inspector_layout = QVBoxLayout(inspector_box)
+        inspector_desc = QLabel(
+            "Open the standalone tool to inspect scanned photos, tune ArUco edge detection parameters with live preview, "
+            "perform least-squares coordinate reconstruction, and export the final stage calibration."
+        )
+        inspector_desc.setWordWrap(True)
+        inspector_layout.addWidget(inspector_desc)
+
+        self.btn_open_inspector = QPushButton("Open Calibration Inspector & Reconstruction Tool...")
+        self.btn_open_inspector.setStyleSheet("font-weight: bold; font-size: 13px; padding: 10px; background-color: #2b5c8f;")
+        self.btn_open_inspector.clicked.connect(self._on_open_inspector_clicked)
+        inspector_layout.addWidget(self.btn_open_inspector)
+
+        main_layout.addWidget(inspector_box)
         main_layout.addStretch(1)
 
         self.setWidget(container)
@@ -342,23 +350,39 @@ class StageCalibrationTabWidget(QScrollArea):
             self.txt_s3_input.setText(path)
             self._update_s3_grid_label()
 
-    def _on_browse_s3_output_clicked(self):
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Select Final Calibration JSON Save Path", self.txt_s3_output.text(), "JSON Files (*.json)"
-        )
-        if path:
-            self.txt_s3_output.setText(path)
-
-    def _on_s3_save_images_toggled(self, checked: bool):
-        self.txt_s3_save_dir.setEnabled(checked)
-        self.btn_browse_s3_save_dir.setEnabled(checked)
-
-    def _on_browse_s3_save_dir_clicked(self):
+    def _on_browse_s3_output_dir_clicked(self):
         dir_path = QFileDialog.getExistingDirectory(
-            self, "Select Folder to Save Scanned Photos", self.txt_s3_save_dir.text()
+            self, "Select Output Folder for Scanned Photos", self.txt_s3_output_dir.text()
         )
         if dir_path:
-            self.txt_s3_save_dir.setText(dir_path)
+            self.txt_s3_output_dir.setText(dir_path)
+
+    def _on_open_inspector_clicked(self):
+        pixel_scale = (
+            self.engine.machine_config.stage_calibration.camera_pixel_size
+            if hasattr(self.engine, "machine_config")
+            else 1.0
+        )
+        images_dir = self.txt_s3_output_dir.text().strip()
+        stage1_path = self.txt_s3_input.text().strip() or self.txt_s1_file.text().strip()
+
+        if self._inspector_window is None:
+            self._inspector_window = StageCalibrationInspectorWindow(
+                initial_images_dir=images_dir,
+                initial_stage1_json=stage1_path,
+                camera_pixel_size=pixel_scale,
+                engine=self.engine,
+            )
+        else:
+            if images_dir and os.path.isdir(images_dir):
+                self._inspector_window.txt_images_dir.setText(images_dir)
+                self._inspector_window._load_images_directory(images_dir)
+            if stage1_path and os.path.exists(stage1_path):
+                self._inspector_window.txt_stage1_json.setText(stage1_path)
+
+        self._inspector_window.show()
+        self._inspector_window.raise_()
+        self._inspector_window.activateWindow()
 
     def _on_start_s1_clicked(self):
         pixel_scale = (
@@ -397,22 +421,20 @@ class StageCalibrationTabWidget(QScrollArea):
             else 1.0
         )
         s3_range = self.spin_s3_range.value()
-        save_dir = None
-        if self.chk_s3_save_images.isChecked():
-            txt = self.txt_s3_save_dir.text().strip()
-            if txt:
-                save_dir = txt
+        output_dir = self.txt_s3_output_dir.text().strip()
+        if not output_dir:
+            self.lbl_status.setText("Status: Error - Output folder for scanned photos is required.")
+            return
 
         op = StageCalibrationScanOperation(
+            output_dir=output_dir,
             input_json_path=self.txt_s3_input.text().strip(),
-            output_json_path=self.txt_s3_output.text().strip(),
             camera_pixel_size=pixel_scale,
-            apply_to_stage=self.chk_apply_now.isChecked(),
+            autofocus=self.chk_s3_autofocus.isChecked(),
             scan_range=s3_range if s3_range > 0 else None,
-            save_images_dir=save_dir,
         )
         self._active_op = op
-        self.lbl_status.setText("Status: Starting Stage 3 (Optical Scan)...")
+        self.lbl_status.setText("Status: Starting Stage 3 (Spiral Image Scan)...")
         self.btn_abort.setEnabled(True)
         self.bridge.start_operation(op)
 
@@ -446,13 +468,9 @@ class StageCalibrationTabWidget(QScrollArea):
         self.btn_browse_s2_input.setEnabled(not is_busy)
         self.txt_s3_input.setEnabled(not is_busy)
         self.btn_browse_s3_input.setEnabled(not is_busy)
-        self.txt_s3_output.setEnabled(not is_busy)
-        self.btn_browse_s3_output.setEnabled(not is_busy)
-        self.chk_apply_now.setEnabled(not is_busy)
+        self.txt_s3_output_dir.setEnabled(not is_busy)
+        self.btn_browse_s3_output_dir.setEnabled(not is_busy)
         self.chk_s2_autofocus.setEnabled(not is_busy)
+        self.chk_s3_autofocus.setEnabled(not is_busy)
         self.spin_s2_range.setEnabled(not is_busy)
         self.spin_s3_range.setEnabled(not is_busy)
-        self.chk_s3_save_images.setEnabled(not is_busy)
-        save_enabled = not is_busy and self.chk_s3_save_images.isChecked()
-        self.txt_s3_save_dir.setEnabled(save_enabled)
-        self.btn_browse_s3_save_dir.setEnabled(save_enabled)
