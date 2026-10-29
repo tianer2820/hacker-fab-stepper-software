@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 import cv2
 import numpy as np
 
@@ -15,6 +15,7 @@ def detect_markers_in_frame(
     parameters: Optional[EdgeDetectorParameters] = None,
     dictionary: Optional[cv2.aruco.Dictionary] = None,
     flip_horizontal: bool = False,
+    debug_output: Optional[Any] = None,
 ) -> Tuple[int, List[np.ndarray], Optional[np.ndarray]]:
     """Detects ArUco markers using edge_artag without fallback.
 
@@ -23,11 +24,17 @@ def detect_markers_in_frame(
         parameters: Optional EdgeDetectorParameters for fine-tuning.
         dictionary: Optional cv2.aruco.Dictionary (defaults to DEFAULT_ARUCO_DICT).
         flip_horizontal: Whether to flip the frame horizontally before detection.
+        debug_output: Optional dict or list to receive intermediate debug image outputs.
 
     Returns:
         (count, corners_list, ids_array)
     """
     if frame is None or getattr(frame, "size", 0) == 0:
+        if debug_output is not None:
+            if isinstance(debug_output, dict):
+                debug_output.clear()
+            elif isinstance(debug_output, list):
+                debug_output.clear()
         return 0, [], None
 
     img = cv2.flip(frame, 1) if flip_horizontal else frame
@@ -37,6 +44,7 @@ def detect_markers_in_frame(
         img,
         dictionary=dict_obj,
         parameters=parameters,
+        debug_output=debug_output,
     )
     count = len(ids) if ids is not None else 0
     return count, corners, ids

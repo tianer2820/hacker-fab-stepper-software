@@ -986,6 +986,37 @@ class TestStageCalibrationUI(unittest.TestCase):
                 win.spin_fine_c.setValue(8.0)
                 self.assertIn("scan_0000.png", win.lbl_image_info.text())
 
+                # Test 1: Flip horizontal toggles preview flip
+                win.chk_overlay_markers.setChecked(False)
+                unflipped_disp = win.viewport._annotated_frame.copy()
+                win.chk_flip_h.setChecked(True)
+                flipped_disp = win.viewport._annotated_frame.copy()
+                self.assertFalse(np.array_equal(unflipped_disp, flipped_disp))
+                # Flipping flipped_disp back horizontally should match unflipped_disp
+                self.assertTrue(np.array_equal(cv2.flip(flipped_disp, 1), unflipped_disp))
+                win.chk_flip_h.setChecked(False)
+                win.chk_overlay_markers.setChecked(True)
+
+                # Test 2: Debug view dropdown options and switching
+                self.assertGreaterEqual(win.combo_view_mode.count(), 4)
+                view_keys = [win.combo_view_mode.itemData(i) for i in range(win.combo_view_mode.count())]
+                self.assertIn("input", view_keys)
+                self.assertIn("gray", view_keys)
+                self.assertIn("edges_decode", view_keys)
+
+                # Switch to grayscale
+                idx_gray = view_keys.index("gray")
+                win.combo_view_mode.setCurrentIndex(idx_gray)
+                self.assertIsNotNone(win.viewport._annotated_frame)
+
+                # Switch to fine & wide combined thresholded image
+                idx_decode = view_keys.index("edges_decode")
+                win.combo_view_mode.setCurrentIndex(idx_decode)
+                self.assertIsNotNone(win.viewport._annotated_frame)
+
+                # Return to input view
+                win.combo_view_mode.setCurrentIndex(view_keys.index("input"))
+
                 # Test synchronous reprocessing using ReconstructionPipeline directly to verify UI integration
                 from lib.stage_calibration_reconstruction.pipeline import ReconstructionPipeline
                 pipeline = ReconstructionPipeline(
@@ -1012,6 +1043,45 @@ class TestStageCalibrationUI(unittest.TestCase):
 
             finally:
                 win.close()
+
+    def test_edge_artag_debug_output_dict_and_list(self):
+        from lib.edge_artag import detect_edge_markers
+        from lib.stage_calibration_reconstruction.detector import detect_markers_in_frame
+
+        tag0 = generate_etched_ar_tag(0, 160)
+        frame = np.full((480, 640, 3), 220, dtype=np.uint8)
+        frame[150 : 150 + tag0.shape[0], 200 : 200 + tag0.shape[1], :] = np.stack([tag0] * 3, axis=-1)
+
+        # 1. Test dict output
+        debug_dict = {}
+        corners, ids, _ = detect_edge_markers(frame, dictionary=DEFAULT_ARUCO_DICT, debug_output=debug_dict)
+        self.assertIn("input", debug_dict)
+        self.assertIn("gray", debug_dict)
+        self.assertIn("e_fine", debug_dict)
+        self.assertIn("e_wide", debug_dict)
+        self.assertIn("edges_decode", debug_dict)
+        self.assertIsInstance(debug_dict["edges_decode"], np.ndarray)
+
+        # 2. Test list output
+        debug_list = []
+        corners, ids, _ = detect_edge_markers(frame, dictionary=DEFAULT_ARUCO_DICT, debug_output=debug_list)
+        self.assertEqual(len(debug_list), 1)
+        self.assertIn("edges_decode", debug_list[0])
+
+        # 3. Test detect_markers_in_frame with debug_output dict and flip_horizontal
+        mirrored_frame = cv2.flip(frame, 1)
+        debug_frame_dict = {}
+        cnt, corners, ids = detect_markers_in_frame(
+            mirrored_frame,
+            dictionary=DEFAULT_ARUCO_DICT,
+            flip_horizontal=True,
+            debug_output=debug_frame_dict,
+        )
+        self.assertEqual(cnt, 1)
+        self.assertIn("edges_decode", debug_frame_dict)
+        self.assertEqual(debug_frame_dict["input"].shape, frame.shape)
+        # Flipped input should match cv2.flip(mirrored_frame, 1) == frame
+        self.assertTrue(np.array_equal(debug_frame_dict["input"], frame))
 
 
 

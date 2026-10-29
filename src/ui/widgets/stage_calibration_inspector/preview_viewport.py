@@ -35,19 +35,18 @@ class PreviewViewport(QWidget):
 
         self.setMouseTracking(True)
 
-    def set_image(
+    def display_frame(
         self,
         frame: Optional[np.ndarray],
         corners: Optional[List[np.ndarray]] = None,
         ids: Optional[np.ndarray] = None,
-        flip_horizontal: bool = False,
+        overlay_markers: bool = True,
         fit_view: bool = False,
     ):
-        """Sets the current frame and detected marker annotations."""
+        """Displays a given frame (e.g. input or intermediate debug image) with optional marker overlay."""
         self._raw_frame = frame
         self.corners = corners if corners is not None else []
         self.ids = ids
-        self.flip_horizontal = flip_horizontal
 
         if frame is None or getattr(frame, "size", 0) == 0:
             self._annotated_frame = None
@@ -55,7 +54,11 @@ class PreviewViewport(QWidget):
             self.update()
             return
 
-        annotated = draw_detected_markers(frame, self.corners, self.ids, flip_horizontal=flip_horizontal)
+        if overlay_markers and self.ids is not None and len(self.corners) > 0:
+            annotated = draw_detected_markers(frame, self.corners, self.ids, flip_horizontal=False)
+        else:
+            annotated = frame.copy()
+
         self._annotated_frame = annotated
 
         h, w = annotated.shape[:2]
@@ -70,23 +73,22 @@ class PreviewViewport(QWidget):
 
         self.update()
 
-    def update_markers(self, corners: List[np.ndarray], ids: Optional[np.ndarray]):
+    def set_image(
+        self,
+        frame: Optional[np.ndarray],
+        corners: Optional[List[np.ndarray]] = None,
+        ids: Optional[np.ndarray] = None,
+        flip_horizontal: bool = False,
+        fit_view: bool = False,
+    ):
+        """Sets the current frame and detected marker annotations."""
+        self.flip_horizontal = flip_horizontal
+        img = cv2.flip(frame, 1) if (flip_horizontal and frame is not None) else frame
+        self.display_frame(img, corners=corners, ids=ids, overlay_markers=True, fit_view=fit_view)
+
+    def update_markers(self, corners: List[np.ndarray], ids: Optional[np.ndarray], overlay_markers: bool = True):
         """Updates marker annotations without resetting zoom or reloading raw frame."""
-        if self._raw_frame is None:
-            return
-        self.corners = corners
-        self.ids = ids
-        annotated = draw_detected_markers(self._raw_frame, self.corners, self.ids, flip_horizontal=self.flip_horizontal)
-        self._annotated_frame = annotated
-
-        h, w = annotated.shape[:2]
-        bytes_per_line = annotated.strides[0]
-        if annotated.ndim == 2:
-            self._display_qimage = QImage(annotated.data, w, h, bytes_per_line, QImage.Format_Grayscale8).copy()
-        else:
-            self._display_qimage = QImage(annotated.data, w, h, bytes_per_line, QImage.Format_BGR888).copy()
-
-        self.update()
+        self.display_frame(self._raw_frame, corners=corners, ids=ids, overlay_markers=overlay_markers, fit_view=False)
 
     def fit_to_window(self):
         """Fits the current image inside the viewport widget."""

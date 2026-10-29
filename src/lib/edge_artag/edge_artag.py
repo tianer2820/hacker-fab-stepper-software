@@ -102,13 +102,16 @@ class EdgeArucoDetector:
         self.params = parameters if parameters is not None else EdgeDetectorParameters()
 
     def detectMarkers(
-        self, image: np.ndarray
+        self,
+        image: np.ndarray,
+        debug_output: Optional[Any] = None,
     ) -> Tuple[List[np.ndarray], Optional[np.ndarray], List[np.ndarray]]:
         """
         Detect ArUco markers in an edge-only image.
 
         Args:
             image: BGR or Grayscale input image (np.ndarray).
+            debug_output: Optional dict or list to receive intermediate debug image outputs.
 
         Returns:
             corners: List of detected marker corners, each of shape (1, 4, 2) in float32.
@@ -118,7 +121,23 @@ class EdgeArucoDetector:
         """
         if image is None or getattr(image, "size", 0) == 0:
             return [], None, []
-        corners, ids, rejected, _ = self.detectMarkersWithDetails(image)
+        corners, ids, rejected, res = self.detectMarkersWithDetails(image)
+        if debug_output is not None:
+            debug_dict = {
+                "input": res["img"],
+                "gray": res["gray"],
+                "e_fine": res["e_fine"],
+                "e_wide": res["e_wide"],
+                "edges_decode": res["edges_decode"],
+                "edges_clean": res["edges_clean"],
+                "edges_cnt": res["edges_cnt"],
+            }
+            if isinstance(debug_output, dict):
+                debug_output.clear()
+                debug_output.update(debug_dict)
+            elif isinstance(debug_output, list):
+                debug_output.clear()
+                debug_output.append(debug_dict)
         return corners, ids, rejected
 
     def detectMarkersWithDetails(
@@ -291,6 +310,8 @@ class EdgeArucoDetector:
         return {
             "img": img,
             "gray": gray,
+            "e_fine": e_fine,
+            "e_wide": e_wide,
             "edges_cnt": edges_cnt,
             "edges_decode": edges_decode,
             "edges_clean": edges_clean,
@@ -579,16 +600,18 @@ def detect_edge_markers(
     image: np.ndarray,
     dictionary=None,
     parameters: Optional[EdgeDetectorParameters] = None,
+    debug_output: Optional[Any] = None,
 ) -> Tuple[List[np.ndarray], Optional[np.ndarray], List[np.ndarray]]:
     """
     Functional wrapper identical to OpenCV's cv2.aruco.detectMarkers:
 
-        corners, ids, rejected = detect_edge_markers(image, dictionary, parameters)
+        corners, ids, rejected = detect_edge_markers(image, dictionary, parameters, debug_output)
 
     Args:
         image: BGR or grayscale numpy image.
         dictionary: cv2.aruco Dictionary (defaults to DICT_4X4_1000).
         parameters: Optional EdgeDetectorParameters instance.
+        debug_output: Optional dict or list to receive intermediate debug image outputs.
 
     Returns:
         corners: List of (1, 4, 2) float32 arrays in original image coordinates.
@@ -596,5 +619,5 @@ def detect_edge_markers(
         rejected: List of (1, 4, 2) float32 arrays of rejected candidates.
     """
     detector = EdgeArucoDetector(dictionary=dictionary, parameters=parameters)
-    return detector.detectMarkers(image)
+    return detector.detectMarkers(image, debug_output=debug_output)
 

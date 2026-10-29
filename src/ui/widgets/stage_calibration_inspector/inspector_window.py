@@ -7,6 +7,7 @@ import numpy as np
 from PySide6.QtCore import QObject, QThread, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -100,6 +101,9 @@ class StageCalibrationInspectorWindow(QMainWindow):
         self._current_file_path: Optional[str] = None
         self._last_calibration: Optional[StageCalibration] = None
         self._worker_thread: Optional[PipelineWorker] = None
+        self._current_debug_images: Dict[str, np.ndarray] = {}
+        self._last_detected_corners: List[np.ndarray] = []
+        self._last_detected_ids: Optional[np.ndarray] = None
 
         # Build UI
         self._init_ui(initial_images_dir, initial_stage1_json, camera_pixel_size)
@@ -272,6 +276,21 @@ class StageCalibrationInspectorWindow(QMainWindow):
         self.lbl_image_info.setStyleSheet("font-weight: bold; color: #4da6ff;")
         tab1_bar.addWidget(self.lbl_image_info, 1)
 
+        tab1_bar.addWidget(QLabel("View:"))
+        self.combo_view_mode = QComboBox()
+        self.combo_view_mode.addItem("Input Image", "input")
+        self.combo_view_mode.addItem("Grayscale Image", "gray")
+        self.combo_view_mode.addItem("Fine Adaptive Threshold", "e_fine")
+        self.combo_view_mode.addItem("Wide Adaptive Threshold", "e_wide")
+        self.combo_view_mode.addItem("After Fine & Wide Thresholding", "edges_decode")
+        self.combo_view_mode.currentIndexChanged.connect(self._on_view_mode_changed)
+        tab1_bar.addWidget(self.combo_view_mode)
+
+        self.chk_overlay_markers = QCheckBox("Overlay Markers")
+        self.chk_overlay_markers.setChecked(True)
+        self.chk_overlay_markers.toggled.connect(self._on_view_mode_changed)
+        tab1_bar.addWidget(self.chk_overlay_markers)
+
         btn_fit = QPushButton("Fit")
         btn_fit.clicked.connect(lambda: self.viewport.fit_to_window())
         tab1_bar.addWidget(btn_fit)
@@ -417,14 +436,43 @@ class StageCalibrationInspectorWindow(QMainWindow):
             self._current_frame,
             parameters=params,
             flip_horizontal=flip_h,
+            debug_output=self._current_debug_images,
         )
+
+        self._last_detected_corners = corners
+        self._last_detected_ids = ids
 
         id_list = ids.flatten().tolist() if ids is not None else []
         fname = os.path.basename(self._current_file_path or "")
         self.lbl_image_info.setText(
             f"Image: {fname} | Detected: {cnt} tags | IDs: {id_list}"
         )
-        self.viewport.update_markers(corners, ids)
+        self._update_viewport_display(fit_view=False)
+
+    def _on_view_mode_changed(self):
+        """Switches displayed intermediate debug image."""
+        self._update_viewport_display(fit_view=False)
+
+    def _update_viewport_display(self, fit_view: bool = False):
+        if self._current_frame is None:
+            self.viewport.display_frame(None)
+            return
+
+        mode_key = self.combo_view_mode.currentData()
+        display_img = self._current_debug_images.get(mode_key)
+
+        if display_img is None:
+            flip_h = self.chk_flip_h.isChecked()
+            display_img = cv2.flip(self._current_frame, 1) if flip_h else self._current_frame
+
+        overlay = bool(self.chk_overlay_markers.isChecked())
+        self.viewport.display_frame(
+            display_img,
+            corners=self._last_detected_corners,
+            ids=self._last_detected_ids,
+            overlay_markers=overlay,
+            fit_view=fit_view,
+        )
 
     def _on_browse_images_dir(self):
         path = QFileDialog.getExistingDirectory(
@@ -480,7 +528,7 @@ class StageCalibrationInspectorWindow(QMainWindow):
 
         if img is None:
             self.lbl_image_info.setText(f"Failed to read image: {os.path.basename(file_path)}")
-            self.viewport.set_image(None)
+            self.viewport.display_frame(None)
             return
 
         params = self._get_current_detector_parameters()
@@ -489,13 +537,17 @@ class StageCalibrationInspectorWindow(QMainWindow):
             img,
             parameters=params,
             flip_horizontal=flip_h,
+            debug_output=self._current_debug_images,
         )
+
+        self._last_detected_corners = corners
+        self._last_detected_ids = ids
 
         id_list = ids.flatten().tolist() if ids is not None else []
         self.lbl_image_info.setText(
             f"Image: {os.path.basename(file_path)} ({img.shape[1]}x{img.shape[0]}) | Detected: {cnt} tags | IDs: {id_list}"
         )
-        self.viewport.set_image(img, corners, ids, flip_horizontal=flip_h, fit_view=True)
+        self._update_viewport_display(fit_view=True)
 
     def _on_reprocess_all_clicked(self):
         images_dir = self.txt_images_dir.text().strip()
