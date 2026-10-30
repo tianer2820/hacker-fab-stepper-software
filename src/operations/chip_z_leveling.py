@@ -5,6 +5,7 @@
 from typing import Callable, List, Optional, Sequence, Tuple
 import numpy as np
 
+from core.events import Event
 from core.operation import ExecutionContext, Operation, sub_progress
 from operations.autofocus import AutofocusOperation
 
@@ -177,4 +178,52 @@ class ChipZLevelingOperation(Operation):
 
 # Alias matching operation naming convention
 chip_z_leveling = ChipZLevelingOperation
+
+
+class LocateChipMarkerOperation(Operation):
+    """Records or updates a chip alignment marker (idx=1 or idx=2) at the primary camera crosshair."""
+
+    def __init__(self, idx: int = 1):
+        super().__init__(f"Locate Chip Marker #{idx}")
+        self.idx = int(idx)
+
+    def execute(self, context: ExecutionContext, report_progress: Callable[[float, str], None]) -> Optional[str]:
+        if self.idx not in (1, 2):
+            msg = f"Invalid marker index {self.idx}. Must be 1 or 2."
+            report_progress(1.0, msg)
+            return msg
+
+        if context.stage is None:
+            msg = "Stage controller not available in execution context"
+            report_progress(1.0, msg)
+            return msg
+
+        if context.project is None:
+            msg = "Chip project not available in execution context"
+            report_progress(1.0, msg)
+            return msg
+
+        sx, sy, _ = context.stage.get_position()
+        cam_px_size = 1.0
+        if context.machine_config is not None:
+            cam_px_size = float(context.machine_config.stage_calibration.camera_pixel_size)
+
+        if context.camera is not None:
+            dx_um, dy_um = context.camera.get_primary_crosshair_offset_um(cam_px_size)
+        else:
+            dx_um, dy_um = 0.0, 0.0
+
+        marker_corr_xy = (float(sx + dx_um), float(sy + dy_um))
+        msg = context.project.chip_progress.locate_marker(self.idx, marker_corr_xy)
+        context.project.invalidate_all_tile_caches()
+
+        if context.event_bus is not None:
+            context.event_bus.emit(Event.CHIP_PROGRESS_CHANGED, context.project.chip_progress)
+
+        report_progress(1.0, msg)
+        return None
+
+
+locate_chip_marker = LocateChipMarkerOperation
+
 

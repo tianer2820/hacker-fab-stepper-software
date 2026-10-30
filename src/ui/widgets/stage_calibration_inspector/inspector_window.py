@@ -56,14 +56,12 @@ class PipelineWorker(QThread):
         stage1_json: str,
         pixel_size: float,
         params: EdgeDetectorParameters,
-        flip_h: bool,
     ):
         super().__init__()
         self.images_dir = images_dir
         self.stage1_json = stage1_json
         self.pixel_size = pixel_size
         self.params = params
-        self.flip_h = flip_h
 
     def run(self):
         pipeline = ReconstructionPipeline(
@@ -71,7 +69,6 @@ class PipelineWorker(QThread):
             stage1_json_path=self.stage1_json,
             camera_pixel_size=self.pixel_size,
             detector_params=self.params,
-            flip_horizontal=self.flip_h,
         )
         cal, diag, err = pipeline.run(
             progress_cb=lambda pct, msg: self.progress_updated.emit(pct, msg)
@@ -151,11 +148,6 @@ class StageCalibrationInspectorWindow(QMainWindow):
         self.spin_pixel_size.setValue(float(camera_pixel_size))
         self.spin_pixel_size.setSingleStep(0.1)
         row2.addWidget(self.spin_pixel_size)
-
-        self.chk_flip_h = QCheckBox("Flip Horizontal")
-        self.chk_flip_h.setChecked(False)
-        self.chk_flip_h.toggled.connect(self._on_parameter_changed)
-        row2.addWidget(self.chk_flip_h)
 
         top_layout.addLayout(row2)
         main_layout.addWidget(top_bar)
@@ -443,11 +435,9 @@ class StageCalibrationInspectorWindow(QMainWindow):
             return
 
         params = self._get_current_detector_parameters()
-        flip_h = self.chk_flip_h.isChecked()
         cnt, corners, ids = detect_markers_in_frame(
             self._current_frame,
             parameters=params,
-            flip_horizontal=flip_h,
             debug_output=self._current_debug_images,
         )
 
@@ -474,8 +464,7 @@ class StageCalibrationInspectorWindow(QMainWindow):
         display_img = self._current_debug_images.get(mode_key)
 
         if display_img is None:
-            flip_h = self.chk_flip_h.isChecked()
-            display_img = cv2.flip(self._current_frame, 1) if flip_h else self._current_frame
+            display_img = self._current_frame
 
         overlay = bool(self.chk_overlay_markers.isChecked())
         self.viewport.display_frame(
@@ -544,11 +533,9 @@ class StageCalibrationInspectorWindow(QMainWindow):
             return
 
         params = self._get_current_detector_parameters()
-        flip_h = self.chk_flip_h.isChecked()
         cnt, corners, ids = detect_markers_in_frame(
             img,
             parameters=params,
-            flip_horizontal=flip_h,
             debug_output=self._current_debug_images,
         )
 
@@ -575,7 +562,6 @@ class StageCalibrationInspectorWindow(QMainWindow):
 
         params = self._get_current_detector_parameters()
         pixel_size = float(self.spin_pixel_size.value())
-        flip_h = bool(self.chk_flip_h.isChecked())
 
         self.btn_reprocess_all.setEnabled(False)
         self.progress_bar.setVisible(True)
@@ -587,7 +573,6 @@ class StageCalibrationInspectorWindow(QMainWindow):
             stage1_json=stage1_json,
             pixel_size=pixel_size,
             params=params,
-            flip_h=flip_h,
         )
         self._worker_thread.progress_updated.connect(self._on_worker_progress)
         self._worker_thread.finished_reconstruction.connect(self._on_worker_finished)

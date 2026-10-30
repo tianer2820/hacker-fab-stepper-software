@@ -84,14 +84,12 @@ def extract_pairwise_measurements(
 def estimate_camera_to_stage_transform(
     multi_frame_observations: List[Tuple[int, Tuple[float, float], Tuple[float, float]]],
     default_rotation: float = 0.0,
-    flip_horizontal: bool = False,
 ) -> np.ndarray:
     """Estimates the 2x2 linear transformation matrix mapping camera displacements (um) to stage displacements (um).
 
     Args:
         multi_frame_observations: List of (marker_id, stage_xy, cam_offset_um) across all scanned images.
         default_rotation: Fallback rotation theta (radians) if multi-image overlap is insufficient.
-        flip_horizontal: Whether camera X axis is flipped horizontally.
 
     Returns:
         2x2 transformation matrix T_cam_to_stage.

@@ -5,6 +5,7 @@ from typing import Any, List, Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QComboBox,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -69,6 +70,23 @@ class MachineConfigTabWidget(QScrollArea):
         self.spin_settle_delay.setSuffix(" s")
         self.spin_settle_delay.valueChanged.connect(self._on_ui_changed)
         optics_layout.addRow("Settle Delay:", self.spin_settle_delay)
+
+        self.combo_camera_flip = QComboBox()
+        self.combo_camera_flip.addItems(["none", "horizontal", "vertical", "rotate_180"])
+        self.combo_camera_flip.currentTextChanged.connect(self._on_ui_changed)
+        optics_layout.addRow("Camera Flip Mode:", self.combo_camera_flip)
+
+        self.spin_projector_pixel_size = QDoubleSpinBox()
+        self.spin_projector_pixel_size.setRange(0.001, 100.0)
+        self.spin_projector_pixel_size.setDecimals(4)
+        self.spin_projector_pixel_size.setSingleStep(0.05)
+        self.spin_projector_pixel_size.setSuffix(" µm/px")
+        self.spin_projector_pixel_size.valueChanged.connect(self._on_ui_changed)
+        optics_layout.addRow("Projector Pixel Size:", self.spin_projector_pixel_size)
+
+        self.lbl_proj_cam_status = QLabel("Status: Uncalibrated (Default Scaling)")
+        self.lbl_proj_cam_status.setStyleSheet("color: #888888; font-size: 11px;")
+        optics_layout.addRow("Proj→Cam Transform:", self.lbl_proj_cam_status)
 
         main_layout.addWidget(optics_box)
 
@@ -203,6 +221,16 @@ class MachineConfigTabWidget(QScrollArea):
             opt = config.optics
             self.spin_uv_offset.setValue(opt.uv_z_offset)
             self.spin_settle_delay.setValue(opt.settle_delay)
+            idx_flip = self.combo_camera_flip.findText(str(opt.camera_flip_mode))
+            if idx_flip >= 0:
+                self.combo_camera_flip.setCurrentIndex(idx_flip)
+            self.spin_projector_pixel_size.setValue(opt.projector_pixel_size)
+            if opt.proj_to_cam_matrix is not None:
+                self.lbl_proj_cam_status.setText("Active: Calibrated (3×3 Homography)")
+                self.lbl_proj_cam_status.setStyleSheet("color: #55ff55; font-weight: bold; font-size: 11px;")
+            else:
+                self.lbl_proj_cam_status.setText("Status: Uncalibrated (Default Scaling)")
+                self.lbl_proj_cam_status.setStyleSheet("color: #888888; font-size: 11px;")
 
             exp = config.exposure
             self.spin_default_exposure.setValue(exp.default_exposure_time_ms)
@@ -273,6 +301,10 @@ class MachineConfigTabWidget(QScrollArea):
         cfg = self.engine.machine_config
         cfg.optics.uv_z_offset = self.spin_uv_offset.value()
         cfg.optics.settle_delay = self.spin_settle_delay.value()
+        cfg.optics.camera_flip_mode = self.combo_camera_flip.currentText()
+        cfg.optics.projector_pixel_size = self.spin_projector_pixel_size.value()
+        if self.engine.camera is not None:
+            self.engine.camera.set_flip_mode(cfg.optics.camera_flip_mode)
 
         cfg.autofocus.stages = self._collect_stages_from_table()
 
@@ -280,6 +312,8 @@ class MachineConfigTabWidget(QScrollArea):
 
         cfg.stage_calibration.calibration_file_path = self.txt_cal_file.text().strip()
         cfg.stage_calibration.camera_pixel_size = self.spin_camera_pixel_size.value()
+        if self.engine.project is not None:
+            self.engine.project.invalidate_all_tile_caches()
 
     def _on_add_stage_clicked(self):
         stages = self._collect_stages_from_table()
@@ -363,6 +397,8 @@ class MachineConfigTabWidget(QScrollArea):
         for widget in [
             self.spin_uv_offset,
             self.spin_settle_delay,
+            self.combo_camera_flip,
+            self.spin_projector_pixel_size,
             self.table_af_stages,
             self.btn_add_stage,
             self.btn_remove_stage,

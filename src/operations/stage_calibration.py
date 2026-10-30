@@ -497,7 +497,6 @@ class StageCalibrationPatternOperation(Operation):
 
         self._current_sub_op: Optional[Operation] = None
         self.corrected_proj_corners: Optional[np.ndarray] = None
-        self.flip_horizontal: bool = False
 
     def abort(self):
         super().abort()
@@ -589,16 +588,7 @@ class StageCalibrationPatternOperation(Operation):
             context.delay_func(self.stabilization_delay)
 
             cal_frame = camera.get_latest_frame()
-            flip_horizontal = False
-            det_count, corners, ids = detect_ar_tags(cal_frame, dict_id=DEFAULT_ARUCO_DICT, flip_horizontal=False)
-            if det_count < 2:
-                det_count_flip, corners_flip, ids_flip = detect_ar_tags(
-                    cal_frame, dict_id=DEFAULT_ARUCO_DICT, flip_horizontal=True
-                )
-                if det_count_flip > det_count:
-                    det_count, corners, ids = det_count_flip, corners_flip, ids_flip
-                    flip_horizontal = True
-            self.flip_horizontal = flip_horizontal
+            det_count, corners, ids = detect_ar_tags(cal_frame, dict_id=DEFAULT_ARUCO_DICT)
 
             H_proj_to_cam, matched_count = compute_projector_to_camera_homography(corners, ids, tag_coords)
             projector.set_on(False)
@@ -643,7 +633,7 @@ class StageCalibrationPatternOperation(Operation):
                 context.delay_func(self.stabilization_delay)
 
                 iter_frame = camera.get_latest_frame()
-                c_cnt, c_corners, _ = detect_ar_tags(iter_frame, dict_id=DEFAULT_ARUCO_DICT, flip_horizontal=self.flip_horizontal)
+                c_cnt, c_corners, _ = detect_ar_tags(iter_frame, dict_id=DEFAULT_ARUCO_DICT)
                 if c_cnt > 0 and c_corners:
                     detected_tl = c_corners[0].reshape(-1, 2)[0]
                     err = detected_tl - np.array([u_c, v_c])
@@ -752,8 +742,6 @@ class StageCalibrationPatternOperation(Operation):
                 if exp_err or self.is_aborted:
                     return exp_err or "Stage 2 calibration aborted during exposure"
 
-            # Update calibration file to record flip_horizontal
-            cal.flip_horizontal = self.flip_horizontal
             cal.save_to_json(input_path)
 
             report_progress(

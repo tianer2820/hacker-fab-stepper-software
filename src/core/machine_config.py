@@ -81,14 +81,27 @@ class AutofocusMachineConfig:
 class OpticsMachineConfig:
     uv_z_offset: float = 0.0
     settle_delay: float = 0.1
+    camera_flip_mode: str = "none"
+    projector_pixel_size: float = 1.0
+    proj_to_cam_matrix: Optional[List[List[float]]] = None
 
     @classmethod
     def from_dict(cls, d: Optional[Dict[str, Any]]) -> OpticsMachineConfig:
         if not d:
             return cls()
+        raw_mat = d.get("proj_to_cam_matrix", None)
+        mat: Optional[List[List[float]]] = None
+        if raw_mat is not None and isinstance(raw_mat, list) and len(raw_mat) == 3:
+            try:
+                mat = [[float(v) for v in row] for row in raw_mat]
+            except Exception:
+                mat = None
         return cls(
             uv_z_offset=float(d.get("uv_z_offset", 0.0)),
             settle_delay=float(d.get("settle_delay", 0.1)),
+            camera_flip_mode=str(d.get("camera_flip_mode", "none")).lower(),
+            projector_pixel_size=float(d.get("projector_pixel_size", 1.0)),
+            proj_to_cam_matrix=mat,
         )
 
 
@@ -129,14 +142,21 @@ class MachineConfig:
     stage_calibration: StageCalibrationMachineConfig = field(default_factory=StageCalibrationMachineConfig)
 
     def to_dict(self) -> Dict[str, Any]:
+        optics_dict: Dict[str, Any] = {
+            "uv_z_offset": self.optics.uv_z_offset,
+            "settle_delay": self.optics.settle_delay,
+            "camera_flip_mode": self.optics.camera_flip_mode,
+            "projector_pixel_size": self.optics.projector_pixel_size,
+        }
+        if self.optics.proj_to_cam_matrix is not None:
+            optics_dict["proj_to_cam_matrix"] = [
+                [float(v) for v in row] for row in self.optics.proj_to_cam_matrix
+            ]
         return {
             "autofocus": {
                 "stages": [asdict(s) for s in self.autofocus.stages],
             },
-            "optics": {
-                "uv_z_offset": self.optics.uv_z_offset,
-                "settle_delay": self.optics.settle_delay,
-            },
+            "optics": optics_dict,
             "exposure": {
                 "default_exposure_time_ms": self.exposure.default_exposure_time_ms,
             },

@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from projector import ProjectorController
     from stage_control.stage_controller import StageController
 
-from .chip_project import ChipProject
+from .chip_project import ChipProgress, ChipProject
 from .events import Event, EventBus
 from .machine_config import MachineConfig
 from .operation import ExecutionContext, Operation, OperationManager
@@ -58,11 +58,19 @@ class StepperEngine:
         else:
             self.machine_config = MachineConfig.load_or_default("machine_config.toml")
 
+        if self.camera is not None:
+            self.camera.set_flip_mode(self.machine_config.optics.camera_flip_mode)
+
         # Auto-load stage calibration from config if available
         self._init_stage_calibration()
 
         # 2. Chip Project Data Object
-        self.project = ChipProject(events=self.event_bus)
+        proj_size = self.projector.projector_size() if self.projector is not None else (1920, 1080)
+        self.project = ChipProject(
+            events=self.event_bus,
+            machine_config=self.machine_config,
+            projector_size=proj_size,
+        )
         self.projector.set_project(self.project)
 
         # 3. Execution Context & Operation Manager
@@ -97,8 +105,41 @@ class StepperEngine:
         """Sets the active machine config, updates context and calibration, and emits change event."""
         self.machine_config = config
         self.context.machine_config = config
+        if self.camera is not None:
+            self.camera.set_flip_mode(config.optics.camera_flip_mode)
+        if self.project is not None:
+            self.project.machine_config = config
+            self.project.invalidate_all_tile_caches()
         self._init_stage_calibration()
         self.event_bus.emit(Event.MACHINE_CONFIG_CHANGED, self.machine_config)
+
+    # -------------------------------------------------------------------------
+    # Crosshair Position Interface
+    # -------------------------------------------------------------------------
+    def set_primary_crosshair(self, u: float, v: float) -> None:
+        if self.camera is not None:
+            self.camera.set_primary_crosshair(u, v)
+
+    def get_primary_crosshair(self) -> tuple[float, float]:
+        if self.camera is not None:
+            return self.camera.get_primary_crosshair()
+        return (0.5, 0.5)
+
+    def set_secondary_crosshair(
+        self,
+        u: Optional[float],
+        v: Optional[float] = None,
+    ) -> None:
+        if self.camera is not None:
+            if u is None:
+                self.camera.set_secondary_crosshair(None)
+            elif v is not None:
+                self.camera.set_secondary_crosshair((float(u), float(v)))
+
+    def get_secondary_crosshair(self) -> Optional[tuple[float, float]]:
+        if self.camera is not None:
+            return self.camera.get_secondary_crosshair()
+        return None
 
     def save_machine_config(self, path: str = "machine_config.toml"):
         """Saves current machine config to TOML file."""
@@ -117,10 +158,16 @@ class StepperEngine:
         self.warning_callback(msg)
 
     # -------------------------------------------------------------------------
-    # 1. Chip Project Persistence
+    # 1. Chip Project & Chip Progress Persistence
     # -------------------------------------------------------------------------
     def load_project(self, path: str):
+        existing_progress = self.project.chip_progress if self.project is not None else ChipProgress(events=self.event_bus)
+        proj_size = self.projector.projector_size() if self.projector is not None else (1920, 1080)
         self.project = ChipProject.load(path, events=self.event_bus)
+        self.project.machine_config = self.machine_config
+        self.project.projector_size = proj_size
+        self.project.chip_progress = existing_progress
+        self.project.chip_progress.events = self.event_bus
         self.context.project = self.project
         self.projector.set_project(self.project)
         self.event_bus.emit(Event.PROJECT_CHANGED, self.project)
@@ -130,11 +177,33 @@ class StepperEngine:
         self.project.save(path)
 
     def new_project(self):
-        self.project = ChipProject(events=self.event_bus)
+        existing_progress = self.project.chip_progress if self.project is not None else ChipProgress(events=self.event_bus)
+        proj_size = self.projector.projector_size() if self.projector is not None else (1920, 1080)
+        self.project = ChipProject(
+            events=self.event_bus,
+            machine_config=self.machine_config,
+            projector_size=proj_size,
+            chip_progress=existing_progress,
+        )
         self.context.project = self.project
         self.projector.set_project(self.project)
         self.event_bus.emit(Event.PROJECT_CHANGED, self.project)
         self.event_bus.emit(Event.ACTIVE_LAYER_CHANGED, self.project.active_layer_index)
+
+    def load_chip_progress(self, path: str):
+        progress = ChipProgress.load(path, events=self.event_bus)
+        self.project.chip_progress = progress
+        self.project.invalidate_all_tile_caches()
+        self.event_bus.emit(Event.CHIP_PROGRESS_CHANGED, progress)
+        self.event_bus.emit(Event.EXPOSURE_HISTORY_CHANGED, progress.exposure_history)
+        self.event_bus.emit(Event.EXPOSURE_CONFIG_CHANGED)
+
+    def save_chip_progress(self, path: str):
+        self.project.chip_progress.save(path)
+
+    def reset_chip_progress(self):
+        self.project.chip_progress.reset()
+        self.project.invalidate_all_tile_caches()
 
     # -------------------------------------------------------------------------
     # 2. Operations

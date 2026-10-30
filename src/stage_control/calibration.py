@@ -72,8 +72,13 @@ class StageCalibration:
         self.detected_marker_ids: Set[int] = set(detected_marker_ids) if detected_marker_ids is not None else set()
         if cam_to_stage_matrix is not None:
             self.cam_to_stage_matrix: Optional[np.ndarray] = np.array(cam_to_stage_matrix, dtype=np.float64)
+            try:
+                self._stage_to_cam_matrix: Optional[np.ndarray] = np.linalg.inv(self.cam_to_stage_matrix)
+            except np.linalg.LinAlgError:
+                self._stage_to_cam_matrix = None
         else:
-            self.cam_to_stage_matrix: Optional[np.ndarray] = None
+            self.cam_to_stage_matrix = None
+            self._stage_to_cam_matrix = None
 
         self._ny, self._nx = self.grid_shape
         self._raw_x_grid = np.zeros((self._ny, self._nx), dtype=np.float64)
@@ -148,18 +153,30 @@ class StageCalibration:
         val = (1.0 - u) * (1.0 - v) * q00 + u * (1.0 - v) * q10 + (1.0 - u) * v * q01 + u * v * q11
         return float(val)
 
+    def _interpolate_corr_grid(self, x_raw: float, y_raw: float) -> Tuple[float, float]:
+        """Interpolates the internal distortion-corrected stage grid at (x_raw, y_raw)."""
+        x_grid = self._interpolate_grid_bilinear(
+            x_raw, y_raw, self._corr_x_grid, self._raw_x_coords, self._raw_y_coords
+        )
+        y_grid = self._interpolate_grid_bilinear(
+            x_raw, y_raw, self._corr_y_grid, self._raw_x_coords, self._raw_y_coords
+        )
+        return (x_grid, y_grid)
+
     def forward_map_xy(self, x_raw: float, y_raw: float) -> Tuple[float, float]:
         """Maps raw machine coordinates (X, Y) to corrected optical coordinates (X, Y)."""
         if not self.has_xy_calibration:
             return (float(x_raw), float(y_raw))
 
-        x_corr = self._interpolate_grid_bilinear(
-            x_raw, y_raw, self._corr_x_grid, self._raw_x_coords, self._raw_y_coords
-        )
-        y_corr = self._interpolate_grid_bilinear(
-            x_raw, y_raw, self._corr_y_grid, self._raw_x_coords, self._raw_y_coords
-        )
-        return (x_corr, y_corr)
+        x_grid, y_grid = self._interpolate_corr_grid(x_raw, y_raw)
+        if self._stage_to_cam_matrix is not None:
+            mat = self._stage_to_cam_matrix
+            if mat.shape == (3, 3):
+                res = (mat @ np.array([x_grid, y_grid, 1.0], dtype=np.float64))[:2]
+            else:
+                res = mat @ np.array([x_grid, y_grid], dtype=np.float64)
+            return (float(res[0]), float(res[1]))
+        return (x_grid, y_grid)
 
     def inverse_map_xy(
         self,
@@ -188,7 +205,7 @@ class StageCalibration:
         cur_x, cur_y = raw_space_target
 
         for _ in range(max_iter):
-            fwd_x, fwd_y = self.forward_map_xy(cur_x, cur_y)
+            fwd_x, fwd_y = self._interpolate_corr_grid(cur_x, cur_y)
             err_x = fwd_x - raw_space_target[0]
             err_y = fwd_y - raw_space_target[1]
             if abs(err_x) < tol and abs(err_y) < tol:

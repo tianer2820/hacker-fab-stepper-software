@@ -6,13 +6,16 @@ Event bus, and Operation execution framework.
 
 from .chip_project import (
     ChipLayer,
+    ChipProgress,
     ChipProject,
+    ExposureRecord,
     LayerSettingsOverride,
     PatterningSettings,
 )
 from .engine import StepperEngine
 from .engine_module import EngineModule
 from .events import (
+    CameraFlipMode,
     ColorMode,
     Event,
     EventBus,
@@ -38,11 +41,14 @@ __all__ = [
     "StepperEngine",
     "EngineModule",
     "ChipProject",
+    "ChipProgress",
+    "ExposureRecord",
     "ChipLayer",
     "PatterningSettings",
     "LayerSettingsOverride",
     "Event",
     "EventBus",
+    "CameraFlipMode",
     "ColorMode",
     "ProjectorImageSource",
     "StrAutoEnum",

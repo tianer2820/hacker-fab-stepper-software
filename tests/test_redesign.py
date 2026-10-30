@@ -80,23 +80,22 @@ class TestChipProject(unittest.TestCase):
     def test_settings_overrides_resolution(self):
         project = ChipProject()
         project.settings.exposure_time = 12000.0
-        project.settings.tiling_enabled = False
+        project.settings.overlap_x = 5.0
+        project.settings.overlap_y = 5.0
 
         # Layer 1 has no overrides -> inherits project defaults
         eff1 = project.settings.with_overrides(project.active_layer.overrides)
         self.assertEqual(eff1.exposure_time, 12000.0)
-        self.assertFalse(eff1.tiling_enabled)
+        self.assertEqual(eff1.overlap_x, 5.0)
 
         # Add Layer 2 with overrides
         l2 = project.add_layer("Layer 2")
         l2.overrides.exposure_time = 4500.0
-        l2.overrides.tiling_enabled = True
 
         eff2 = project.settings.with_overrides(l2.overrides)
         self.assertEqual(eff2.exposure_time, 4500.0)
-        self.assertTrue(eff2.tiling_enabled)
         # Inherits other non-overridden settings
-        self.assertEqual(eff2.pitch_x, project.settings.pitch_x)
+        self.assertEqual(eff2.overlap_x, project.settings.overlap_x)
 
     def test_serialization_round_trip(self):
         project = ChipProject(name="Test Chip")
@@ -367,11 +366,8 @@ class TestHierarchicalOperations(unittest.TestCase):
         layer._tile_coords = [(0.0, 0.0), (100.0, 0.0)]
         settings = PatterningSettings(
             exposure_time=10.0,
-            tiling_enabled=True,
-            tile_width=2000,
-            tile_height=1000,
-            pitch_x=100.0,
-            pitch_y=100.0,
+            overlap_x=5.0,
+            overlap_y=5.0,
         )
 
         context = ExecutionContext(
@@ -496,6 +492,7 @@ class TestConsolidatedEvents(unittest.TestCase):
             "EXPOSURE_CONFIG_CHANGED",
             "LAYER_CACHE_RECOMPUTED",
             "EXPOSURE_HISTORY_CHANGED",
+            "CHIP_PROGRESS_CHANGED",
             # Stage
             "STAGE_POSITION_CHANGED",
             # Projector
@@ -589,8 +586,8 @@ class TestChipProjectAndProjectorRefinement(unittest.TestCase):
         expected_fields = {
             "name",
             "pattern_path",
-            "scale_w",
-            "scale_h",
+            "width_um",
+            "height_um",
             "threshold",
             "overrides",
             "_pattern_cache",
@@ -604,8 +601,8 @@ class TestChipProjectAndProjectorRefinement(unittest.TestCase):
         # Verify initial states
         self.assertEqual(layer.name, "Layer 1")
         self.assertIsNone(layer.pattern_path)
-        self.assertEqual(layer.scale_w, -1)
-        self.assertEqual(layer.scale_h, -1)
+        self.assertEqual(layer.width_um, -1.0)
+        self.assertEqual(layer.height_um, -1.0)
         self.assertEqual(layer.threshold, 50)
         self.assertIsNone(layer._pattern_cache)
         self.assertEqual(layer._tile_cache, [])
@@ -613,19 +610,15 @@ class TestChipProjectAndProjectorRefinement(unittest.TestCase):
         self.assertIsNone(layer.events)
         self.assertIsNone(layer._project)
 
-        # Test loading and caching with tiling enabled
+        # Test loading and caching with physical size > projector FOV
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
             temp_path = f.name
-        cv2.imwrite(temp_path, np.full((3000, 4000, 3), 255, dtype=np.uint8))
+        cv2.imwrite(temp_path, np.full((300, 400, 3), 255, dtype=np.uint8))
 
         try:
-            project = ChipProject()
+            project = ChipProject(projector_size=(200, 150), camera_size=(200, 150))
             layer = project.active_layer
-            layer.overrides.tiling_enabled = True
-            layer.overrides.tile_width = 2000
-            layer.overrides.tile_height = 1500
-            layer.overrides.overlap_x = 200
-            layer.overrides.overlap_y = 200
+            layer.set_physical_size(400.0, 300.0)
 
             layer.set_pattern_path(temp_path)
             self.assertEqual(layer._tile_cache, [])
@@ -634,8 +627,8 @@ class TestChipProjectAndProjectorRefinement(unittest.TestCase):
             self.assertGreater(len(tiles), 1)
             self.assertEqual(len(tiles), len(coords))
 
-            # Slicing disabled -> 1 tile
-            layer.overrides.tiling_enabled = False
+            # Fullscreen mode (-1 x -1) -> 1 tile
+            layer.set_physical_size(-1.0, -1.0)
             single_tile, single_coords = layer.generate_tiles(force=True)
             self.assertEqual(len(single_tile), 1)
             self.assertEqual(single_coords, [(0.0, 0.0)])
@@ -648,7 +641,7 @@ class TestChipProjectAndProjectorRefinement(unittest.TestCase):
         import cv2
         import numpy as np
 
-        project = ChipProject()
+        project = ChipProject(projector_size=(200, 200))
         proj = MockProjector()
         proj.set_project(project)
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
@@ -832,10 +825,9 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
         layer._tile_cache = ["dummy_tile"]
         layer._tile_coords = [(0.0, 0.0)]
 
-        project.update_settings(exposure_time=1234.0, tiling_enabled=True, tile_width=800)
+        project.update_settings(exposure_time=1234.0, overlap_x=15.0)
         self.assertEqual(project.settings.exposure_time, 1234.0)
-        self.assertTrue(project.settings.tiling_enabled)
-        self.assertEqual(project.settings.tile_width, 800)
+        self.assertEqual(project.settings.overlap_x, 15.0)
         self.assertEqual(layer._tile_cache, [])
         self.assertEqual(layer._tile_coords, [])
         self.assertEqual(len(events_received), 1)
@@ -865,8 +857,9 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
         proj_panel.spin_default_exp.setValue(6543)
         self.assertIn("6543", action_panel.lbl_active_exp.text())
 
-        proj_panel.chk_default_tiling.setChecked(True)
-        self.assertIn("Enabled", layer_panel.lbl_tiling_status.text())
+        layer_panel.spin_width_um.setValue(500.0)
+        layer_panel.spin_height_um.setValue(500.0)
+        self.assertIn("Physical", layer_panel.lbl_tiling_status.text())
         self.assertIn("Tiling", action_panel.lbl_active_mode.text())
 
         # With no pattern loaded, regenerate button is disabled
@@ -878,7 +871,7 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
         import numpy as np
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tf:
             temp_path = tf.name
-            cv2.imwrite(temp_path, np.full((2000, 2000, 3), 255, dtype=np.uint8))
+            cv2.imwrite(temp_path, np.full((200, 200, 3), 255, dtype=np.uint8))
 
         try:
             engine.project.active_layer.set_pattern_path(temp_path)
@@ -909,9 +902,9 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
         self.assertEqual(len(events_received), 1)
         self.assertEqual(layer._tile_cache, [])
 
-        # 2. set_tiling_override emits EXPOSURE_CONFIG_CHANGED and clears cache
+        # 2. set_dimensions_um emits EXPOSURE_CONFIG_CHANGED and clears cache
         layer._tile_cache = ["dummy"]
-        layer.set_tiling_override(True)
+        layer.set_dimensions_um(500.0, 500.0)
         self.assertEqual(len(events_received), 2)
         self.assertEqual(layer._tile_cache, [])
 
@@ -1001,6 +994,70 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
             ("projector_on", False),
         ]
         self.assertEqual(actions, expected_sequence)
+
+    def test_chip_progress_two_marker_calibration_and_multi_origin(self):
+        from operations import LayerExposureOperation, LocateChipMarkerOperation
+        from unittest.mock import patch
+
+        engine = self._create_engine()
+        engine.project.layers[0].generate_tiles = lambda force=False: (["tile0"], [(0.0, 0.0)])
+        engine.project.add_layer("Layer 2")
+        engine.project.layers[1].generate_tiles = lambda force=False: (["tile0"], [(0.0, 0.0)])
+
+        # Multi-layer exposure without markers recorded should fail early
+        op_fail = LayerExposureOperation(layer_index=0)
+        err = op_fail.execute(engine.context, lambda p, m: None)
+        self.assertIsNotNone(err)
+        self.assertIn("marker", err.lower())
+
+        # Record Marker 1 at (0, 0) and Marker 2 at (1000, 0)
+        engine.stage.move_absolute({"x": 0.0, "y": 0.0, "z": 0.0})
+        err1 = LocateChipMarkerOperation(idx=1).execute(engine.context, lambda p, m: None)
+        self.assertIsNone(err1)
+        self.assertFalse(engine.project.chip_progress.has_reference_markers())
+
+        engine.stage.move_absolute({"x": 1000.0, "y": 0.0, "z": 0.0})
+        err2 = LocateChipMarkerOperation(idx=2).execute(engine.context, lambda p, m: None)
+        self.assertIsNone(err2)
+        self.assertTrue(engine.project.chip_progress.has_reference_markers())
+
+        with patch("operations.tiling.AutofocusOperation.execute", return_value=None):
+            # Expose Layer 1 at two different locations -> records two origins in chip-space
+            engine.stage.move_absolute({"x": 100.0, "y": 200.0, "z": 0.0})
+            self.assertIsNone(LayerExposureOperation(layer_index=0).execute(engine.context, lambda p, m: None))
+            engine.stage.move_absolute({"x": 500.0, "y": 600.0, "z": 0.0})
+            self.assertIsNone(LayerExposureOperation(layer_index=0).execute(engine.context, lambda p, m: None))
+
+            self.assertEqual(
+                engine.project.chip_progress.pattern_origins_chip,
+                [(100.0, 200.0), (500.0, 600.0)],
+            )
+
+            # Now simulate chip reload shifted by (+50, -30) in corr-stage-space
+            engine.stage.move_absolute({"x": 50.0, "y": -30.0, "z": 0.0})
+            LocateChipMarkerOperation(idx=1).execute(engine.context, lambda p, m: None)
+            engine.stage.move_absolute({"x": 1050.0, "y": -30.0, "z": 0.0})
+            LocateChipMarkerOperation(idx=2).execute(engine.context, lambda p, m: None)
+
+            # Expose Layer 2 across all recorded origins -> stage should move to shifted corr-stage positions
+            stage_targets = []
+            orig_move = engine.stage.move_absolute
+            def record_move(coords):
+                if "x" in coords and "y" in coords:
+                    stage_targets.append((coords["x"], coords["y"]))
+                return orig_move(coords)
+            engine.stage.move_absolute = record_move
+
+            self.assertIsNone(
+                LayerExposureOperation(layer_index=1, origin_mode="all").execute(
+                    engine.context, lambda p, m: None
+                )
+            )
+            self.assertEqual(len(stage_targets), 2)
+            self.assertAlmostEqual(stage_targets[0][0], 150.0, places=3)
+            self.assertAlmostEqual(stage_targets[0][1], 170.0, places=3)
+            self.assertAlmostEqual(stage_targets[1][0], 550.0, places=3)
+            self.assertAlmostEqual(stage_targets[1][1], 570.0, places=3)
 
 
 if __name__ == "__main__":

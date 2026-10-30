@@ -43,6 +43,7 @@ class ProjectSubpanelWidget(QTabWidget):
         self.bridge.exposure_config_changed.connect(lambda: self._refresh_ui())
         self.bridge.active_layer_changed.connect(lambda _: self._refresh_layer_selection())
         self.bridge.exposure_history_changed.connect(lambda _: self._refresh_ui())
+        self.bridge.chip_progress_changed.connect(lambda _: self._refresh_ui())
         self._refresh_ui()
 
     def _setup_layers_tab(self):
@@ -64,6 +65,22 @@ class ProjectSubpanelWidget(QTabWidget):
         self.btn_save.clicked.connect(self._on_save_project)
         file_row.addWidget(self.btn_save)
         layout.addLayout(file_row)
+
+        # Chip progress file buttons row
+        prog_row = QHBoxLayout()
+        self.btn_reset_progress = QPushButton("Reset Progress")
+        self.btn_reset_progress.setToolTip("Reset chip markers, origins, and exposure history")
+        self.btn_reset_progress.clicked.connect(self._on_reset_progress)
+        prog_row.addWidget(self.btn_reset_progress)
+
+        self.btn_load_progress = QPushButton("Load Progress...")
+        self.btn_load_progress.clicked.connect(self._on_load_progress)
+        prog_row.addWidget(self.btn_load_progress)
+
+        self.btn_save_progress = QPushButton("Save Progress...")
+        self.btn_save_progress.clicked.connect(self._on_save_progress)
+        prog_row.addWidget(self.btn_save_progress)
+        layout.addLayout(prog_row)
 
         # Layer management row
         layer_btn_row = QHBoxLayout()
@@ -105,40 +122,27 @@ class ProjectSubpanelWidget(QTabWidget):
         exp_form.addRow("Default Exposure:", self.spin_default_exp)
         layout.addWidget(exp_group)
 
-        # Tiling defaults
-        tile_group = QGroupBox("Tiling Defaults")
+        # Tiling Overlap defaults
+        tile_group = QGroupBox("Tiling Overlap (Chip Space)")
         tile_form = QFormLayout(tile_group)
 
-        self.chk_default_tiling = QCheckBox("Enable Tiling by Default")
-        self.chk_default_tiling.setChecked(self.engine.project.settings.tiling_enabled)
-        self.chk_default_tiling.toggled.connect(self._on_default_tiling_toggled)
-        tile_form.addRow(self.chk_default_tiling)
+        self.spin_overlap_x = QDoubleSpinBox()
+        self.spin_overlap_x.setRange(0.0, 10000.0)
+        self.spin_overlap_x.setDecimals(2)
+        self.spin_overlap_x.setSingleStep(1.0)
+        self.spin_overlap_x.setValue(self.engine.project.settings.overlap_x)
+        self.spin_overlap_x.setSuffix(" µm")
+        self.spin_overlap_x.valueChanged.connect(self._on_overlap_x_changed)
+        tile_form.addRow("Overlap X:", self.spin_overlap_x)
 
-        self.spin_tile_w = QSpinBox()
-        self.spin_tile_w.setRange(100, 10000)
-        self.spin_tile_w.setValue(self.engine.project.settings.tile_width)
-        self.spin_tile_w.valueChanged.connect(self._on_tile_w_changed)
-        tile_form.addRow("Tile Width (px):", self.spin_tile_w)
-
-        self.spin_tile_h = QSpinBox()
-        self.spin_tile_h.setRange(100, 10000)
-        self.spin_tile_h.setValue(self.engine.project.settings.tile_height)
-        self.spin_tile_h.valueChanged.connect(self._on_tile_h_changed)
-        tile_form.addRow("Tile Height (px):", self.spin_tile_h)
-
-        self.spin_pitch_x = QDoubleSpinBox()
-        self.spin_pitch_x.setRange(10.0, 50000.0)
-        self.spin_pitch_x.setValue(self.engine.project.settings.pitch_x)
-        self.spin_pitch_x.setSuffix(" µm")
-        self.spin_pitch_x.valueChanged.connect(self._on_pitch_x_changed)
-        tile_form.addRow("Pitch X Offset:", self.spin_pitch_x)
-
-        self.spin_pitch_y = QDoubleSpinBox()
-        self.spin_pitch_y.setRange(10.0, 50000.0)
-        self.spin_pitch_y.setValue(self.engine.project.settings.pitch_y)
-        self.spin_pitch_y.setSuffix(" µm")
-        self.spin_pitch_y.valueChanged.connect(self._on_pitch_y_changed)
-        tile_form.addRow("Pitch Y Offset:", self.spin_pitch_y)
+        self.spin_overlap_y = QDoubleSpinBox()
+        self.spin_overlap_y.setRange(0.0, 10000.0)
+        self.spin_overlap_y.setDecimals(2)
+        self.spin_overlap_y.setSingleStep(1.0)
+        self.spin_overlap_y.setValue(self.engine.project.settings.overlap_y)
+        self.spin_overlap_y.setSuffix(" µm")
+        self.spin_overlap_y.valueChanged.connect(self._on_overlap_y_changed)
+        tile_form.addRow("Overlap Y:", self.spin_overlap_y)
 
         layout.addWidget(tile_group)
         layout.addStretch()
@@ -171,25 +175,13 @@ class ProjectSubpanelWidget(QTabWidget):
         self.spin_default_exp.setValue(int(s.exposure_time))
         self.spin_default_exp.blockSignals(False)
 
-        self.chk_default_tiling.blockSignals(True)
-        self.chk_default_tiling.setChecked(s.tiling_enabled)
-        self.chk_default_tiling.blockSignals(False)
+        self.spin_overlap_x.blockSignals(True)
+        self.spin_overlap_x.setValue(s.overlap_x)
+        self.spin_overlap_x.blockSignals(False)
 
-        self.spin_tile_w.blockSignals(True)
-        self.spin_tile_w.setValue(s.tile_width)
-        self.spin_tile_w.blockSignals(False)
-
-        self.spin_tile_h.blockSignals(True)
-        self.spin_tile_h.setValue(s.tile_height)
-        self.spin_tile_h.blockSignals(False)
-
-        self.spin_pitch_x.blockSignals(True)
-        self.spin_pitch_x.setValue(s.pitch_x)
-        self.spin_pitch_x.blockSignals(False)
-
-        self.spin_pitch_y.blockSignals(True)
-        self.spin_pitch_y.setValue(s.pitch_y)
-        self.spin_pitch_y.blockSignals(False)
+        self.spin_overlap_y.blockSignals(True)
+        self.spin_overlap_y.setValue(s.overlap_y)
+        self.spin_overlap_y.blockSignals(False)
 
     def _refresh_layer_selection(self):
         active_idx = self.engine.project.active_layer_index
@@ -230,20 +222,28 @@ class ProjectSubpanelWidget(QTabWidget):
             self.engine.save_project(path)
             self.bridge.status_message.emit(f"Saved project: {Path(path).name}")
 
+    def _on_reset_progress(self):
+        self.engine.reset_chip_progress()
+        self.bridge.status_message.emit("Reset chip progress (markers, origins, and exposure history)")
+
+    def _on_load_progress(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Load Chip Progress", "", "JSON (*.json)")
+        if path:
+            self.engine.load_chip_progress(path)
+            self.bridge.status_message.emit(f"Loaded chip progress: {Path(path).name}")
+
+    def _on_save_progress(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Save Chip Progress", "", "JSON (*.json)")
+        if path:
+            self.engine.save_chip_progress(path)
+            self.bridge.status_message.emit(f"Saved chip progress: {Path(path).name}")
+
     def _on_default_exp_changed(self, val: int):
         self.engine.project.update_settings(exposure_time=float(val))
 
-    def _on_default_tiling_toggled(self, checked: bool):
-        self.engine.project.update_settings(tiling_enabled=checked)
+    def _on_overlap_x_changed(self, val: float):
+        self.engine.project.update_settings(overlap_x=float(val))
 
-    def _on_tile_w_changed(self, val: int):
-        self.engine.project.update_settings(tile_width=val)
+    def _on_overlap_y_changed(self, val: float):
+        self.engine.project.update_settings(overlap_y=float(val))
 
-    def _on_tile_h_changed(self, val: int):
-        self.engine.project.update_settings(tile_height=val)
-
-    def _on_pitch_x_changed(self, val: float):
-        self.engine.project.update_settings(pitch_x=val)
-
-    def _on_pitch_y_changed(self, val: float):
-        self.engine.project.update_settings(pitch_y=val)

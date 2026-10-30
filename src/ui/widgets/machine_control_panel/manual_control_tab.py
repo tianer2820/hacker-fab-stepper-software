@@ -27,7 +27,9 @@ from operations import (
     ChipZLevelingOperation,
     HomeOperation,
     JogOperation,
+    LocateChipMarkerOperation,
     MaximizeImageSharpnessOperation,
+    ProjectorCameraCalibrationOperation,
 )
 from ui.bridge import QtEngineBridge
 
@@ -219,8 +221,8 @@ class ManualControlTabWidget(QScrollArea):
 
         manual_layout.addWidget(proj_box)
 
-        # 4. Chip Z Leveling Group Box
-        chip_box = QGroupBox("Chip Z Leveling")
+        # 4. Chip Calibration Group Box
+        chip_box = QGroupBox("Chip Calibration")
         chip_layout = QVBoxLayout(chip_box)
         chip_layout.setContentsMargins(6, 6, 6, 6)
         chip_layout.setSpacing(6)
@@ -239,7 +241,42 @@ class ManualControlTabWidget(QScrollArea):
         self.btn_chip_z_leveling = QPushButton("Chip Z Leveling")
         self.btn_chip_z_leveling.clicked.connect(self._on_chip_z_leveling_clicked)
         chip_layout.addWidget(self.btn_chip_z_leveling)
+
+        marker_row = QHBoxLayout()
+        marker_row.addWidget(QLabel("Marker Index:"))
+        self.marker_idx_btn_group = QButtonGroup(self)
+        self.radio_marker_1 = QRadioButton("1")
+        self.radio_marker_1.setChecked(True)
+        self.radio_marker_2 = QRadioButton("2")
+        self.marker_idx_btn_group.addButton(self.radio_marker_1, 1)
+        self.marker_idx_btn_group.addButton(self.radio_marker_2, 2)
+        marker_row.addWidget(self.radio_marker_1)
+        marker_row.addWidget(self.radio_marker_2)
+        marker_row.addStretch()
+        chip_layout.addLayout(marker_row)
+
+        self.btn_locate_chip_marker = QPushButton("Locate Chip Marker")
+        self.btn_locate_chip_marker.setToolTip(
+            "Records or updates Marker 1 or Marker 2 at the primary camera crosshair"
+        )
+        self.btn_locate_chip_marker.clicked.connect(self._on_locate_chip_marker_clicked)
+        chip_layout.addWidget(self.btn_locate_chip_marker)
+
         manual_layout.addWidget(chip_box)
+
+        # 4b. Projector-Camera Calibration Group Box (below Chip Calibration)
+        proj_cam_cal_box = QGroupBox("Projector-Camera Calibration")
+        proj_cam_cal_layout = QVBoxLayout(proj_cam_cal_box)
+        proj_cam_cal_layout.setContentsMargins(6, 6, 6, 6)
+        proj_cam_cal_layout.setSpacing(6)
+
+        self.btn_proj_cam_cal = QPushButton("Calibrate Projector to Camera (2x2 ArUco)")
+        self.btn_proj_cam_cal.setToolTip(
+            "Projects a 2x2 ArUco grid, measures projector pixel size and homography, and saves to machine config"
+        )
+        self.btn_proj_cam_cal.clicked.connect(self._on_proj_cam_cal_clicked)
+        proj_cam_cal_layout.addWidget(self.btn_proj_cam_cal)
+        manual_layout.addWidget(proj_cam_cal_box)
 
         # 5. Maximize Image Sharpness Group Box
         sharp_box = QGroupBox("Maximize Image Sharpness")
@@ -305,6 +342,15 @@ class ManualControlTabWidget(QScrollArea):
         op = ChipZLevelingOperation(
             chip_size_mm=self.spin_chip_size.value(),
         )
+        self.bridge.start_operation(op)
+
+    def _on_locate_chip_marker_clicked(self):
+        idx = 2 if self.radio_marker_2.isChecked() else 1
+        op = LocateChipMarkerOperation(idx=idx)
+        self.bridge.start_operation(op)
+
+    def _on_proj_cam_cal_clicked(self):
+        op = ProjectorCameraCalibrationOperation()
         self.bridge.start_operation(op)
 
     def _on_maximize_sharpness_clicked(self):
@@ -420,6 +466,10 @@ class ManualControlTabWidget(QScrollArea):
             self.btn_home,
             self.spin_chip_size,
             self.btn_chip_z_leveling,
+            self.radio_marker_1,
+            self.radio_marker_2,
+            self.btn_locate_chip_marker,
+            self.btn_proj_cam_cal,
             self.btn_maximize_sharpness,
             self.spin_sharp_z_range,
             self.spin_sharp_threshold,

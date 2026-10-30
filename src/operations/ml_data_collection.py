@@ -189,10 +189,7 @@ class MLDataCollectionOperation(Operation):
             if cal_frame is None:
                 return "Failed to acquire camera frame for calibration"
 
-            det_count, corners, ids = detect_ar_tags(cal_frame, flip_horizontal=False)
-            if det_count < 2:
-                # Try horizontal flip if camera is mirrored
-                det_count, corners, ids = detect_ar_tags(cal_frame, flip_horizontal=True)
+            det_count, corners, ids = detect_ar_tags(cal_frame)
 
             homography, matched_count = compute_projector_to_camera_homography(
                 corners, ids, tag_coords

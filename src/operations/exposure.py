@@ -88,15 +88,51 @@ class ExposureOperation(Operation):
             context.projector.set_color_mode(ColorMode.RED)
             if context.project is not None:
                 from core.chip_project import ExposureRecord
+                from core.coordinate_system import compute_projector_footprint_in_chip_space
+
+                sx, sy, sz = float(coords[0]), float(coords[1]), float(coords[2])
+                chip_xy = context.project.chip_progress.corr_to_chip((sx, sy))
+                chip_coords = (float(chip_xy[0]), float(chip_xy[1]), sz)
+
+                proj_size = (
+                    context.projector.projector_size()
+                    if context.projector is not None and hasattr(context.projector, "projector_size")
+                    else context.project.projector_size
+                )
+                cam_size = (
+                    context.camera._last_frame_size
+                    if context.camera is not None and getattr(context.camera, "_last_frame_size", None)
+                    else context.project.camera_size
+                )
+                proj_px = 1.0
+                cam_px = 1.0
+                proj_to_cam = None
+                if context.machine_config is not None:
+                    proj_px = float(context.machine_config.optics.projector_pixel_size)
+                    cam_px = float(context.machine_config.stage_calibration.camera_pixel_size)
+                    proj_to_cam = context.machine_config.optics.proj_to_cam_matrix
+
+                footprint_chip = compute_projector_footprint_in_chip_space(
+                    stage_xy_corr=(sx, sy),
+                    projector_size=proj_size,
+                    camera_size=cam_size,
+                    projector_pixel_size=proj_px,
+                    camera_pixel_size=cam_px,
+                    proj_to_cam_matrix=proj_to_cam,
+                    corr_to_chip_matrix=context.project.chip_progress.get_corr_to_chip_matrix(),
+                )
                 record = ExposureRecord(
-                    coords=coords,
+                    coords=chip_coords,
                     time=start_datetime,
                     duration=elapsed_ms,
                     aborted=self.is_aborted,
                     layer_index=self.layer_index,
                     tile_index=self.tile_index,
+                    footprint_chip_corners=footprint_chip,
                 )
                 context.project.add_exposure_record(record)
+                if context.event_bus is not None:
+                    context.event_bus.emit(Event.CHIP_PROGRESS_CHANGED, context.project.chip_progress)
 
         if self.is_aborted:
             report_progress(1.0, f"Exposure of {layer_name} aborted")

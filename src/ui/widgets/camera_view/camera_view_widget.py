@@ -243,7 +243,15 @@ class CameraViewWidget(QWidget):
         # Main viewport canvas
         self.viewport = CameraViewport(self)
         self.viewport.zoom_changed.connect(self._on_viewport_zoom_changed)
+        self.viewport.crosshair_changed.connect(self._on_viewport_crosshair_changed)
         layout.addWidget(self.viewport, stretch=1)
+
+    def _on_viewport_crosshair_changed(self, u: float, v: float, sec: object):
+        self.engine.set_primary_crosshair(u, v)
+        if sec is not None and isinstance(sec, tuple) and len(sec) == 2:
+            self.engine.set_secondary_crosshair((float(sec[0]), float(sec[1])))
+        else:
+            self.engine.set_secondary_crosshair(None)
 
     def _on_viewport_zoom_changed(self, zoom_level: float):
         pct = int(round(zoom_level * 100))
@@ -316,6 +324,7 @@ class CameraViewWidget(QWidget):
         self.viewport.crosshair_u = 0.5
         self.viewport.crosshair_v = 0.5
         self.viewport.has_secondary_crosshair = False
+        self.viewport._emit_crosshair_changed()
         self.viewport.update()
 
     def _zoom_in(self):

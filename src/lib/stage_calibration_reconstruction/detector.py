@@ -14,7 +14,6 @@ def detect_markers_in_frame(
     frame: Optional[np.ndarray],
     parameters: Optional[EdgeDetectorParameters] = None,
     dictionary: Optional[cv2.aruco.Dictionary] = None,
-    flip_horizontal: bool = False,
     debug_output: Optional[Any] = None,
 ) -> Tuple[int, List[np.ndarray], Optional[np.ndarray]]:
     """Detects ArUco markers using edge_artag without fallback.
@@ -23,7 +22,6 @@ def detect_markers_in_frame(
         frame: BGR or grayscale numpy image.
         parameters: Optional EdgeDetectorParameters for fine-tuning.
         dictionary: Optional cv2.aruco.Dictionary (defaults to DEFAULT_ARUCO_DICT).
-        flip_horizontal: Whether to flip the frame horizontally before detection.
         debug_output: Optional dict or list to receive intermediate debug image outputs.
 
     Returns:
@@ -37,11 +35,10 @@ def detect_markers_in_frame(
                 debug_output.clear()
         return 0, [], None
 
-    img = cv2.flip(frame, 1) if flip_horizontal else frame
     dict_obj = dictionary if dictionary is not None else DEFAULT_ARUCO_DICT
 
     corners, ids, _ = detect_edge_markers(
-        img,
+        frame,
         dictionary=dict_obj,
         parameters=parameters,
         debug_output=debug_output,
@@ -54,13 +51,12 @@ def draw_detected_markers(
     image: np.ndarray,
     corners: List[np.ndarray],
     ids: Optional[np.ndarray],
-    flip_horizontal: bool = False,
 ) -> np.ndarray:
     """Draws detected ArUco marker boundaries, corner origins, and IDs on an image copy."""
     if image is None:
         return np.zeros((100, 100, 3), dtype=np.uint8)
 
-    annotated = cv2.flip(image, 1) if flip_horizontal else image.copy()
+    annotated = image.copy()
     if annotated.ndim == 2:
         annotated = cv2.cvtColor(annotated, cv2.COLOR_GRAY2BGR)
 

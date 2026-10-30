@@ -41,13 +41,11 @@ class ReconstructionPipeline:
         stage1_json_path: str,
         camera_pixel_size: float = 1.0,
         detector_params: Optional[EdgeDetectorParameters] = None,
-        flip_horizontal: bool = False,
     ):
         self.images_dir = images_dir
         self.stage1_json_path = stage1_json_path
         self.camera_pixel_size = float(camera_pixel_size)
         self.detector_params = detector_params
-        self.flip_horizontal = flip_horizontal
 
     def run(
         self,
@@ -137,7 +135,6 @@ class ReconstructionPipeline:
             cnt, corners, ids = detect_markers_in_frame(
                 img,
                 parameters=self.detector_params,
-                flip_horizontal=self.flip_horizontal,
             )
 
             diag.per_image_results[fname] = {
@@ -192,7 +189,6 @@ class ReconstructionPipeline:
         T_cam_to_stage = estimate_camera_to_stage_transform(
             multi_frame_observations=multi_frame_obs,
             default_rotation=theta,
-            flip_horizontal=self.flip_horizontal,
         )
 
         # 4. Transform detected tags into actual stage space

@@ -23,7 +23,6 @@ class PreviewViewport(QWidget):
 
         self.corners: List[np.ndarray] = []
         self.ids: Optional[np.ndarray] = None
-        self.flip_horizontal: bool = False
 
         # Zoom & Pan
         self.zoom_level: float = 1.0
@@ -55,7 +54,7 @@ class PreviewViewport(QWidget):
             return
 
         if overlay_markers and self.ids is not None and len(self.corners) > 0:
-            annotated = draw_detected_markers(frame, self.corners, self.ids, flip_horizontal=False)
+            annotated = draw_detected_markers(frame, self.corners, self.ids)
         else:
             annotated = frame.copy()
 
@@ -78,13 +77,10 @@ class PreviewViewport(QWidget):
         frame: Optional[np.ndarray],
         corners: Optional[List[np.ndarray]] = None,
         ids: Optional[np.ndarray] = None,
-        flip_horizontal: bool = False,
         fit_view: bool = False,
     ):
         """Sets the current frame and detected marker annotations."""
-        self.flip_horizontal = flip_horizontal
-        img = cv2.flip(frame, 1) if (flip_horizontal and frame is not None) else frame
-        self.display_frame(img, corners=corners, ids=ids, overlay_markers=True, fit_view=fit_view)
+        self.display_frame(frame, corners=corners, ids=ids, overlay_markers=True, fit_view=fit_view)
 
     def update_markers(self, corners: List[np.ndarray], ids: Optional[np.ndarray], overlay_markers: bool = True):
         """Updates marker annotations without resetting zoom or reloading raw frame."""

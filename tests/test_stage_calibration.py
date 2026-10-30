@@ -1194,15 +1194,8 @@ class TestStageCalibrationUI(unittest.TestCase):
                 win.spin_fine_c.setValue(8.0)
                 self.assertIn("scan_0000.png", win.lbl_image_info.text())
 
-                # Test 1: Flip horizontal toggles preview flip
+                # Test 1: Overlay markers toggle
                 win.chk_overlay_markers.setChecked(False)
-                unflipped_disp = win.viewport._annotated_frame.copy()
-                win.chk_flip_h.setChecked(True)
-                flipped_disp = win.viewport._annotated_frame.copy()
-                self.assertFalse(np.array_equal(unflipped_disp, flipped_disp))
-                # Flipping flipped_disp back horizontally should match unflipped_disp
-                self.assertTrue(np.array_equal(cv2.flip(flipped_disp, 1), unflipped_disp))
-                win.chk_flip_h.setChecked(False)
                 win.chk_overlay_markers.setChecked(True)
 
                 # Test 2: Debug view dropdown options and switching
@@ -1309,19 +1302,16 @@ class TestStageCalibrationUI(unittest.TestCase):
         self.assertEqual(len(debug_list), 1)
         self.assertIn("edges_decode", debug_list[0])
 
-        # 3. Test detect_markers_in_frame with debug_output dict and flip_horizontal
-        mirrored_frame = cv2.flip(frame, 1)
+        # 3. Test detect_markers_in_frame with debug_output dict
         debug_frame_dict = {}
         cnt, corners, ids = detect_markers_in_frame(
-            mirrored_frame,
+            frame,
             dictionary=DEFAULT_ARUCO_DICT,
-            flip_horizontal=True,
             debug_output=debug_frame_dict,
         )
         self.assertEqual(cnt, 1)
         self.assertIn("edges_decode", debug_frame_dict)
         self.assertEqual(debug_frame_dict["input"].shape, frame.shape)
-        # Flipped input should match cv2.flip(mirrored_frame, 1) == frame
         self.assertTrue(np.array_equal(debug_frame_dict["input"], frame))
 
     def test_marker_border_scale_and_ui_parameters(self):
