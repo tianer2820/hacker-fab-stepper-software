@@ -179,28 +179,24 @@ class StageCalibration:
             mat = np.array(self.cam_to_stage_matrix, dtype=np.float64)
             if mat.shape == (3, 3):
                 init = (mat @ np.array([x_corr, y_corr, 1.0], dtype=np.float64))[:2]
-                step_mat = mat[:2, :2]
             else:
                 init = mat @ np.array([x_corr, y_corr], dtype=np.float64)
-                step_mat = mat
-            cur_x, cur_y = float(init[0]), float(init[1])
+            raw_space_target = (float(init[0]), float(init[1]))
         else:
-            cur_x, cur_y = float(x_corr), float(y_corr)
-            step_mat = None
+            raw_space_target = (float(x_corr), float(y_corr))
+
+        cur_x, cur_y = raw_space_target
 
         for _ in range(max_iter):
             fwd_x, fwd_y = self.forward_map_xy(cur_x, cur_y)
-            err_x = fwd_x - x_corr
-            err_y = fwd_y - y_corr
+            err_x = fwd_x - raw_space_target[0]
+            err_y = fwd_y - raw_space_target[1]
             if abs(err_x) < tol and abs(err_y) < tol:
                 break
-            if step_mat is not None:
-                delta = step_mat @ np.array([err_x, err_y], dtype=np.float64)
-                cur_x -= float(delta[0])
-                cur_y -= float(delta[1])
-            else:
-                cur_x -= err_x
-                cur_y -= err_y
+            delta_x = err_x
+            delta_y = err_y
+            cur_x -= delta_x
+            cur_y -= delta_y
         else:
             print('inverse map xy max iteration reached, error not in tolerance')
 
