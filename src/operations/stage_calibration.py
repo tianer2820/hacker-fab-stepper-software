@@ -563,7 +563,18 @@ class StageCalibrationPatternOperation(Operation):
             # =========================================================================
             # STEP 1: MEASURE OPTICAL TRANSFORM (PROJECTOR TO CAMERA)
             # =========================================================================
-            report_progress(0.02, "Step 1/2: Measuring optical transform (Projector -> Camera)...")
+
+            # Initial autofocus is ALWAYS performed before patterning
+            report_progress(0.02, f"Performing initial autofocus...")
+            af_op = AutofocusOperation()
+            af_err = self._run_sub_op(af_op, context, sub_progress(report_progress, 0.02, 0.05, prefix="Initial AF"))
+            if af_err or self.is_aborted:
+                return af_err or "Stage 2 calibration aborted during initial autofocus"
+
+            af_start_z = stage.get_raw_position()[2]
+
+
+            report_progress(0.05, "Step 1/2: Measuring optical transform (Projector -> Camera)...")
             grid_img, tag_coords = generate_calibration_tag_grid_with_coords(
                 grid_n=2,
                 canvas_size=(pw, ph),
@@ -603,7 +614,7 @@ class StageCalibrationPatternOperation(Operation):
 
             # 3-step iterative correction so marker 0 sits with top-left at camera center
             report_progress(0.08, "Iteratively correcting tag projection alignment (3 passes)...")
-            tag_sz_cam = max(24.0, min(cam_w, cam_h) * 0.2)
+            tag_sz_cam = min(cam_w, cam_h) * 0.25
             cam_corners = np.array([
                 [u_c, v_c],
                 [u_c + tag_sz_cam, v_c],
@@ -640,15 +651,6 @@ class StageCalibrationPatternOperation(Operation):
                 projector.set_on(False)
 
             self.corrected_proj_corners = transform_points_projector_to_camera(cam_corners, H_cam_to_proj)
-
-            # Initial autofocus is ALWAYS performed before patterning
-            report_progress(0.12, f"Performing initial autofocus...")
-            af_op = AutofocusOperation()
-            af_err = self._run_sub_op(af_op, context, sub_progress(report_progress, 0.12, 0.15, prefix="Initial AF"))
-            if af_err or self.is_aborted:
-                return af_err or "Stage 2 calibration aborted during initial autofocus"
-
-            af_start_z = stage.get_raw_position()[2]
 
             # =========================================================================
             # STEP 2: EXPOSE ARUCO GRID USING CALIBRATED Z FOCUS SURFACE
