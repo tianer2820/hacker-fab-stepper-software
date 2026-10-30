@@ -237,6 +237,15 @@ class StageCalibrationInspectorWindow(QMainWindow):
         self.spin_center_density.valueChanged.connect(self._on_parameter_changed)
         param_form.addRow("Center Edge Max:", self.spin_center_density)
 
+        # Marker border scale
+        self.spin_border_scale = QDoubleSpinBox()
+        self.spin_border_scale.setRange(0.50, 1.50)
+        self.spin_border_scale.setDecimals(3)
+        self.spin_border_scale.setSingleStep(0.01)
+        self.spin_border_scale.setValue(1.0)
+        self.spin_border_scale.valueChanged.connect(self._on_parameter_changed)
+        param_form.addRow("Marker Border Scale:", self.spin_border_scale)
+
         # Subpixel refinement
         self.chk_subpixel = QCheckBox("Subpixel Corner Refine")
         self.chk_subpixel.setChecked(True)
@@ -280,6 +289,7 @@ class StageCalibrationInspectorWindow(QMainWindow):
         self.combo_view_mode = QComboBox()
         self.combo_view_mode.addItem("Input Image", "input")
         self.combo_view_mode.addItem("Grayscale Image", "gray")
+        self.combo_view_mode.addItem("Detected Squares & Inner Grid", "candidate_quads")
         self.combo_view_mode.addItem("Fine Adaptive Threshold", "e_fine")
         self.combo_view_mode.addItem("Wide Adaptive Threshold", "e_wide")
         self.combo_view_mode.addItem("After Fine & Wide Thresholding", "edges_decode")
@@ -403,6 +413,7 @@ class StageCalibrationInspectorWindow(QMainWindow):
         params.min_marker_area = float(self.spin_min_area.value())
         params.max_marker_area = float(self.spin_max_area.value())
         params.max_center_edge_density = float(self.spin_center_density.value())
+        params.marker_border_scale = float(self.spin_border_scale.value())
         params.enable_subpixel_refinement = bool(self.chk_subpixel.isChecked())
         return params
 
@@ -415,6 +426,7 @@ class StageCalibrationInspectorWindow(QMainWindow):
         self.spin_min_area.setValue(defs.min_marker_area)
         self.spin_max_area.setValue(defs.max_marker_area)
         self.spin_center_density.setValue(defs.max_center_edge_density)
+        self.spin_border_scale.setValue(defs.marker_border_scale)
         self.chk_subpixel.setChecked(defs.enable_subpixel_refinement)
 
     def _on_block_size_changed(self, val: int):

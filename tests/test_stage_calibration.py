@@ -1295,10 +1295,13 @@ class TestStageCalibrationUI(unittest.TestCase):
         corners, ids, _ = detect_edge_markers(frame, dictionary=DEFAULT_ARUCO_DICT, debug_output=debug_dict)
         self.assertIn("input", debug_dict)
         self.assertIn("gray", debug_dict)
+        self.assertIn("candidate_quads", debug_dict)
         self.assertIn("e_fine", debug_dict)
         self.assertIn("e_wide", debug_dict)
         self.assertIn("edges_decode", debug_dict)
         self.assertIsInstance(debug_dict["edges_decode"], np.ndarray)
+        self.assertIsInstance(debug_dict["candidate_quads"], np.ndarray)
+        self.assertEqual(debug_dict["candidate_quads"].shape, (480, 640, 3))
 
         # 2. Test list output
         debug_list = []
@@ -1320,6 +1323,46 @@ class TestStageCalibrationUI(unittest.TestCase):
         self.assertEqual(debug_frame_dict["input"].shape, frame.shape)
         # Flipped input should match cv2.flip(mirrored_frame, 1) == frame
         self.assertTrue(np.array_equal(debug_frame_dict["input"], frame))
+
+    def test_marker_border_scale_and_ui_parameters(self):
+        from lib.edge_artag import EdgeDetectorParameters, _scale_quad
+        from ui.widgets.stage_calibration_inspector import StageCalibrationInspectorWindow
+
+        params = EdgeDetectorParameters()
+        self.assertEqual(params.marker_border_scale, 1.0)
+        params.marker_border_scale = 0.96
+        self.assertEqual(params.marker_border_scale, 0.96)
+
+        # Test _scale_quad
+        quad = np.array([[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]], dtype=np.float32)
+        scaled_same = _scale_quad(quad, 1.0)
+        self.assertTrue(np.allclose(scaled_same, quad))
+
+        scaled = _scale_quad(quad, 0.90)
+        expected = np.array([[5.0, 5.0], [95.0, 5.0], [95.0, 95.0], [5.0, 95.0]], dtype=np.float32)
+        self.assertTrue(np.allclose(scaled, expected))
+
+        # Test Inspector Window UI
+        win = StageCalibrationInspectorWindow()
+        try:
+            self.assertTrue(hasattr(win, "spin_border_scale"))
+            self.assertAlmostEqual(win.spin_border_scale.value(), 1.0)
+
+            # Change in UI
+            win.spin_border_scale.setValue(0.965)
+            p = win._get_current_detector_parameters()
+            self.assertAlmostEqual(p.marker_border_scale, 0.965)
+
+            # Reset in UI
+            win._reset_detector_parameters()
+            self.assertAlmostEqual(win.spin_border_scale.value(), 1.0)
+
+            # Check view mode dropdown has the new debug view
+            keys = [win.combo_view_mode.itemData(i) for i in range(win.combo_view_mode.count())]
+            self.assertIn("candidate_quads", keys)
+        finally:
+            win.deleteLater()
+            self.app.processEvents()
 
 
 

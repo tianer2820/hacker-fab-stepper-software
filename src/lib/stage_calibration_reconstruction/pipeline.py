@@ -302,7 +302,6 @@ class ReconstructionPipeline:
             stage_type=s1_data.get("stage_type", ""),
             step_distance=step_dist,
             calibration_range=float(s1_data.get("calibration_range", 10000.0)),
-            flip_horizontal=self.flip_horizontal,
             cam_to_stage_matrix=T_cam_to_stage,
             detected_marker_ids=observed_ids,
         )
