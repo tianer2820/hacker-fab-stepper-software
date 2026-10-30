@@ -58,18 +58,17 @@ class StageCalibration:
         enabled: bool = True,
         step_distance: Optional[float] = None,
         calibration_range: Optional[float] = None,
-        flip_horizontal: bool = False,
         cam_to_stage_matrix: Optional[Sequence[Sequence[float]] | np.ndarray] = None,
         detected_marker_ids: Optional[Sequence[int] | Set[int]] = None,
     ):
         self.grid_shape = (int(grid_shape[0]), int(grid_shape[1]))
+        assert self.grid_shape[0] > 1 and self.grid_shape[1] > 1, 'Calibration grid must be at least 2x2'
         self.points = points
         self.stage_type = stage_type
         self.timestamp = timestamp or datetime.now().isoformat()
         self.enabled = enabled
         self.step_distance = float(step_distance) if step_distance is not None else None
         self.calibration_range = float(calibration_range) if calibration_range is not None else None
-        self.flip_horizontal = bool(flip_horizontal)
         self.detected_marker_ids: Set[int] = set(detected_marker_ids) if detected_marker_ids is not None else set()
         if cam_to_stage_matrix is not None:
             self.cam_to_stage_matrix: Optional[np.ndarray] = np.array(cam_to_stage_matrix, dtype=np.float64)
@@ -101,9 +100,8 @@ class StageCalibration:
                 self._corr_y_grid[r, c] = pt.corr_xy[1]
                 self._z_focus_grid[r, c] = pt.z_focus
 
-        if self._ny > 0 and self._nx > 0:
-            self._raw_x_coords = self._raw_x_grid[0, :]
-            self._raw_y_coords = self._raw_y_grid[:, 0]
+        self._raw_x_coords = self._raw_x_grid[0, :]
+        self._raw_y_coords = self._raw_y_grid[:, 0]
 
     def _interpolate_grid_bilinear(
         self,
@@ -129,7 +127,6 @@ class StageCalibration:
             u = 1.0
         else:
             i = int(np.searchsorted(x_coords, x) - 1)
-            i = max(0, min(i, nx - 2))
             u = (x - x_coords[i]) / max(x_coords[i + 1] - x_coords[i], 1e-9)
 
         # Find row cell index
@@ -141,7 +138,6 @@ class StageCalibration:
             v = 1.0
         else:
             j = int(np.searchsorted(y_coords, y) - 1)
-            j = max(0, min(j, ny - 2))
             v = (y - y_coords[j]) / max(y_coords[j + 1] - y_coords[j], 1e-9)
 
         q00 = grid[j, i]
@@ -154,7 +150,7 @@ class StageCalibration:
 
     def forward_map_xy(self, x_raw: float, y_raw: float) -> Tuple[float, float]:
         """Maps raw machine coordinates (X, Y) to corrected optical coordinates (X, Y)."""
-        if not self.has_xy_calibration or self._nx < 2 or self._ny < 2:
+        if not self.has_xy_calibration:
             return (float(x_raw), float(y_raw))
 
         x_corr = self._interpolate_grid_bilinear(
@@ -176,7 +172,7 @@ class StageCalibration:
 
         Uses fixed-point iteration, pre-conditioned by cam_to_stage_matrix if available.
         """
-        if not self.has_xy_calibration or self._nx < 2 or self._ny < 2:
+        if not self.has_xy_calibration:
             return (float(x_corr), float(y_corr))
 
         if self.cam_to_stage_matrix is not None:
@@ -205,6 +201,8 @@ class StageCalibration:
             else:
                 cur_x -= err_x
                 cur_y -= err_y
+        else:
+            print('inverse map xy max iteration reached, error not in tolerance')
 
         return (cur_x, cur_y)
 
@@ -281,26 +279,6 @@ class StageCalibration:
             'z': corr_z + z_surf,
         }
 
-    def to_raw(self, corr_coords: list[float] | Dict[str, float], z_calib_only: bool = False) -> Dict[str, float]:
-        """Legacy helper delegating to corr_to_raw."""
-        if isinstance(corr_coords, dict):
-            cx = float(corr_coords.get("x", corr_coords.get("X", 0.0)))
-            cy = float(corr_coords.get("y", corr_coords.get("Y", 0.0)))
-            cz = float(corr_coords.get("z", corr_coords.get("Z", 0.0)))
-            return self.corr_to_raw([cx, cy, cz], z_calib_only=z_calib_only)
-        return self.corr_to_raw(corr_coords, z_calib_only=z_calib_only)
-
-    def to_corr(self, raw_coords: Tuple[float, float, float] | list[float]) -> Tuple[float, float, float]:
-        """Translates raw machine position (X, Y, Z) to corrected optical position (X, Y, Z).
-
-        Z_corr = Z_raw - Z_surface(X_raw, Y_raw).
-        """
-        rx, ry, rz = float(raw_coords[0]), float(raw_coords[1]), float(raw_coords[2])
-        cx, cy = self.forward_map_xy(rx, ry)
-        z_surf = self.get_z_offset_raw(rx, ry)
-        cz = rz - z_surf
-        return (cx, cy, cz)
-
 
     @property
     def has_xy_calibration(self) -> bool:
@@ -323,7 +301,6 @@ class StageCalibration:
             "grid_shape": list(self.grid_shape),
             "step_distance": self.step_distance,
             "calibration_range": self.calibration_range,
-            "flip_horizontal": self.flip_horizontal,
             "cam_to_stage_matrix": self.cam_to_stage_matrix.tolist() if self.cam_to_stage_matrix is not None else None,
             "detected_marker_ids": sorted(list(self.detected_marker_ids)) if self.detected_marker_ids else None,
             "bounds_raw": {
@@ -350,7 +327,6 @@ class StageCalibration:
         enabled = data.get("enabled", True)
         step_distance = data.get("step_distance")
         calibration_range = data.get("calibration_range")
-        flip_horizontal = data.get("flip_horizontal", False)
         cam_to_stage_matrix = data.get("cam_to_stage_matrix")
         detected_marker_ids = data.get("detected_marker_ids")
 
@@ -362,7 +338,6 @@ class StageCalibration:
             enabled=enabled,
             step_distance=step_distance,
             calibration_range=calibration_range,
-            flip_horizontal=flip_horizontal,
             cam_to_stage_matrix=cam_to_stage_matrix,
             detected_marker_ids=detected_marker_ids,
         )
