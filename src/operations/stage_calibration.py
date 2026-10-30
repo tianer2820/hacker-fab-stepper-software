@@ -357,6 +357,8 @@ class StageCalibrationZFocusOperation(Operation):
         stage = context.stage
         camera = context.camera
 
+        stage.set_calibration(None)
+
         pixel_scale = (
             self.camera_pixel_size
             if self.camera_pixel_size is not None
