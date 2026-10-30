@@ -567,7 +567,7 @@ class StageCalibrationPatternOperation(Operation):
 
             # Initial autofocus is ALWAYS performed before patterning
             report_progress(0.02, f"Performing initial autofocus...")
-            af_op = AutofocusOperation()
+            af_op = AutofocusOperation(uv_z_offset=0)
             af_err = self._run_sub_op(af_op, context, sub_progress(report_progress, 0.02, 0.05, prefix="Initial AF"))
             if af_err or self.is_aborted:
                 return af_err or "Stage 2 calibration aborted during initial autofocus"
@@ -650,6 +650,12 @@ class StageCalibrationPatternOperation(Operation):
             report_progress(0.15, f"Step 2/2: Patterning grid using Stage 1 calibrated Z heights...")
             loop_span = 0.85
             base_offset = 0.15
+
+            af_op = AutofocusOperation()
+            af_err = self._run_sub_op(af_op, context, sub_progress(report_progress, 0.02, 0.05, prefix="Initial AF"))
+            if af_err or self.is_aborted:
+                return af_err or "Stage 2 calibration aborted during initial autofocus"
+
 
             # Find closest calibration grid node to current stage XY
             cur_raw_x, cur_raw_y = stage.get_raw_position()[:2]
@@ -749,6 +755,16 @@ class StageCalibrationPatternOperation(Operation):
                 f"Stage 2 complete! {total_points} ArUco markers patterned using calibrated Z heights. "
                 "Please develop wafer, mount, and jog stage so at least one tag is visible to run Stage 3.",
             )
+            # Move the stage 2mm away from the end position in the direction away from the starting position
+            if total_points > 0:
+                first_pt = pts_by_grid[pattern_indices[0]]
+                last_pt = pts_by_grid[pattern_indices[-1]]
+                dx = float(last_pt.raw_xy[0] - first_pt.raw_xy[0])
+                dy = float(last_pt.raw_xy[1] - first_pt.raw_xy[1])
+                sign_x = 1.0 if dx >= 0 else -1.0
+                sign_y = 1.0 if dy >= 0 else -1.0
+                stage.move_relative({"x": sign_x * 2000.0, "y": sign_y * 2000.0}, z_calib_only=True)
+
             return None
 
         finally:
