@@ -415,7 +415,7 @@ class StageCalibrationZFocusOperation(Operation):
                 prog_start,
                 f"Point {point_idx + 1}/{total_points} (Grid [{r}, {c}]): Moving to ({target_raw_x:.1f}, {target_raw_y:.1f}) µm...",
             )
-            stage.move_absolute_raw({"x": target_raw_x, "y": target_raw_y})
+            stage.move_absolute_raw({"x": target_raw_x, "y": target_raw_y}, set_internal_coord=True)
             context.delay_func(self.stabilization_delay)
 
             # Autofocus at current point (Red focal plane measurement, UV offset=0.0)

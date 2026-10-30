@@ -88,12 +88,32 @@ class StageController(EngineModule):
     def get_position(self) -> tuple[float, float, float]:
         return (self.__true_target_coord[0], self.__true_target_coord[1], self.__true_target_coord[2])
 
-    def move_absolute_raw(self, microns: dict[str, float]) -> bool:
+    def move_absolute_raw(self, microns: dict[str, float], set_internal_coord: bool = False) -> bool:
         """Directly commands raw machine coordinates, bypassing calibration."""
+        if set_internal_coord:
+            dx = microns.get("x", microns.get("X", None))
+            dy = microns.get("y", microns.get("Y", None))
+            dz = microns.get("z", microns.get("Z", None))
+
+            if dx is not None:
+                self.__true_target_coord[0] = dx
+            if dy is not None:
+                self.__true_target_coord[1] = dy
+            if dz is not None:
+                self.__true_target_coord[2] = dz
+
         return self._move_absolute_raw(microns)
 
-    def move_relative_raw(self, microns: dict[str, float]) -> bool:
+    def move_relative_raw(self, microns: dict[str, float], set_internal_coord: bool = False) -> bool:
         """Directly commands raw machine relative move, bypassing calibration."""
+        if set_internal_coord:
+            dx = microns.get("x", microns.get("X", 0.0))
+            dy = microns.get("y", microns.get("Y", 0.0))
+            dz = microns.get("z", microns.get("Z", 0.0))
+            self.__true_target_coord[0] += dx
+            self.__true_target_coord[1] += dy
+            self.__true_target_coord[2] += dz
+
         return self._move_relative_raw(microns)
 
     def get_raw_position(self) -> tuple[float, float, float]:
