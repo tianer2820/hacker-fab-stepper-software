@@ -106,6 +106,111 @@ class TestStageCalibrationComplementary(unittest.TestCase):
         # Global cam_to_stage matrix should be computed strictly from primary scan
         np.testing.assert_allclose(cal1.cam_to_stage_matrix, cal2.cam_to_stage_matrix, atol=1e-5)
 
+    def test_detect_markers_batch(self):
+        from lib.stage_calibration_reconstruction.detector import detect_markers_batch
+
+        img1 = self._create_synthetic_image([(0, 250, 300, 120), (1, 550, 300, 120)])
+        img2 = self._create_synthetic_image([(2, 250, 300, 120)])
+        img3 = self._create_synthetic_image([(3, 400, 300, 120)])
+
+        prog_calls = []
+
+        def prog_cb(completed, total):
+            prog_calls.append((completed, total))
+
+        results = detect_markers_batch([img1, img2, img3], progress_cb=prog_cb)
+        self.assertEqual(len(results), 3)
+        self.assertEqual(results[0][0], 2)  # img1 has 2 markers
+        self.assertEqual(results[1][0], 1)  # img2 has 1 marker
+        self.assertEqual(results[2][0], 1)  # img3 has 1 marker
+        self.assertTrue(len(prog_calls) >= 3)
+        self.assertEqual(prog_calls[-1], (3, 3))
+
+    def test_undetected_tag_opposite_neighbor_averaging(self):
+        from lib.stage_calibration_reconstruction.solver import (
+            match_global_transform_and_assign_undetected,
+        )
+
+        grid_shape = (3, 3)
+        nominal_positions = {
+            r * 3 + c: (float(c * 1000.0), float(r * 1000.0))
+            for r in range(3)
+            for c in range(3)
+        }
+
+        # Case A: Center tag 4 is missing, opposite neighbors 3 & 5 (+-x) and 1 & 7 (+-y) are detected
+        # Tag 3: (0, 1010), Tag 5: (2000, 1030) -> x midpoint = (1000, 1020)
+        # Tag 1: (1005, 0), Tag 7: (1015, 2000) -> y midpoint = (1010, 1000)
+        # Both pairs present: average of midpoints = (1005.0, 1010.0)
+        detected_a = {
+            0: (0.0, 0.0),
+            1: (1005.0, 0.0),
+            2: (2000.0, 0.0),
+            3: (0.0, 1010.0),
+            # 4 is undetected
+            5: (2000.0, 1030.0),
+            6: (0.0, 2000.0),
+            7: (1015.0, 2000.0),
+            8: (2000.0, 2000.0),
+        }
+
+        res_a, _, _ = match_global_transform_and_assign_undetected(
+            detected_positions=detected_a,
+            nominal_positions=nominal_positions,
+            grid_shape=grid_shape,
+        )
+        self.assertAlmostEqual(res_a[4][0], 1005.0, places=3)
+        self.assertAlmostEqual(res_a[4][1], 1010.0, places=3)
+
+        # Case B: Only horizontal opposite neighbors (3 and 5) detected for 4 (1 and 7 missing)
+        detected_b = {
+            0: (0.0, 0.0),
+            2: (2000.0, 0.0),
+            3: (0.0, 1010.0),
+            5: (2000.0, 1030.0),
+            6: (0.0, 2000.0),
+            8: (2000.0, 2000.0),
+        }
+        res_b, _, _ = match_global_transform_and_assign_undetected(
+            detected_positions=detected_b,
+            nominal_positions=nominal_positions,
+            grid_shape=grid_shape,
+        )
+        self.assertAlmostEqual(res_b[4][0], 1000.0, places=3)
+        self.assertAlmostEqual(res_b[4][1], 1020.0, places=3)
+
+        # Case C: Only vertical opposite neighbors (1 and 7) detected for 4 (3 and 5 missing)
+        detected_c = {
+            0: (0.0, 0.0),
+            1: (1005.0, 0.0),
+            2: (2000.0, 0.0),
+            6: (0.0, 2000.0),
+            7: (1015.0, 2000.0),
+            8: (2000.0, 2000.0),
+        }
+        res_c, _, _ = match_global_transform_and_assign_undetected(
+            detected_positions=detected_c,
+            nominal_positions=nominal_positions,
+            grid_shape=grid_shape,
+        )
+        self.assertAlmostEqual(res_c[4][0], 1010.0, places=3)
+        self.assertAlmostEqual(res_c[4][1], 1000.0, places=3)
+
+        # Case D: Corner tag 0 missing (has no opposite horizontal or vertical neighbors)
+        # Should fallback to global rigid alignment
+        detected_d = {
+            m: (pos[0] + 50.0, pos[1] + 100.0)
+            for m, pos in nominal_positions.items()
+            if m != 0
+        }
+        res_d, _, _ = match_global_transform_and_assign_undetected(
+            detected_positions=detected_d,
+            nominal_positions=nominal_positions,
+            grid_shape=grid_shape,
+        )
+        self.assertAlmostEqual(res_d[0][0], 50.0, places=1)
+        self.assertAlmostEqual(res_d[0][1], 100.0, places=1)
+
 
 if __name__ == "__main__":
     unittest.main()

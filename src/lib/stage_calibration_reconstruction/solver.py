@@ -248,14 +248,17 @@ def match_global_transform_and_assign_undetected(
     detected_positions: Dict[int, Tuple[float, float]],
     nominal_positions: Dict[int, Tuple[float, float]],
     default_rotation: float = 0.0,
+    grid_shape: Optional[Tuple[int, int]] = None,
 ) -> Tuple[Dict[int, Tuple[float, float]], np.ndarray, np.ndarray]:
     """Matches a global rotation & translation aligning nominal coordinates to calibrated
-    detected tags, and assigns not-detected tags using the fitted rigid transform.
+    detected tags, and assigns not-detected tags using opposite-side neighbor averaging
+    if available (+-x or +-y or both), falling back to the fitted rigid transform.
 
     Args:
         detected_positions: Reconstructed positions of detected markers in stage coordinates.
         nominal_positions: Nominal coordinates of all grid markers.
         default_rotation: Fallback rotation in radians if < 2 markers are detected.
+        grid_shape: Optional (ny, nx) grid dimensions.
 
     Returns:
         (full_stage_positions, R, t)
@@ -292,13 +295,70 @@ def match_global_transform_and_assign_undetected(
         R = np.array([[cos_t, -sin_t], [sin_t, cos_t]], dtype=np.float64)
         t = np.zeros(2, dtype=np.float64)
 
+    # Build grid mapping for neighbor lookup
+    id_to_grid: Dict[int, Tuple[int, int]] = {}
+    grid_to_id: Dict[Tuple[int, int], int] = {}
+
+    if grid_shape is not None:
+        ny, nx = grid_shape
+        for r in range(ny):
+            for c in range(nx):
+                mid = r * nx + c
+                id_to_grid[mid] = (r, c)
+                grid_to_id[(r, c)] = mid
+    elif nominal_positions:
+        unique_xs = sorted(list({round(float(p[0]), 2) for p in nominal_positions.values()}))
+        unique_ys = sorted(list({round(float(p[1]), 2) for p in nominal_positions.values()}))
+        if len(unique_xs) * len(unique_ys) == len(nominal_positions) and len(unique_xs) > 0 and len(unique_ys) > 0:
+            x_to_c = {x: c for c, x in enumerate(unique_xs)}
+            y_to_r = {y: r for r, y in enumerate(unique_ys)}
+            for mid, pos in nominal_positions.items():
+                r = y_to_r[round(float(pos[1]), 2)]
+                c = x_to_c[round(float(pos[0]), 2)]
+                id_to_grid[mid] = (r, c)
+                grid_to_id[(r, c)] = mid
+
     full_positions: Dict[int, Tuple[float, float]] = {}
     for m, p_nom in nominal_positions.items():
         if m in detected_positions:
             full_positions[m] = detected_positions[m]
         else:
-            p_pred = R @ np.array(p_nom, dtype=np.float64) + t
-            full_positions[m] = (float(p_pred[0]), float(p_pred[1]))
+            # Check if opposite-side neighbors are detected (+-x or +-y or both)
+            assigned = False
+            if m in id_to_grid:
+                r, c = id_to_grid[m]
+                left_id = grid_to_id.get((r, c - 1))
+                right_id = grid_to_id.get((r, c + 1))
+                up_id = grid_to_id.get((r - 1, c))
+                down_id = grid_to_id.get((r + 1, c))
+
+                has_x = (
+                    left_id is not None and left_id in detected_positions and
+                    right_id is not None and right_id in detected_positions
+                )
+                has_y = (
+                    up_id is not None and up_id in detected_positions and
+                    down_id is not None and down_id in detected_positions
+                )
+
+                if has_x and has_y:
+                    mid_x = 0.5 * (np.array(detected_positions[left_id], dtype=np.float64) + np.array(detected_positions[right_id], dtype=np.float64))
+                    mid_y = 0.5 * (np.array(detected_positions[up_id], dtype=np.float64) + np.array(detected_positions[down_id], dtype=np.float64))
+                    p_est = 0.5 * (mid_x + mid_y)
+                    full_positions[m] = (float(p_est[0]), float(p_est[1]))
+                    assigned = True
+                elif has_x:
+                    mid_x = 0.5 * (np.array(detected_positions[left_id], dtype=np.float64) + np.array(detected_positions[right_id], dtype=np.float64))
+                    full_positions[m] = (float(mid_x[0]), float(mid_x[1]))
+                    assigned = True
+                elif has_y:
+                    mid_y = 0.5 * (np.array(detected_positions[up_id], dtype=np.float64) + np.array(detected_positions[down_id], dtype=np.float64))
+                    full_positions[m] = (float(mid_y[0]), float(mid_y[1]))
+                    assigned = True
+
+            if not assigned:
+                p_pred = R @ np.array(p_nom, dtype=np.float64) + t
+                full_positions[m] = (float(p_pred[0]), float(p_pred[1]))
 
     return full_positions, R, t
 
@@ -640,6 +700,7 @@ def solve_global_positions(
         detected_positions=detected_stage_pos,
         nominal_positions=full_nominal,
         default_rotation=default_rotation,
+        grid_shape=grid_shape,
     )
 
     # 3. Step 3: Match calibrated location of grid center to raw grid center

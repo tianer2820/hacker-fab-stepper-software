@@ -1,4 +1,6 @@
-from typing import Any, List, Optional, Tuple
+import os
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 import cv2
 import numpy as np
 
@@ -45,6 +47,63 @@ def detect_markers_in_frame(
     )
     count = len(ids) if ids is not None else 0
     return count, corners, ids
+
+
+def detect_markers_batch(
+    images_or_paths: Sequence[Union[str, np.ndarray]],
+    parameters: Optional[EdgeDetectorParameters] = None,
+    dictionary: Optional[cv2.aruco.Dictionary] = None,
+    max_workers: Optional[int] = None,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
+) -> List[Tuple[int, List[np.ndarray], Optional[np.ndarray], Tuple[int, int]]]:
+    """Detects markers across multiple images in parallel using ThreadPoolExecutor.
+
+    OpenCV image decoding and thresholding/contour operations release the Python GIL,
+    enabling multi-core CPU scaling across threads.
+
+    Args:
+        images_or_paths: List of file paths or numpy image arrays.
+        parameters: Optional EdgeDetectorParameters.
+        dictionary: Optional cv2.aruco.Dictionary.
+        max_workers: Max worker threads (defaults to min(32, (os.cpu_count() or 1) + 4)).
+        progress_cb: Optional callback receiving (completed_count, total_count).
+
+    Returns:
+        List of (count, corners, ids, (width, height)) in the same order as input.
+    """
+    total = len(images_or_paths)
+    if total == 0:
+        return []
+
+    workers = max_workers or min(32, (os.cpu_count() or 1) + 4)
+    results: List[Optional[Tuple[int, List[np.ndarray], Optional[np.ndarray], Tuple[int, int]]]] = [None] * total
+
+    def _process_item(item: Union[str, np.ndarray]) -> Tuple[int, List[np.ndarray], Optional[np.ndarray], Tuple[int, int]]:
+        if isinstance(item, str):
+            img = cv2.imread(item)
+        else:
+            img = item
+        if img is None or getattr(img, "size", 0) == 0:
+            return 0, [], None, (0, 0)
+        h, w = img.shape[:2]
+        cnt, corners, ids = detect_markers_in_frame(img, parameters=parameters, dictionary=dictionary)
+        return cnt, corners, ids, (w, h)
+
+    completed = 0
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(_process_item, item): idx for idx, item in enumerate(images_or_paths)}
+        for future in futures:
+            idx = futures[future]
+            try:
+                results[idx] = future.result()
+            except Exception as e:
+                print(f"[detect_markers_batch] Error processing item {idx}: {e}")
+                results[idx] = (0, [], None, (0, 0))
+            completed += 1
+            if progress_cb is not None:
+                progress_cb(completed, total)
+
+    return [r if r is not None else (0, [], None, (0, 0)) for r in results]
 
 
 def draw_detected_markers(

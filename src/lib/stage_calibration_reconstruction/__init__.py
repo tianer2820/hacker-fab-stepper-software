@@ -1,4 +1,5 @@
 from lib.stage_calibration_reconstruction.detector import (
+    detect_markers_batch,
     detect_markers_in_frame,
     draw_detected_markers,
 )
@@ -19,6 +20,7 @@ from lib.stage_calibration_reconstruction.pipeline import (
 )
 
 __all__ = [
+    "detect_markers_batch",
     "detect_markers_in_frame",
     "draw_detected_markers",
     "estimate_chip_rotation",

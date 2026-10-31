@@ -7,7 +7,10 @@ import cv2
 import numpy as np
 
 from lib.edge_artag import EdgeDetectorParameters
-from lib.stage_calibration_reconstruction.detector import detect_markers_in_frame
+from lib.stage_calibration_reconstruction.detector import (
+    detect_markers_batch,
+    detect_markers_in_frame,
+)
 from lib.stage_calibration_reconstruction.solver import (
     estimate_camera_to_stage_transform,
     estimate_chip_rotation,
@@ -113,21 +116,26 @@ class ReconstructionPipeline:
         if diag.total_images == 0:
             return None, diag, f"No image files found in {self.images_dir}"
 
-        # 1. Detection across all images
+        # 1. Detection across all images (multi-threaded via ThreadPoolExecutor)
         image_detections: List[Tuple[str, List[np.ndarray], np.ndarray, Optional[Tuple[float, float]], Tuple[int, int]]] = []
         all_angles: List[float] = []
         observed_ids: set[int] = set()
 
-        for idx, fname in enumerate(all_files):
-            if progress_cb:
-                progress_cb(0.1 + 0.5 * (idx / diag.total_images), f"Detecting tags in {fname} ({idx + 1}/{diag.total_images})...")
+        image_paths = [os.path.join(self.images_dir, fname) for fname in all_files]
 
-            img_path = os.path.join(self.images_dir, fname)
-            img = cv2.imread(img_path)
-            if img is None:
+        def _primary_prog(completed: int, total: int):
+            if progress_cb and total > 0:
+                progress_cb(0.1 + 0.5 * (completed / total), f"Detecting tags in scan images ({completed}/{total})...")
+
+        batch_results = detect_markers_batch(
+            image_paths,
+            parameters=self.detector_params,
+            progress_cb=_primary_prog,
+        )
+
+        for fname, (cnt, corners, ids, (w, h)) in zip(all_files, batch_results):
+            if w == 0 or h == 0:
                 continue
-
-            h, w = img.shape[:2]
 
             # Determine stage coordinates for this photo
             photo_stage_xy: Optional[Tuple[float, float]] = None
@@ -137,11 +145,6 @@ class ReconstructionPipeline:
                 m_match = re.search(r"_x([+-]?\d+(?:\.\d+)?)_y([+-]?\d+(?:\.\d+)?)", fname)
                 if m_match:
                     photo_stage_xy = (float(m_match.group(1)), float(m_match.group(2)))
-
-            cnt, corners, ids = detect_markers_in_frame(
-                img,
-                parameters=self.detector_params,
-            )
 
             diag.per_image_results[fname] = {
                 "detected_count": cnt,
@@ -250,24 +253,23 @@ class ReconstructionPipeline:
             ])
             diag.complementary_images = len(comp_files)
 
+            comp_paths = [os.path.join(self.complementary_images_dir, f) for f in comp_files]
+
+            def _comp_prog(completed: int, total: int):
+                if progress_cb and total > 0:
+                    prog_c = 0.70 + 0.10 * (completed / total)
+                    progress_cb(prog_c, f"Detecting complementary tags ({completed}/{total})...")
+
+            comp_results = detect_markers_batch(
+                comp_paths,
+                parameters=self.detector_params,
+                progress_cb=_comp_prog,
+            )
+
             comp_detections: List[Tuple[List[np.ndarray], np.ndarray, Tuple[int, int]]] = []
             comp_angles: List[float] = []
 
-            for c_idx, c_fname in enumerate(comp_files):
-                if progress_cb and diag.complementary_images > 0:
-                    prog_c = 0.70 + 0.10 * (c_idx / diag.complementary_images)
-                    progress_cb(prog_c, f"Detecting complementary tags in {c_fname} ({c_idx + 1}/{diag.complementary_images})...")
-
-                c_img_path = os.path.join(self.complementary_images_dir, c_fname)
-                c_img = cv2.imread(c_img_path)
-                if c_img is None:
-                    continue
-
-                c_h, c_w = c_img.shape[:2]
-                c_cnt, c_corners, c_ids = detect_markers_in_frame(
-                    c_img,
-                    parameters=self.detector_params,
-                )
+            for (c_cnt, c_corners, c_ids, (c_w, c_h)) in comp_results:
                 if c_cnt > 0 and c_ids is not None:
                     comp_detections.append((c_corners, c_ids, (c_w, c_h)))
                     c_rot = estimate_chip_rotation(c_corners, c_ids, nominal_dict)
