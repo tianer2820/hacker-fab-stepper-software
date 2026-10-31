@@ -572,19 +572,20 @@ def align_calibrated_origin_to_stage_origin(
     nominal_positions: Optional[Dict[int, Tuple[float, float]]] = None,
     raw_grid_center: Optional[Tuple[float, float]] = None,
     origin_marker_id: int = 0,
+    grid_shape: Optional[Tuple[int, int]] = None,
 ) -> Tuple[Dict[int, Tuple[float, float]], np.ndarray]:
-    """Step 3: Matches the calibrated location of the grid center to the raw grid center.
+    """Step 3: Un-rotates wafer mounting rotation R, and aligns calibrated grid center to raw grid center.
 
-    Instead of anchoring the top-left corner (marker 0) to the stage origin / center,
-    this aligns the center (centroid) of the calibrated grid with the raw grid center.
+    R represents the rigid rotation of the physical wafer mounted on the stage relative to
+    the nominal grid. To remove the mounting angle and align the calibrated stage coordinates
+    with the nominal/camera grid:
+      p_unrot = R_inv @ (p_rel - c_meas) + c_raw
+    where c_meas is the centroid of relative_positions and c_raw is the raw/nominal grid center.
 
-    Args:
-        relative_positions: Relative or stage positions for grid markers.
-        R: 2x2 rotation matrix from Step 2.
-        t: Optional 2D translation vector from Step 2. If provided, applies (R @ p + t) before alignment.
-        nominal_positions: Optional dict of nominal/raw positions to compute the raw grid center.
-        raw_grid_center: Optional explicit (X, Y) coordinate of the raw grid center.
-        origin_marker_id: Kept for backwards compatibility.
+    This ensures that:
+    1. Grid rows are parallel to the camera horizontal axis (0 deg).
+    2. Any stage skew / distortion is strictly preserved in the reconstructed positions.
+    3. The arbitrary angle at which the user taped the wafer to the stage is eliminated.
 
     Returns:
         (calibrated_positions, cam_to_stage_matrix)
@@ -603,28 +604,43 @@ def align_calibrated_origin_to_stage_origin(
             axis=0,
         )
 
-    # 2. Determine calibrated/stage positions before center shift
-    if t is not None:
-        cal_stage: Dict[int, np.ndarray] = {}
-        for m, p_rel in relative_positions.items():
-            cal_stage[m] = R @ np.array(p_rel, dtype=np.float64) + t
-    else:
-        cal_stage = {m: np.array(p, dtype=np.float64) for m, p in relative_positions.items()}
-
-    # 3. Determine calibrated location of grid center C_cal
-    c_cal = np.mean(
-        np.array([cal_stage[m] for m in cal_stage], dtype=np.float64),
+    # 2. Determine centroid of measured relative positions
+    c_meas = np.mean(
+        np.array([relative_positions[m] for m in relative_positions], dtype=np.float64),
         axis=0,
     )
 
-    # 4. Shift so that calibrated grid center matches raw grid center
-    shift = c_raw - c_cal
-    calibrated_positions: Dict[int, Tuple[float, float]] = {}
-    for m, p in cal_stage.items():
-        p_cal = p + shift
-        calibrated_positions[m] = (float(p_cal[0]), float(p_cal[1]))
+    # 3. Determine alignment rotation to eliminate wafer mount angle:
+    # If a 2D grid is present, align the grid rows strictly to horizontal (0 deg)
+    row_angles = []
+    if grid_shape is not None:
+        ny, nx = grid_shape
+        for r in range(ny):
+            for c in range(nx - 1):
+                m_l = r * nx + c
+                m_r = r * nx + (c + 1)
+                if m_l in relative_positions and m_r in relative_positions:
+                    dx = relative_positions[m_r][0] - relative_positions[m_l][0]
+                    dy = relative_positions[m_r][1] - relative_positions[m_l][1]
+                    if (dx ** 2 + dy ** 2) > 1e-4:
+                        row_angles.append(np.arctan2(dy, dx))
 
-    cam_to_stage_matrix = R.copy()
+    if row_angles:
+        theta_x = float(np.median(row_angles))
+        c_x, s_x = np.cos(theta_x), np.sin(theta_x)
+        R_align = np.array([[c_x, -s_x], [s_x, c_x]], dtype=np.float64)
+    else:
+        R_align = R
+
+    # 4. Un-rotate relative_positions by R_align.T around centroid and align to c_raw
+    R_inv = R_align.T
+    calibrated_positions: Dict[int, Tuple[float, float]] = {}
+    for m, p in relative_positions.items():
+        diff = np.array(p, dtype=np.float64) - c_meas
+        p_unrot = R_inv @ diff + c_raw
+        calibrated_positions[m] = (float(p_unrot[0]), float(p_unrot[1]))
+
+    cam_to_stage_matrix = np.eye(2, dtype=np.float64)
     return calibrated_positions, cam_to_stage_matrix
 
 
@@ -709,13 +725,14 @@ def solve_global_positions(
         grid_shape=grid_shape,
     )
 
-    # 3. Step 3: Match calibrated location of grid center to raw grid center
+    # 3. Step 3: Match calibrated location of grid center to raw grid center and un-rotate wafer mounting angle
     cal_positions, cam_to_stage_mat = align_calibrated_origin_to_stage_origin(
         relative_positions=full_stage_pos,
         R=R,
-        t=None,
+        t=t,
         nominal_positions=full_nominal,
         origin_marker_id=anchor_id,
+        grid_shape=grid_shape,
     )
 
     return cal_positions, cam_to_stage_mat

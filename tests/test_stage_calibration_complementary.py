@@ -242,6 +242,63 @@ class TestStageCalibrationComplementary(unittest.TestCase):
         self.assertAlmostEqual(len_col0, len_col1, places=5)
         self.assertAlmostEqual(len_col0, 1.0, delta=0.05)
 
+    def test_wafer_mounting_angle_unrotated_while_preserving_stage_skew(self):
+        from lib.stage_calibration_reconstruction.solver import solve_global_positions
+
+        grid_shape = (2, 2)
+        step = 1000.0
+        # Nominal orthogonal grid
+        nominal_positions = {
+            0: (0.0, 0.0),
+            1: (step, 0.0),
+            2: (0.0, step),
+            3: (step, step),
+        }
+
+        # Suppose stage has 15 µm skew on row 1:
+        # True stage positions: marker 2 at (0, step), marker 3 at (step + 15, step)
+        stage_skewed = {
+            0: np.array([0.0, 0.0]),
+            1: np.array([step, 0.0]),
+            2: np.array([0.0, step]),
+            3: np.array([step + 15.0, step]),
+        }
+
+        # The wafer was mounted with a 5-degree rotation R_mount relative to the camera/machine
+        ang = np.radians(5.0)
+        c, s = np.cos(ang), np.sin(ang)
+        R_mount = np.array([[c, -s], [s, c]])
+
+        # Observed positions on the mounted wafer
+        c_raw = np.array([500.0, 500.0])
+        observed_positions = {}
+        for m, pt in stage_skewed.items():
+            p_rot = R_mount @ (pt - c_raw) + c_raw + np.array([120.0, -80.0])
+            observed_positions[m] = (float(p_rot[0]), float(p_rot[1]))
+
+        # Reconstruct global positions
+        cal_positions, cam_mat = solve_global_positions(
+            grid_shape=grid_shape,
+            measurements=[],
+            anchor_id=0,
+            anchor_pos=(0.0, 0.0),
+            nominal_positions=nominal_positions,
+            observed_positions=observed_positions,
+            step_distance=step,
+        )
+
+        # 1. Grid rows must be horizontal (0 deg tilt):
+        # Y coordinate difference between marker 0 and marker 1 should be zero
+        dy_row0 = cal_positions[1][1] - cal_positions[0][1]
+        self.assertAlmostEqual(dy_row0, 0.0, places=3)
+
+        # 2. Skew of 15 µm between row 0 and row 1 must be strictly preserved:
+        width_row0 = cal_positions[1][0] - cal_positions[0][0]
+        width_row1 = cal_positions[3][0] - cal_positions[2][0]
+        self.assertAlmostEqual(width_row0, 1000.0, places=2)
+        self.assertAlmostEqual(width_row1, 1015.0, places=2)
+        self.assertAlmostEqual(width_row1 - width_row0, 15.0, places=2)
+
 
 if __name__ == "__main__":
     unittest.main()
