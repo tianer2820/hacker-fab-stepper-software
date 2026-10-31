@@ -168,6 +168,14 @@ class MachineConfigTabWidget(QScrollArea):
         self.spin_camera_pixel_size.valueChanged.connect(self._on_ui_changed)
         stage_cal_layout.addRow("Camera Pixel Size:", self.spin_camera_pixel_size)
 
+        self.spin_stage_rotation = QDoubleSpinBox()
+        self.spin_stage_rotation.setRange(-180.0, 180.0)
+        self.spin_stage_rotation.setDecimals(3)
+        self.spin_stage_rotation.setSingleStep(0.1)
+        self.spin_stage_rotation.setSuffix(" °")
+        self.spin_stage_rotation.valueChanged.connect(self._on_ui_changed)
+        stage_cal_layout.addRow("Additional Stage Rotation:", self.spin_stage_rotation)
+
         cal_btn_row = QHBoxLayout()
         self.btn_apply_stage_cal = QPushButton("Load / Apply Calibration")
         self.btn_apply_stage_cal.clicked.connect(self._on_apply_stage_cal_clicked)
@@ -238,6 +246,7 @@ class MachineConfigTabWidget(QScrollArea):
             sc = config.stage_calibration
             self.txt_cal_file.setText(sc.calibration_file_path)
             self.spin_camera_pixel_size.setValue(sc.camera_pixel_size)
+            self.spin_stage_rotation.setValue(sc.additional_stage_rotation_deg)
 
             # Populate stages table
             self._populate_stages_table(config.autofocus.stages)
@@ -312,6 +321,11 @@ class MachineConfigTabWidget(QScrollArea):
 
         cfg.stage_calibration.calibration_file_path = self.txt_cal_file.text().strip()
         cfg.stage_calibration.camera_pixel_size = self.spin_camera_pixel_size.value()
+        cfg.stage_calibration.additional_stage_rotation_deg = self.spin_stage_rotation.value()
+        if self.engine.stage is not None:
+            cal = self.engine.stage.get_calibration()
+            if cal is not None:
+                cal.set_additional_rotation(cfg.stage_calibration.additional_stage_rotation_deg)
         if self.engine.project is not None:
             self.engine.project.invalidate_all_tile_caches()
 
@@ -353,6 +367,9 @@ class MachineConfigTabWidget(QScrollArea):
         try:
             from stage_control.calibration import StageCalibration
             cal = StageCalibration.load_from_json(path)
+            rot_deg = self.spin_stage_rotation.value()
+            if abs(rot_deg) > 1e-6:
+                cal.set_additional_rotation(rot_deg)
             if self.engine.stage is not None:
                 self.engine.stage.set_calibration(cal)
             self._refresh_calibration_status()

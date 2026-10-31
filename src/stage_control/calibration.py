@@ -60,6 +60,7 @@ class StageCalibration:
         calibration_range: Optional[float] = None,
         cam_to_stage_matrix: Optional[Sequence[Sequence[float]] | np.ndarray] = None,
         detected_marker_ids: Optional[Sequence[int] | Set[int]] = None,
+        additional_rotation_deg: float = 0.0,
     ):
         self.grid_shape = (int(grid_shape[0]), int(grid_shape[1]))
         assert self.grid_shape[0] >= 1 and self.grid_shape[1] >= 1, 'Calibration grid must be at least 1x1'
@@ -70,15 +71,16 @@ class StageCalibration:
         self.step_distance = float(step_distance) if step_distance is not None else None
         self.calibration_range = float(calibration_range) if calibration_range is not None else None
         self.detected_marker_ids: Set[int] = set(detected_marker_ids) if detected_marker_ids is not None else set()
+        self.additional_rotation_deg: float = float(additional_rotation_deg)
+
         if cam_to_stage_matrix is not None:
-            self.cam_to_stage_matrix: Optional[np.ndarray] = np.array(cam_to_stage_matrix, dtype=np.float64)
-            try:
-                self._stage_to_cam_matrix: Optional[np.ndarray] = np.linalg.inv(self.cam_to_stage_matrix)
-            except np.linalg.LinAlgError:
-                self._stage_to_cam_matrix = None
+            self._base_cam_to_stage_matrix: Optional[np.ndarray] = np.array(cam_to_stage_matrix, dtype=np.float64)
         else:
-            self.cam_to_stage_matrix = None
-            self._stage_to_cam_matrix = None
+            self._base_cam_to_stage_matrix = None
+
+        self.cam_to_stage_matrix: Optional[np.ndarray] = None
+        self._stage_to_cam_matrix: Optional[np.ndarray] = None
+        self._update_effective_matrices()
 
         self._ny, self._nx = self.grid_shape
         self._raw_x_grid = np.zeros((self._ny, self._nx), dtype=np.float64)
@@ -93,6 +95,30 @@ class StageCalibration:
         self._chip_z_plane: Optional[Tuple[float, float, float]] = None
 
         self._build_grids()
+
+    def _update_effective_matrices(self):
+        """Updates effective cam_to_stage_matrix and _stage_to_cam_matrix including additional_rotation_deg."""
+        if self._base_cam_to_stage_matrix is not None:
+            if abs(self.additional_rotation_deg) > 1e-6:
+                rad = np.radians(self.additional_rotation_deg)
+                c_a, s_a = np.cos(rad), np.sin(rad)
+                R_extra = np.array([[c_a, -s_a], [s_a, c_a]], dtype=np.float64)
+                self.cam_to_stage_matrix = R_extra @ self._base_cam_to_stage_matrix
+            else:
+                self.cam_to_stage_matrix = self._base_cam_to_stage_matrix.copy()
+
+            try:
+                self._stage_to_cam_matrix = np.linalg.inv(self.cam_to_stage_matrix)
+            except np.linalg.LinAlgError:
+                self._stage_to_cam_matrix = None
+        else:
+            self.cam_to_stage_matrix = None
+            self._stage_to_cam_matrix = None
+
+    def set_additional_rotation(self, deg: float):
+        """Updates additional stage rotation angle (degrees) and recomputes effective transform matrices."""
+        self.additional_rotation_deg = float(deg)
+        self._update_effective_matrices()
 
     def _build_grids(self):
         """Populates grid matrices from calibration points."""
@@ -329,6 +355,8 @@ class StageCalibration:
         """Returns True if XY coordinates contain measured optical correction, False if identity (Z-leveling only)."""
         if not self.points:
             return False
+        if self.cam_to_stage_matrix is not None and not np.allclose(self.cam_to_stage_matrix, np.eye(2), atol=1e-4):
+            return True
         return any(
             abs(p.corr_xy[0] - p.raw_xy[0]) > 1e-4 or abs(p.corr_xy[1] - p.raw_xy[1]) > 1e-4
             for p in self.points
@@ -345,7 +373,8 @@ class StageCalibration:
             "grid_shape": list(self.grid_shape),
             "step_distance": self.step_distance,
             "calibration_range": self.calibration_range,
-            "cam_to_stage_matrix": self.cam_to_stage_matrix.tolist() if self.cam_to_stage_matrix is not None else None,
+            "cam_to_stage_matrix": self._base_cam_to_stage_matrix.tolist() if self._base_cam_to_stage_matrix is not None else (self.cam_to_stage_matrix.tolist() if self.cam_to_stage_matrix is not None else None),
+            "additional_rotation_deg": self.additional_rotation_deg,
             "detected_marker_ids": sorted(list(self.detected_marker_ids)) if self.detected_marker_ids else None,
             "bounds_raw": {
                 "x_min": float(np.min(self._raw_x_grid)) if self._raw_x_grid.size > 0 else 0.0,
@@ -372,6 +401,7 @@ class StageCalibration:
         step_distance = data.get("step_distance")
         calibration_range = data.get("calibration_range")
         cam_to_stage_matrix = data.get("cam_to_stage_matrix")
+        additional_rotation_deg = float(data.get("additional_rotation_deg", 0.0))
         detected_marker_ids = data.get("detected_marker_ids")
 
         return cls(
@@ -384,4 +414,5 @@ class StageCalibration:
             calibration_range=calibration_range,
             cam_to_stage_matrix=cam_to_stage_matrix,
             detected_marker_ids=detected_marker_ids,
+            additional_rotation_deg=additional_rotation_deg,
         )

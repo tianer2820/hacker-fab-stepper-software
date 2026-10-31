@@ -57,6 +57,7 @@ class PipelineWorker(QThread):
         pixel_size: float,
         params: EdgeDetectorParameters,
         complementary_images_dir: Optional[str] = None,
+        additional_stage_rotation_deg: float = 0.0,
     ):
         super().__init__()
         self.images_dir = images_dir
@@ -64,6 +65,7 @@ class PipelineWorker(QThread):
         self.pixel_size = pixel_size
         self.params = params
         self.complementary_images_dir = complementary_images_dir
+        self.additional_stage_rotation_deg = float(additional_stage_rotation_deg)
 
     def run(self):
         pipeline = ReconstructionPipeline(
@@ -72,6 +74,7 @@ class PipelineWorker(QThread):
             camera_pixel_size=self.pixel_size,
             detector_params=self.params,
             complementary_images_dir=self.complementary_images_dir,
+            additional_stage_rotation_deg=self.additional_stage_rotation_deg,
         )
         cal, diag, err = pipeline.run(
             progress_cb=lambda pct, msg: self.progress_updated.emit(pct, msg)
@@ -165,6 +168,18 @@ class StageCalibrationInspectorWindow(QMainWindow):
         self.spin_pixel_size.setValue(float(camera_pixel_size))
         self.spin_pixel_size.setSingleStep(0.1)
         row2.addWidget(self.spin_pixel_size)
+
+        init_rot = 0.0
+        if self.engine is not None and getattr(self.engine, "machine_config", None) is not None:
+            init_rot = getattr(self.engine.machine_config.stage_calibration, "additional_stage_rotation_deg", 0.0)
+
+        row2.addWidget(QLabel("Stage Rot (°):"))
+        self.spin_stage_rotation = QDoubleSpinBox()
+        self.spin_stage_rotation.setRange(-180.0, 180.0)
+        self.spin_stage_rotation.setValue(float(init_rot))
+        self.spin_stage_rotation.setDecimals(3)
+        self.spin_stage_rotation.setSingleStep(0.1)
+        row2.addWidget(self.spin_stage_rotation)
 
         top_layout.addLayout(row2)
         main_layout.addWidget(top_bar)
@@ -605,6 +620,7 @@ class StageCalibrationInspectorWindow(QMainWindow):
             pixel_size=pixel_size,
             params=params,
             complementary_images_dir=comp_dir,
+            additional_stage_rotation_deg=float(self.spin_stage_rotation.value()),
         )
         self._worker_thread.progress_updated.connect(self._on_worker_progress)
         self._worker_thread.finished_reconstruction.connect(self._on_worker_finished)

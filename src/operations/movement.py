@@ -1,5 +1,5 @@
 
-from time import time
+import time
 from core.operation import Operation, ExecutionContext
 from typing import Callable, Optional
 

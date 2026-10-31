@@ -49,12 +49,14 @@ class ReconstructionPipeline:
         camera_pixel_size: float = 1.0,
         detector_params: Optional[EdgeDetectorParameters] = None,
         complementary_images_dir: Optional[str] = None,
+        additional_stage_rotation_deg: float = 0.0,
     ):
         self.images_dir = images_dir
         self.stage1_json_path = stage1_json_path
         self.camera_pixel_size = float(camera_pixel_size)
         self.detector_params = detector_params
         self.complementary_images_dir = complementary_images_dir
+        self.additional_stage_rotation_deg = float(additional_stage_rotation_deg)
 
     def run(
         self,
@@ -201,6 +203,12 @@ class ReconstructionPipeline:
             multi_frame_observations=multi_frame_obs,
             default_rotation=theta,
         )
+
+        if abs(self.additional_stage_rotation_deg) > 1e-6:
+            rad = np.radians(self.additional_stage_rotation_deg)
+            c_a, s_a = np.cos(rad), np.sin(rad)
+            R_extra = np.array([[c_a, -s_a], [s_a, c_a]], dtype=np.float64)
+            T_cam_to_stage = R_extra @ T_cam_to_stage
 
         # 4. Transform detected tags into actual stage space
         observed_stage_positions: Dict[int, Tuple[float, float]] = {}
@@ -379,7 +387,7 @@ class ReconstructionPipeline:
             stage_type=s1_data.get("stage_type", ""),
             step_distance=step_dist,
             calibration_range=float(s1_data.get("calibration_range", 10000.0)),
-            cam_to_stage_matrix=global_rot_mat,
+            cam_to_stage_matrix=T_cam_to_stage,
             detected_marker_ids=observed_ids,
         )
 
