@@ -24,6 +24,10 @@ class ReconstructionDiagnostics:
     total_tag_detections: int = 0
     unique_tags_found: int = 0
     nominal_tags_count: int = 0
+    primary_pairwise_constraints: int = 0
+    complementary_images: int = 0
+    complementary_pairwise_constraints: int = 0
+    complementary_relative_rotation_deg: float = 0.0
     total_pairwise_constraints: int = 0
     estimated_rotation_deg: float = 0.0
     mean_residual_um: float = 0.0
@@ -41,11 +45,13 @@ class ReconstructionPipeline:
         stage1_json_path: str,
         camera_pixel_size: float = 1.0,
         detector_params: Optional[EdgeDetectorParameters] = None,
+        complementary_images_dir: Optional[str] = None,
     ):
         self.images_dir = images_dir
         self.stage1_json_path = stage1_json_path
         self.camera_pixel_size = float(camera_pixel_size)
         self.detector_params = detector_params
+        self.complementary_images_dir = complementary_images_dir
 
     def run(
         self,
@@ -233,7 +239,80 @@ class ReconstructionPipeline:
                     ds_y = T_cam_to_stage[1, 0] * dc_x + T_cam_to_stage[1, 1] * dc_y
                     stage_measurements.append((id_a, id_b, float(ds_x), float(ds_y)))
 
+        diag.primary_pairwise_constraints = len(stage_measurements)
         diag.total_pairwise_constraints = len(stage_measurements)
+
+        # 4b. Process optional complementary images directory to extract additional relative constraints
+        if self.complementary_images_dir and os.path.isdir(self.complementary_images_dir):
+            comp_files = sorted([
+                f for f in os.listdir(self.complementary_images_dir)
+                if os.path.splitext(f.lower())[1] in valid_exts
+            ])
+            diag.complementary_images = len(comp_files)
+
+            comp_detections: List[Tuple[List[np.ndarray], np.ndarray, Tuple[int, int]]] = []
+            comp_angles: List[float] = []
+
+            for c_idx, c_fname in enumerate(comp_files):
+                if progress_cb and diag.complementary_images > 0:
+                    prog_c = 0.70 + 0.10 * (c_idx / diag.complementary_images)
+                    progress_cb(prog_c, f"Detecting complementary tags in {c_fname} ({c_idx + 1}/{diag.complementary_images})...")
+
+                c_img_path = os.path.join(self.complementary_images_dir, c_fname)
+                c_img = cv2.imread(c_img_path)
+                if c_img is None:
+                    continue
+
+                c_h, c_w = c_img.shape[:2]
+                c_cnt, c_corners, c_ids = detect_markers_in_frame(
+                    c_img,
+                    parameters=self.detector_params,
+                )
+                if c_cnt > 0 and c_ids is not None:
+                    comp_detections.append((c_corners, c_ids, (c_w, c_h)))
+                    c_rot = estimate_chip_rotation(c_corners, c_ids, nominal_dict)
+                    if c_rot is not None:
+                        comp_angles.append(c_rot)
+
+            if comp_detections:
+                theta_comp = float(np.median(comp_angles)) if comp_angles else theta
+                # Relative rotation between primary scan chip orientation and complementary scan chip orientation
+                delta_theta = theta - theta_comp
+                diag.complementary_relative_rotation_deg = float(np.degrees(delta_theta))
+
+                c_cos = np.cos(delta_theta)
+                c_sin = np.sin(delta_theta)
+                R_delta = np.array([[c_cos, -c_sin], [c_sin, c_cos]], dtype=np.float64)
+
+                # Composite rotation mapping complementary camera displacement vectors into original stage space
+                T_comp_to_stage = T_cam_to_stage @ R_delta
+
+                comp_constraints_count = 0
+                for c_corners, c_ids, (c_w, c_h) in comp_detections:
+                    c_centers_in_frame: Dict[int, Tuple[float, float]] = {}
+                    for idx_m, mid_val in enumerate(c_ids.flatten()):
+                        m_int = int(mid_val)
+                        if m_int in nominal_dict:
+                            pts = c_corners[idx_m].reshape(-1, 2)
+                            c_px = np.mean(pts, axis=0)
+                            off_x_um = float(c_px[0] - (c_w / 2.0)) * self.camera_pixel_size
+                            off_y_um = float(c_px[1] - (c_h / 2.0)) * self.camera_pixel_size
+                            c_centers_in_frame[m_int] = (off_x_um, off_y_um)
+
+                    c_m_ids = sorted(list(c_centers_in_frame.keys()))
+                    for i in range(len(c_m_ids)):
+                        for j in range(i + 1, len(c_m_ids)):
+                            id_a = c_m_ids[i]
+                            id_b = c_m_ids[j]
+                            dc_x = c_centers_in_frame[id_b][0] - c_centers_in_frame[id_a][0]
+                            dc_y = c_centers_in_frame[id_b][1] - c_centers_in_frame[id_a][1]
+                            ds_x = T_comp_to_stage[0, 0] * dc_x + T_comp_to_stage[0, 1] * dc_y
+                            ds_y = T_comp_to_stage[1, 0] * dc_x + T_comp_to_stage[1, 1] * dc_y
+                            stage_measurements.append((id_a, id_b, float(ds_x), float(ds_y)))
+                            comp_constraints_count += 1
+
+                diag.complementary_pairwise_constraints = comp_constraints_count
+                diag.total_pairwise_constraints = len(stage_measurements)
 
         if progress_cb:
             progress_cb(0.8, "Solving global coordinates via Least Squares...")

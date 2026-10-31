@@ -56,12 +56,14 @@ class PipelineWorker(QThread):
         stage1_json: str,
         pixel_size: float,
         params: EdgeDetectorParameters,
+        complementary_images_dir: Optional[str] = None,
     ):
         super().__init__()
         self.images_dir = images_dir
         self.stage1_json = stage1_json
         self.pixel_size = pixel_size
         self.params = params
+        self.complementary_images_dir = complementary_images_dir
 
     def run(self):
         pipeline = ReconstructionPipeline(
@@ -69,6 +71,7 @@ class PipelineWorker(QThread):
             stage1_json_path=self.stage1_json,
             camera_pixel_size=self.pixel_size,
             detector_params=self.params,
+            complementary_images_dir=self.complementary_images_dir,
         )
         cal, diag, err = pipeline.run(
             progress_cb=lambda pct, msg: self.progress_updated.emit(pct, msg)
@@ -132,6 +135,20 @@ class StageCalibrationInspectorWindow(QMainWindow):
         self.btn_reload_dir.clicked.connect(lambda: self._load_images_directory(self.txt_images_dir.text().strip()))
         row1.addWidget(self.btn_reload_dir)
         top_layout.addLayout(row1)
+
+        # Row 1b: Complementary images folder (optional)
+        row1b = QHBoxLayout()
+        row1b.addWidget(QLabel("Complementary Photos (Optional):"))
+        self.txt_comp_images_dir = QLineEdit()
+        self.txt_comp_images_dir.setPlaceholderText("Optional directory with additional photos of the same chip...")
+        row1b.addWidget(self.txt_comp_images_dir, 1)
+        self.btn_browse_comp_dir = QPushButton("Browse...")
+        self.btn_browse_comp_dir.clicked.connect(self._on_browse_comp_images_dir)
+        row1b.addWidget(self.btn_browse_comp_dir)
+        self.btn_clear_comp_dir = QPushButton("Clear")
+        self.btn_clear_comp_dir.clicked.connect(lambda: self.txt_comp_images_dir.clear())
+        row1b.addWidget(self.btn_clear_comp_dir)
+        top_layout.addLayout(row1b)
 
         # Row 2: Stage 1 JSON + Camera pixel size + Flip H
         row2 = QHBoxLayout()
@@ -483,6 +500,15 @@ class StageCalibrationInspectorWindow(QMainWindow):
             self.txt_images_dir.setText(path)
             self._load_images_directory(path)
 
+    def _on_browse_comp_images_dir(self):
+        path = QFileDialog.getExistingDirectory(
+            self,
+            "Select Complementary Photos Folder (Optional)",
+            self.txt_comp_images_dir.text() or self.txt_images_dir.text(),
+        )
+        if path:
+            self.txt_comp_images_dir.setText(path)
+
     def _on_browse_stage1_json(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Select Stage 1 Calibration JSON", self.txt_stage1_json.text(), "JSON Files (*.json)"
@@ -550,10 +576,15 @@ class StageCalibrationInspectorWindow(QMainWindow):
 
     def _on_reprocess_all_clicked(self):
         images_dir = self.txt_images_dir.text().strip()
+        comp_dir = self.txt_comp_images_dir.text().strip() or None
         stage1_json = self.txt_stage1_json.text().strip()
 
         if not images_dir or not os.path.isdir(images_dir):
             QMessageBox.warning(self, "Invalid Directory", "Please select a valid Scanned Photos folder.")
+            return
+
+        if comp_dir and not os.path.isdir(comp_dir):
+            QMessageBox.warning(self, "Invalid Directory", "Complementary folder does not exist or is not a directory.")
             return
 
         if not stage1_json or not os.path.exists(stage1_json):
@@ -573,6 +604,7 @@ class StageCalibrationInspectorWindow(QMainWindow):
             stage1_json=stage1_json,
             pixel_size=pixel_size,
             params=params,
+            complementary_images_dir=comp_dir,
         )
         self._worker_thread.progress_updated.connect(self._on_worker_progress)
         self._worker_thread.finished_reconstruction.connect(self._on_worker_finished)
@@ -608,7 +640,12 @@ class StageCalibrationInspectorWindow(QMainWindow):
 
         # Update diagnostics display
         self.lbl_diag_tags.setText(f"Unique Tags: {diag.unique_tags_found} / {diag.nominal_tags_count}")
-        self.lbl_diag_constraints.setText(f"Pairwise Constraints: {diag.total_pairwise_constraints}")
+        if diag.complementary_pairwise_constraints > 0:
+            self.lbl_diag_constraints.setText(
+                f"Pairwise Constraints: {diag.total_pairwise_constraints} ({diag.primary_pairwise_constraints} primary + {diag.complementary_pairwise_constraints} comp, rot: {diag.complementary_relative_rotation_deg:.2f}°)"
+            )
+        else:
+            self.lbl_diag_constraints.setText(f"Pairwise Constraints: {diag.total_pairwise_constraints}")
         self.lbl_diag_rot.setText(f"Wafer Rotation: {diag.estimated_rotation_deg:.3f}°")
         self.lbl_diag_residual.setText(f"Residual Mean: {diag.mean_residual_um:.2f} µm (Max: {diag.max_residual_um:.2f} µm)")
 

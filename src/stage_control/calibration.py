@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 import json
 import os
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 import numpy as np
 
 
@@ -62,7 +62,7 @@ class StageCalibration:
         detected_marker_ids: Optional[Sequence[int] | Set[int]] = None,
     ):
         self.grid_shape = (int(grid_shape[0]), int(grid_shape[1]))
-        assert self.grid_shape[0] > 1 and self.grid_shape[1] > 1, 'Calibration grid must be at least 2x2'
+        assert self.grid_shape[0] >= 1 and self.grid_shape[1] >= 1, 'Calibration grid must be at least 1x1'
         self.points = points
         self.stage_type = stage_type
         self.timestamp = timestamp or datetime.now().isoformat()
@@ -292,6 +292,37 @@ class StageCalibration:
             'z': corr_z + z_surf,
         }
 
+
+    def to_raw(
+        self,
+        coords: Union[Dict[str, float], Tuple[float, float, float], List[float]],
+        z_calib_only: bool = False,
+    ) -> Dict[str, float]:
+        """Convenience alias for corr_to_raw accepting dict, tuple, or list."""
+        if isinstance(coords, dict):
+            c_list = [float(coords.get("x", 0.0)), float(coords.get("y", 0.0)), float(coords.get("z", 0.0))]
+        else:
+            c_list = [float(coords[0]), float(coords[1]), float(coords[2])]
+        return self.corr_to_raw(c_list, z_calib_only=z_calib_only)
+
+    def to_corr(
+        self,
+        coords: Union[Dict[str, float], Tuple[float, float, float], List[float]],
+    ) -> Tuple[float, float, float]:
+        """Translates raw coordinates (x_raw, y_raw, z_raw) to corrected coordinates."""
+        if isinstance(coords, dict):
+            rx = float(coords.get("x", 0.0))
+            ry = float(coords.get("y", 0.0))
+            rz = float(coords.get("z", 0.0))
+        else:
+            rx = float(coords[0])
+            ry = float(coords[1])
+            rz = float(coords[2])
+
+        cx, cy = self.forward_map_xy(rx, ry)
+        z_surf = self.get_z_offset_raw(rx, ry)
+        cz = rz - z_surf
+        return (cx, cy, cz)
 
     @property
     def has_xy_calibration(self) -> bool:
