@@ -416,6 +416,105 @@ class TestStageCalibrationComplementary(unittest.TestCase):
             if os.path.exists(temp_path):
                 os.remove(temp_path)
 
+    def test_chip_rotation_removed_while_preserving_camera_rotation(self):
+        """Tests that a wafer mounting rotation (e.g. 2.6 deg) is completely un-rotated
+        from the calibration grid output, so manual additional_stage_rotation can remain 0,
+        while the physical ~90 deg camera-to-stage rotation is strictly preserved.
+        """
+        from lib.stage_calibration_reconstruction.solver import solve_global_positions
+        from stage_control.calibration import StageCalibration, StageCalibrationPoint
+
+        # 1. 3x3 nominal grid, 1000 um spacing
+        nominal = {
+            r * 3 + c: (float(c * 1000.0), float(r * 1000.0))
+            for r in range(3)
+            for c in range(3)
+        }
+
+        # 2. Wafer is taped on the stage with a 2.6 degree rotation
+        theta_chip = np.radians(2.6)
+        c_th, s_th = np.cos(theta_chip), np.sin(theta_chip)
+        R_chip = np.array([[c_th, -s_th], [s_th, c_th]], dtype=np.float64)
+        t_chip = np.array([500.0, -300.0], dtype=np.float64)
+
+        # Observed stage positions of detected markers have this 2.6 deg tilt
+        obs_stage_pos = {}
+        for mid, p_nom in nominal.items():
+            p_s = R_chip @ np.array(p_nom, dtype=np.float64) + t_chip
+            obs_stage_pos[mid] = (float(p_s[0]), float(p_s[1]))
+
+        # 3. Solve global calibrated positions
+        cal_positions, R_solved = solve_global_positions(
+            grid_shape=(3, 3),
+            measurements=[],
+            anchor_id=0,
+            anchor_pos=(0.0, 0.0),
+            nominal_positions=nominal,
+            observed_positions=obs_stage_pos,
+            step_distance=1000.0,
+            default_rotation=theta_chip,
+        )
+
+        # 4. Verify that the 2.6 deg rotation is COMPLETELY REMOVED from cal_positions:
+        # Every horizontal neighbor vector must be [1000.0, 0.0] (0 deg tilt)
+        for r in range(3):
+            for c in range(2):
+                p_left = np.array(cal_positions[r * 3 + c])
+                p_right = np.array(cal_positions[r * 3 + (c + 1)])
+                dp = p_right - p_left
+                self.assertAlmostEqual(dp[0], 1000.0, places=3)
+                self.assertAlmostEqual(dp[1], 0.0, places=3)
+
+        # Every vertical neighbor vector must be [0.0, 1000.0] (90 deg to horizontal)
+        for r in range(2):
+            for c in range(3):
+                p_top = np.array(cal_positions[r * 3 + c])
+                p_bottom = np.array(cal_positions[(r + 1) * 3 + c])
+                dp = p_bottom - p_top
+                self.assertAlmostEqual(dp[0], 0.0, places=3)
+                self.assertAlmostEqual(dp[1], 1000.0, places=3)
+
+        # 5. Build StageCalibration with cal_positions as corr_xy and a 90 deg camera-to-stage matrix
+        cal_points = []
+        for r in range(3):
+            for c in range(3):
+                mid = r * 3 + c
+                cal_points.append(
+                    StageCalibrationPoint(
+                        grid_index=(r, c),
+                        marker_id=mid,
+                        raw_xy=nominal[mid],
+                        corr_xy=cal_positions[mid],
+                        z_focus=0.0,
+                    )
+                )
+
+        # Camera is mounted at ~90 deg relative to stage: [x_s, y_s] = [-y_c, x_c]
+        T_cam_to_stage = np.array([[0.0, -1.0], [1.0, 0.0]], dtype=np.float64)
+
+        cal = StageCalibration(
+            grid_shape=(3, 3),
+            points=cal_points,
+            cam_to_stage_matrix=T_cam_to_stage,
+            additional_rotation_deg=0.0,  # Zero manual rotation!
+        )
+
+        # 6. Verify cam_to_stage_matrix retains the 90 deg rotation
+        np.testing.assert_allclose(cal.cam_to_stage_matrix, T_cam_to_stage, atol=1e-6)
+
+        # 7. Commanded motion along stage X axis (1000 um) requires raw stage movement exactly along X
+        # with NO 2.6 deg deviation!
+        # In optical space, an X stage movement corresponds to [0, 1000] camera shift:
+        # T_cam_to_stage @ [0, 1000] = [-1000, 0]
+        # At target (1000, 1000) vs (2000, 1000) directly in stage corr space:
+        raw_x0, raw_y0 = cal.inverse_map_xy(0.0, -1000.0)
+        raw_x1, raw_y1 = cal.inverse_map_xy(0.0, -2000.0)
+        # Delta raw:
+        d_raw_x = raw_x1 - raw_x0
+        d_raw_y = raw_y1 - raw_y0
+        self.assertAlmostEqual(d_raw_x, 1000.0, places=3)
+        self.assertAlmostEqual(d_raw_y, 0.0, places=3)
+
 
 if __name__ == "__main__":
     unittest.main()

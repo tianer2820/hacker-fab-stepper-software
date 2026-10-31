@@ -583,21 +583,29 @@ def align_calibrated_origin_to_stage_origin(
     raw_grid_center: Optional[Tuple[float, float]] = None,
     origin_marker_id: int = 0,
 ) -> Tuple[Dict[int, Tuple[float, float]], np.ndarray]:
-    """Step 3: Matches the calibrated location of the grid center to the raw grid center.
+    """Step 3: Un-rotates wafer mounting rotation R, and matches calibrated location
+    of grid center to raw grid center.
 
-    Instead of anchoring the top-left corner (marker 0) to the stage origin / center,
-    this aligns the center (centroid) of the calibrated grid with the raw grid center.
+    R represents the rigid rotation of the physical wafer mounted on the stage relative to
+    nominal stage axes. To eliminate the arbitrary mounting angle and align the calibrated stage
+    coordinates with the nominal stage axes (0 deg):
+      p_unrot = R.T @ (p - c_cal) + c_raw
+
+    This ensures that:
+    1. Grid rows are parallel to the stage motor X axis (0 deg).
+    2. Any stage distortion, scale error, or rail non-orthogonality is preserved.
+    3. Commanded stage motion along stage axes will not suffer from wafer mounting tilt.
 
     Args:
         relative_positions: Relative or stage positions for grid markers.
-        R: 2x2 rotation matrix from Step 2.
+        R: 2x2 rotation matrix from Step 2 representing chip rotation on stage.
         t: Optional 2D translation vector from Step 2. If provided, applies (R @ p + t) before alignment.
         nominal_positions: Optional dict of nominal/raw positions to compute the raw grid center.
         raw_grid_center: Optional explicit (X, Y) coordinate of the raw grid center.
         origin_marker_id: Kept for backwards compatibility.
 
     Returns:
-        (calibrated_positions, cam_to_stage_matrix)
+        (calibrated_positions, chip_to_stage_matrix)
     """
     # 1. Determine raw grid center C_raw
     if raw_grid_center is not None:
@@ -627,12 +635,13 @@ def align_calibrated_origin_to_stage_origin(
         axis=0,
     )
 
-    # 4. Shift so that calibrated grid center matches raw grid center
-    shift = c_raw - c_cal
+    # 4. Un-rotate wafer mounting angle R around grid center and shift to match raw grid center
+    R_inv = R.T
     calibrated_positions: Dict[int, Tuple[float, float]] = {}
     for m, p in cal_stage.items():
-        p_cal = p + shift
-        calibrated_positions[m] = (float(p_cal[0]), float(p_cal[1]))
+        diff = p - c_cal
+        p_unrot = R_inv @ diff + c_raw
+        calibrated_positions[m] = (float(p_unrot[0]), float(p_unrot[1]))
 
     cam_to_stage_matrix = R.copy()
     return calibrated_positions, cam_to_stage_matrix
@@ -687,19 +696,11 @@ def solve_global_positions(
 
     obs_pos = observed_positions if observed_positions is not None else {}
 
-    # If no markers were observed at all, fall back to nominal grid with default rotation
+    # If no markers were observed at all, fall back to nominal grid (aligned to stage axes)
     if not obs_ids:
         cos_t, sin_t = np.cos(default_rotation), np.sin(default_rotation)
         R_rot = np.array([[cos_t, -sin_t], [sin_t, cos_t]], dtype=np.float64)
-        c_raw = np.mean(
-            np.array([full_nominal[m] for m in full_nominal], dtype=np.float64),
-            axis=0,
-        )
-        calibrated: Dict[int, Tuple[float, float]] = {}
-        for m, p in full_nominal.items():
-            diff = np.array(p, dtype=np.float64) - c_raw
-            p_rot = R_rot @ diff + c_raw
-            calibrated[m] = (float(p_rot[0]), float(p_rot[1]))
+        calibrated: Dict[int, Tuple[float, float]] = {m: (float(p[0]), float(p[1])) for m, p in full_nominal.items()}
         return calibrated, R_rot
 
     # 1. Step 1: Solve detected markers in stage space directly (NO generated constraints!)

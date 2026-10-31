@@ -555,15 +555,15 @@ class TestStageCalibrationOperations(unittest.TestCase):
                     p_right = np.array(cal_pos[r * 3 + (c + 1)])
                     dist_h = float(np.linalg.norm(p_right - p))
                     self.assertAlmostEqual(dist_h, 1000.0, places=3)
-                    # Vector should be R_true @ [1000, 0]
-                    np.testing.assert_allclose(p_right - p, R_true @ np.array([1000.0, 0.0]), atol=1e-3)
+                    # Vector should be [1000, 0] aligned with stage axes (wafer tilt un-rotated)
+                    np.testing.assert_allclose(p_right - p, np.array([1000.0, 0.0]), atol=1e-3)
                 # Check vertical neighbor
                 if r + 1 < 3:
                     p_down = np.array(cal_pos[(r + 1) * 3 + c])
                     dist_v = float(np.linalg.norm(p_down - p))
                     self.assertAlmostEqual(dist_v, 1000.0, places=3)
-                    # Vector should be R_true @ [0, 1000]
-                    np.testing.assert_allclose(p_down - p, R_true @ np.array([0.0, 1000.0]), atol=1e-3)
+                    # Vector should be [0, 1000] aligned with stage axes (wafer tilt un-rotated)
+                    np.testing.assert_allclose(p_down - p, np.array([0.0, 1000.0]), atol=1e-3)
 
     def test_three_stage_calibration_end_to_end(self):
         from core.operation import ExecutionContext
