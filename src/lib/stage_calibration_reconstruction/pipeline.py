@@ -201,7 +201,7 @@ class ReconstructionPipeline:
             progress_cb(0.65, "Calculating camera-to-stage transformation...")
 
         # 3. Calculate camera-to-stage transform FIRST
-        T_cam_to_stage = estimate_camera_to_stage_transform(
+        T_cam_to_stage_base = estimate_camera_to_stage_transform(
             multi_frame_observations=multi_frame_obs,
             default_rotation=theta,
         )
@@ -216,7 +216,7 @@ class ReconstructionPipeline:
             R_extra = np.array([[c_a, -s_a], [s_a, c_a]], dtype=np.float64)
             M_extra = R_extra @ M_extra
 
-        T_cam_to_stage = M_extra @ T_cam_to_stage
+        T_cam_to_stage = M_extra @ T_cam_to_stage_base
 
         # 4. Transform detected tags into actual stage space
         observed_stage_positions: Dict[int, Tuple[float, float]] = {}
@@ -395,8 +395,10 @@ class ReconstructionPipeline:
             stage_type=s1_data.get("stage_type", ""),
             step_distance=step_dist,
             calibration_range=float(s1_data.get("calibration_range", 10000.0)),
-            cam_to_stage_matrix=T_cam_to_stage,
+            cam_to_stage_matrix=T_cam_to_stage_base,
             detected_marker_ids=observed_ids,
+            additional_rotation_deg=self.additional_stage_rotation_deg,
+            additional_skew=self.additional_stage_skew,
         )
 
         if progress_cb:

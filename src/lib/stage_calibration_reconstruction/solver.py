@@ -118,8 +118,9 @@ def estimate_camera_to_stage_transform(
                     b_x.append(-ds[0])
                     b_y.append(-ds[1])
 
-    # Constrain T_cam_to_stage to rigid rotation + uniform scale (Orthogonal Procrustes)
-    # so that any stage skew cannot be absorbed by the camera-to-stage transform.
+    # Constrain T_cam_to_stage to orthogonal axes (zero skew) while allowing independent
+    # axis scales (s_x, s_y) for X and Y stage motor axes.
+    # This prevents T from absorbing mechanical stage skew while preserving equal movement distance.
     if len(A_rows) >= 2:
         DC = np.array(A_rows, dtype=np.float64)  # (N, 2) camera displacements
         V = np.column_stack([b_x, b_y])         # (N, 2) -ds stage displacements
@@ -127,13 +128,22 @@ def estimate_camera_to_stage_transform(
         if np.linalg.matrix_rank(H) >= 2:
             U, _, Vt = np.linalg.svd(H)
             R = U @ Vt
-            denom = float(np.sum(DC ** 2))
-            if denom > 1e-9:
-                R_DC = (R @ DC.T).T
-                numer = float(np.sum(V * R_DC))
-                scale = numer / denom
-                if scale > 1e-4:
-                    return scale * R
+            r0 = R[0, :]
+            r1 = R[1, :]
+
+            denom_x = float(np.sum((DC @ r0) ** 2))
+            denom_y = float(np.sum((DC @ r1) ** 2))
+            if denom_x > 1e-9 and denom_y > 1e-9:
+                s_x = float(np.sum(V[:, 0] * (DC @ r0)) / denom_x)
+                s_y = float(np.sum(V[:, 1] * (DC @ r1)) / denom_y)
+                if s_x < 0:
+                    s_x = -s_x
+                    r0 = -r0
+                if s_y < 0:
+                    s_y = -s_y
+                    r1 = -r1
+                if s_x > 1e-4 and s_y > 1e-4:
+                    return np.array([s_x * r0, s_y * r1], dtype=np.float64)
 
     # Fallback to default rotation in un-mirrored camera frame
     cos_t = np.cos(default_rotation)

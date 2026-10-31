@@ -211,36 +211,32 @@ class TestStageCalibrationComplementary(unittest.TestCase):
         self.assertAlmostEqual(res_d[0][0], 50.0, places=1)
         self.assertAlmostEqual(res_d[0][1], 100.0, places=1)
 
-    def test_estimate_camera_to_stage_transform_orthogonal_rigid(self):
+    def test_estimate_camera_to_stage_transform_orthogonal_independent_scale(self):
         from lib.stage_calibration_reconstruction.solver import estimate_camera_to_stage_transform
 
-        # Simulate skewed stage observations where motor X and Y are non-orthogonal (e.g. shear of 0.1)
-        # Stage moves:
+        # Simulate skewed stage observations where motor X and Y are non-orthogonal (e.g. shear of 0.05)
+        # and have different scale: X motor is 1.0 um/px, Y motor is 1.1 um/px
         # Move 1: stage moves by (1000, 50) while camera image shifts by (-1000, 0)
-        # Move 2: stage moves by (0, 1000) while camera image shifts by (0, -1000)
-        # Marker 0 observed at stage (0, 0) with cam_offset (0, 0)
-        # Marker 0 observed at stage (1000, 50) with cam_offset (-1000, 0)
-        # Marker 1 observed at stage (0, 0) with cam_offset (0, 0)
-        # Marker 1 observed at stage (0, 1000) with cam_offset (0, -1000)
+        # Move 2: stage moves by (0, 1100) while camera image shifts by (0, -1000)
         obs = [
             (0, (0.0, 0.0), (0.0, 0.0)),
             (0, (1000.0, 50.0), (-1000.0, 0.0)),
             (1, (0.0, 0.0), (0.0, 0.0)),
-            (1, (0.0, 1000.0), (0.0, -1000.0)),
+            (1, (0.0, 1100.0), (0.0, -1000.0)),
         ]
 
         T = estimate_camera_to_stage_transform(obs, default_rotation=0.0)
 
-        # T must be strictly orthogonal (rigid rotation + uniform scale):
-        # 1. Columns must be orthogonal: dot product == 0
-        dot_cols = T[0, 0] * T[0, 1] + T[1, 0] * T[1, 1]
-        self.assertAlmostEqual(dot_cols, 0.0, places=5)
+        # 1. Rows must be strictly orthogonal (zero skew):
+        dot_rows = np.dot(T[0], T[1])
+        self.assertAlmostEqual(dot_rows, 0.0, places=5)
 
-        # 2. Columns must have equal length (isotropic scale):
-        len_col0 = np.hypot(T[0, 0], T[1, 0])
-        len_col1 = np.hypot(T[0, 1], T[1, 1])
-        self.assertAlmostEqual(len_col0, len_col1, places=5)
-        self.assertAlmostEqual(len_col0, 1.0, delta=0.05)
+        # 2. Independent scales: X scale ~ 1.0, Y scale ~ 1.1
+        sx = np.linalg.norm(T[0])
+        sy = np.linalg.norm(T[1])
+        self.assertAlmostEqual(sx, 1.0, delta=0.05)
+        self.assertAlmostEqual(sy, 1.1, delta=0.05)
+        self.assertGreater(sy, sx)
 
     def test_additional_stage_rotation_in_calibration(self):
         from stage_control.calibration import StageCalibration, StageCalibrationPoint
