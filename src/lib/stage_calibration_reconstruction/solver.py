@@ -118,16 +118,22 @@ def estimate_camera_to_stage_transform(
                     b_x.append(-ds[0])
                     b_y.append(-ds[1])
 
-    # If at least 2 independent displacement pairs are available, solve via least squares
+    # Constrain T_cam_to_stage to rigid rotation + uniform scale (Orthogonal Procrustes)
+    # so that any stage skew cannot be absorbed by the camera-to-stage transform.
     if len(A_rows) >= 2:
-        A = np.array(A_rows, dtype=np.float64)
-        if np.linalg.matrix_rank(A) >= 2:
-            row0, _, _, _ = np.linalg.lstsq(A, np.array(b_x, dtype=np.float64), rcond=None)
-            row1, _, _, _ = np.linalg.lstsq(A, np.array(b_y, dtype=np.float64), rcond=None)
-            T_est = np.array([row0, row1], dtype=np.float64)
-            # Check for sanity (determinant should not be near zero)
-            if abs(np.linalg.det(T_est)) > 1e-4:
-                return T_est
+        DC = np.array(A_rows, dtype=np.float64)  # (N, 2) camera displacements
+        V = np.column_stack([b_x, b_y])         # (N, 2) -ds stage displacements
+        H = V.T @ DC                             # (2, 2) covariance matrix
+        if np.linalg.matrix_rank(H) >= 2:
+            U, _, Vt = np.linalg.svd(H)
+            R = U @ Vt
+            denom = float(np.sum(DC ** 2))
+            if denom > 1e-9:
+                R_DC = (R @ DC.T).T
+                numer = float(np.sum(V * R_DC))
+                scale = numer / denom
+                if scale > 1e-4:
+                    return scale * R
 
     # Fallback to default rotation in un-mirrored camera frame
     cos_t = np.cos(default_rotation)

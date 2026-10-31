@@ -170,6 +170,8 @@ class ReconstructionPipeline:
         # 2. Chip orientation estimation from ArUco marker corners
         theta = float(np.median(all_angles)) if all_angles else 0.0
         diag.estimated_rotation_deg = float(np.degrees(theta))
+        primary_u_x = np.array([np.cos(theta), np.sin(theta)], dtype=np.float64)
+        primary_u_y = np.array([-np.sin(theta), np.cos(theta)], dtype=np.float64)
 
         # Collect multi-frame observations for camera-to-stage transform: (marker_id, stage_xy, cam_offset_um)
         multi_frame_obs: List[Tuple[int, Tuple[float, float], Tuple[float, float]]] = []
@@ -218,29 +220,44 @@ class ReconstructionPipeline:
             elif m_id in nominal_pos:
                 observed_stage_positions[m_id] = nominal_pos[m_id]
 
-        # Extract intra-frame pairwise relative measurements directly in stage space
+        # Extract intra-frame pairwise relative measurements using tag intrinsic axes
         stage_measurements: List[Tuple[int, int, float, float]] = []
         for _, corners, ids, photo_stage_xy, (w, h) in image_detections:
-            centers_in_frame: Dict[int, Tuple[float, float]] = {}
+            intra_meas = extract_pairwise_measurements(
+                corners=corners,
+                ids=ids,
+                nominal_dict=nominal_dict,
+                pixel_scale=self.camera_pixel_size,
+            )
+            # Tag intrinsic basis vectors for this frame
+            u_x_list: List[np.ndarray] = []
+            u_y_list: List[np.ndarray] = []
             for idx_m, mid_val in enumerate(ids.flatten()):
                 m_int = int(mid_val)
                 if m_int in nominal_dict:
                     pts = corners[idx_m].reshape(-1, 2)
-                    c_px = np.mean(pts, axis=0)
-                    off_x_um = float(c_px[0] - (w / 2.0)) * self.camera_pixel_size
-                    off_y_um = float(c_px[1] - (h / 2.0)) * self.camera_pixel_size
-                    centers_in_frame[m_int] = (off_x_um, off_y_um)
+                    vx = pts[1] - pts[0]
+                    vy = pts[3] - pts[0]
+                    lx = float(np.linalg.norm(vx))
+                    ly = float(np.linalg.norm(vy))
+                    if lx > 1e-6:
+                        u_x_list.append(vx / lx)
+                    if ly > 1e-6:
+                        u_y_list.append(vy / ly)
 
-            m_ids = sorted(list(centers_in_frame.keys()))
-            for i in range(len(m_ids)):
-                for j in range(i + 1, len(m_ids)):
-                    id_a = m_ids[i]
-                    id_b = m_ids[j]
-                    dc_x = centers_in_frame[id_b][0] - centers_in_frame[id_a][0]
-                    dc_y = centers_in_frame[id_b][1] - centers_in_frame[id_a][1]
-                    ds_x = T_cam_to_stage[0, 0] * dc_x + T_cam_to_stage[0, 1] * dc_y
-                    ds_y = T_cam_to_stage[1, 0] * dc_x + T_cam_to_stage[1, 1] * dc_y
-                    stage_measurements.append((id_a, id_b, float(ds_x), float(ds_y)))
+            if u_x_list and u_y_list:
+                u_x_frame = np.mean(u_x_list, axis=0)
+                u_y_frame = np.mean(u_y_list, axis=0)
+                u_x_frame /= max(float(np.linalg.norm(u_x_frame)), 1e-6)
+                u_y_frame /= max(float(np.linalg.norm(u_y_frame)), 1e-6)
+            else:
+                u_x_frame = primary_u_x
+                u_y_frame = primary_u_y
+
+            for id_a, id_b, dx, dy in intra_meas:
+                d_cam = dx * u_x_frame + dy * u_y_frame
+                ds = T_cam_to_stage @ d_cam
+                stage_measurements.append((id_a, id_b, float(ds[0]), float(ds[1])))
 
         diag.primary_pairwise_constraints = len(stage_measurements)
         diag.total_pairwise_constraints = len(stage_measurements)
@@ -278,40 +295,23 @@ class ReconstructionPipeline:
 
             if comp_detections:
                 theta_comp = float(np.median(comp_angles)) if comp_angles else theta
-                # Relative rotation between primary scan chip orientation and complementary scan chip orientation
                 delta_theta = theta - theta_comp
                 diag.complementary_relative_rotation_deg = float(np.degrees(delta_theta))
 
-                c_cos = np.cos(delta_theta)
-                c_sin = np.sin(delta_theta)
-                R_delta = np.array([[c_cos, -c_sin], [c_sin, c_cos]], dtype=np.float64)
-
-                # Composite rotation mapping complementary camera displacement vectors into original stage space
-                T_comp_to_stage = T_cam_to_stage @ R_delta
-
                 comp_constraints_count = 0
                 for c_corners, c_ids, (c_w, c_h) in comp_detections:
-                    c_centers_in_frame: Dict[int, Tuple[float, float]] = {}
-                    for idx_m, mid_val in enumerate(c_ids.flatten()):
-                        m_int = int(mid_val)
-                        if m_int in nominal_dict:
-                            pts = c_corners[idx_m].reshape(-1, 2)
-                            c_px = np.mean(pts, axis=0)
-                            off_x_um = float(c_px[0] - (c_w / 2.0)) * self.camera_pixel_size
-                            off_y_um = float(c_px[1] - (c_h / 2.0)) * self.camera_pixel_size
-                            c_centers_in_frame[m_int] = (off_x_um, off_y_um)
-
-                    c_m_ids = sorted(list(c_centers_in_frame.keys()))
-                    for i in range(len(c_m_ids)):
-                        for j in range(i + 1, len(c_m_ids)):
-                            id_a = c_m_ids[i]
-                            id_b = c_m_ids[j]
-                            dc_x = c_centers_in_frame[id_b][0] - c_centers_in_frame[id_a][0]
-                            dc_y = c_centers_in_frame[id_b][1] - c_centers_in_frame[id_a][1]
-                            ds_x = T_comp_to_stage[0, 0] * dc_x + T_comp_to_stage[0, 1] * dc_y
-                            ds_y = T_comp_to_stage[1, 0] * dc_x + T_comp_to_stage[1, 1] * dc_y
-                            stage_measurements.append((id_a, id_b, float(ds_x), float(ds_y)))
-                            comp_constraints_count += 1
+                    c_meas = extract_pairwise_measurements(
+                        corners=c_corners,
+                        ids=c_ids,
+                        nominal_dict=nominal_dict,
+                        pixel_scale=self.camera_pixel_size,
+                    )
+                    for id_a, id_b, dx, dy in c_meas:
+                        # Map invariant chip displacement (dx, dy) into primary camera frame and stage frame
+                        d_cam = dx * primary_u_x + dy * primary_u_y
+                        ds = T_cam_to_stage @ d_cam
+                        stage_measurements.append((id_a, id_b, float(ds[0]), float(ds[1])))
+                        comp_constraints_count += 1
 
                 diag.complementary_pairwise_constraints = comp_constraints_count
                 diag.total_pairwise_constraints = len(stage_measurements)
