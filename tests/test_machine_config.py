@@ -33,6 +33,8 @@ class TestMachineConfigDataclass(unittest.TestCase):
         self.assertEqual(cfg.exposure.default_exposure_time_ms, 8000.0)
         self.assertEqual(cfg.stage_calibration.calibration_file_path, "stage_calibration.json")
         self.assertEqual(cfg.stage_calibration.camera_pixel_size, 1.0)
+        self.assertEqual(cfg.stage_calibration.additional_stage_scale_x, 1.0)
+        self.assertEqual(cfg.stage_calibration.additional_stage_scale_y, 1.0)
 
     def test_serialization_and_deserialization(self):
         cfg = MachineConfig(
@@ -124,6 +126,8 @@ class TestMachineConfigUI(unittest.TestCase):
         self.assertEqual(self.tab.table_af_stages.rowCount(), 2)
         self.assertEqual(self.tab.spin_default_exposure.value(), 7500.0)
         self.assertEqual(self.tab.spin_camera_pixel_size.value(), 1.0)
+        self.assertEqual(self.tab.spin_stage_scale_x.value(), 1.0)
+        self.assertEqual(self.tab.spin_stage_scale_y.value(), 1.0)
 
     def test_ui_change_updates_engine_config(self):
         self.tab.spin_uv_offset.setValue(14.2)
@@ -137,6 +141,11 @@ class TestMachineConfigUI(unittest.TestCase):
 
         self.tab.spin_camera_pixel_size.setValue(1.25)
         self.assertEqual(self.engine.machine_config.stage_calibration.camera_pixel_size, 1.25)
+
+        self.tab.spin_stage_scale_x.setValue(1.045)
+        self.tab.spin_stage_scale_y.setValue(0.965)
+        self.assertEqual(self.engine.machine_config.stage_calibration.additional_stage_scale_x, 1.045)
+        self.assertEqual(self.engine.machine_config.stage_calibration.additional_stage_scale_y, 0.965)
 
     def test_add_and_remove_af_stages(self):
         init_count = self.tab.table_af_stages.rowCount()

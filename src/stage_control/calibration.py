@@ -62,6 +62,8 @@ class StageCalibration:
         detected_marker_ids: Optional[Sequence[int] | Set[int]] = None,
         additional_rotation_deg: float = 0.0,
         additional_skew: float = 0.0,
+        additional_scale_x: float = 1.0,
+        additional_scale_y: float = 1.0,
     ):
         self.grid_shape = (int(grid_shape[0]), int(grid_shape[1]))
         assert self.grid_shape[0] >= 1 and self.grid_shape[1] >= 1, 'Calibration grid must be at least 1x1'
@@ -74,6 +76,8 @@ class StageCalibration:
         self.detected_marker_ids: Set[int] = set(detected_marker_ids) if detected_marker_ids is not None else set()
         self.additional_rotation_deg: float = float(additional_rotation_deg)
         self.additional_skew: float = float(additional_skew)
+        self.additional_scale_x: float = float(additional_scale_x)
+        self.additional_scale_y: float = float(additional_scale_y)
 
         if cam_to_stage_matrix is not None:
             self._base_cam_to_stage_matrix: Optional[np.ndarray] = np.array(cam_to_stage_matrix, dtype=np.float64)
@@ -99,9 +103,12 @@ class StageCalibration:
         self._build_grids()
 
     def _update_effective_matrices(self):
-        """Updates effective cam_to_stage_matrix and _stage_to_cam_matrix including additional_rotation_deg and additional_skew."""
+        """Updates effective cam_to_stage_matrix and _stage_to_cam_matrix including additional_rotation_deg, additional_skew, and additional motion scaling."""
         if self._base_cam_to_stage_matrix is not None:
             M_extra = np.eye(2, dtype=np.float64)
+            if abs(self.additional_scale_x - 1.0) > 1e-7 or abs(self.additional_scale_y - 1.0) > 1e-7:
+                S_scale = np.array([[self.additional_scale_x, 0.0], [0.0, self.additional_scale_y]], dtype=np.float64)
+                M_extra = S_scale @ M_extra
             if abs(self.additional_skew) > 1e-9:
                 S_extra = np.array([[1.0, 0.0], [self.additional_skew, 1.0]], dtype=np.float64)
                 M_extra = S_extra @ M_extra
@@ -129,6 +136,22 @@ class StageCalibration:
     def set_additional_skew(self, skew: float):
         """Updates additional stage skew factor (dy/dx) and recomputes effective transform matrices."""
         self.additional_skew = float(skew)
+        self._update_effective_matrices()
+
+    def set_additional_scale(self, scale_x: float, scale_y: float):
+        """Updates additional stage motion scale factors (X, Y) and recomputes effective transform matrices."""
+        self.additional_scale_x = float(scale_x)
+        self.additional_scale_y = float(scale_y)
+        self._update_effective_matrices()
+
+    def set_additional_scale_x(self, scale_x: float):
+        """Updates additional stage motion scale factor for X and recomputes effective transform matrices."""
+        self.additional_scale_x = float(scale_x)
+        self._update_effective_matrices()
+
+    def set_additional_scale_y(self, scale_y: float):
+        """Updates additional stage motion scale factor for Y and recomputes effective transform matrices."""
+        self.additional_scale_y = float(scale_y)
         self._update_effective_matrices()
 
     def _build_grids(self):
@@ -387,6 +410,8 @@ class StageCalibration:
             "cam_to_stage_matrix": self._base_cam_to_stage_matrix.tolist() if self._base_cam_to_stage_matrix is not None else (self.cam_to_stage_matrix.tolist() if self.cam_to_stage_matrix is not None else None),
             "additional_rotation_deg": self.additional_rotation_deg,
             "additional_skew": self.additional_skew,
+            "additional_scale_x": self.additional_scale_x,
+            "additional_scale_y": self.additional_scale_y,
             "detected_marker_ids": sorted(list(self.detected_marker_ids)) if self.detected_marker_ids else None,
             "bounds_raw": {
                 "x_min": float(np.min(self._raw_x_grid)) if self._raw_x_grid.size > 0 else 0.0,
@@ -415,6 +440,8 @@ class StageCalibration:
         cam_to_stage_matrix = data.get("cam_to_stage_matrix")
         additional_rotation_deg = float(data.get("additional_rotation_deg", 0.0))
         additional_skew = float(data.get("additional_skew", 0.0))
+        additional_scale_x = float(data.get("additional_scale_x", data.get("stage_motion_scale_x", 1.0)))
+        additional_scale_y = float(data.get("additional_scale_y", data.get("stage_motion_scale_y", 1.0)))
         detected_marker_ids = data.get("detected_marker_ids")
 
         return cls(
@@ -429,4 +456,6 @@ class StageCalibration:
             detected_marker_ids=detected_marker_ids,
             additional_rotation_deg=additional_rotation_deg,
             additional_skew=additional_skew,
+            additional_scale_x=additional_scale_x,
+            additional_scale_y=additional_scale_y,
         )

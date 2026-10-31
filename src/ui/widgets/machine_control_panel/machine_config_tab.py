@@ -184,6 +184,22 @@ class MachineConfigTabWidget(QScrollArea):
         self.spin_stage_skew.valueChanged.connect(self._on_ui_changed)
         stage_cal_layout.addRow("Additional Stage Skew:", self.spin_stage_skew)
 
+        self.spin_stage_scale_x = QDoubleSpinBox()
+        self.spin_stage_scale_x.setRange(0.1, 10.0)
+        self.spin_stage_scale_x.setDecimals(4)
+        self.spin_stage_scale_x.setSingleStep(0.001)
+        self.spin_stage_scale_x.setValue(1.0)
+        self.spin_stage_scale_x.valueChanged.connect(self._on_ui_changed)
+        stage_cal_layout.addRow("Stage Motion Scale X:", self.spin_stage_scale_x)
+
+        self.spin_stage_scale_y = QDoubleSpinBox()
+        self.spin_stage_scale_y.setRange(0.1, 10.0)
+        self.spin_stage_scale_y.setDecimals(4)
+        self.spin_stage_scale_y.setSingleStep(0.001)
+        self.spin_stage_scale_y.setValue(1.0)
+        self.spin_stage_scale_y.valueChanged.connect(self._on_ui_changed)
+        stage_cal_layout.addRow("Stage Motion Scale Y:", self.spin_stage_scale_y)
+
         cal_btn_row = QHBoxLayout()
         self.btn_apply_stage_cal = QPushButton("Load / Apply Calibration")
         self.btn_apply_stage_cal.clicked.connect(self._on_apply_stage_cal_clicked)
@@ -256,6 +272,8 @@ class MachineConfigTabWidget(QScrollArea):
             self.spin_camera_pixel_size.setValue(sc.camera_pixel_size)
             self.spin_stage_rotation.setValue(sc.additional_stage_rotation_deg)
             self.spin_stage_skew.setValue(sc.additional_stage_skew)
+            self.spin_stage_scale_x.setValue(sc.additional_stage_scale_x)
+            self.spin_stage_scale_y.setValue(sc.additional_stage_scale_y)
 
             # Populate stages table
             self._populate_stages_table(config.autofocus.stages)
@@ -332,11 +350,17 @@ class MachineConfigTabWidget(QScrollArea):
         cfg.stage_calibration.camera_pixel_size = self.spin_camera_pixel_size.value()
         cfg.stage_calibration.additional_stage_rotation_deg = self.spin_stage_rotation.value()
         cfg.stage_calibration.additional_stage_skew = self.spin_stage_skew.value()
+        cfg.stage_calibration.additional_stage_scale_x = self.spin_stage_scale_x.value()
+        cfg.stage_calibration.additional_stage_scale_y = self.spin_stage_scale_y.value()
         if self.engine.stage is not None:
             cal = self.engine.stage.get_calibration()
             if cal is not None:
                 cal.set_additional_rotation(cfg.stage_calibration.additional_stage_rotation_deg)
                 cal.set_additional_skew(cfg.stage_calibration.additional_stage_skew)
+                cal.set_additional_scale(
+                    cfg.stage_calibration.additional_stage_scale_x,
+                    cfg.stage_calibration.additional_stage_scale_y,
+                )
         if self.engine.project is not None:
             self.engine.project.invalidate_all_tile_caches()
 
@@ -384,6 +408,10 @@ class MachineConfigTabWidget(QScrollArea):
             skew = self.spin_stage_skew.value()
             if abs(skew) > 1e-9:
                 cal.set_additional_skew(skew)
+            scale_x = self.spin_stage_scale_x.value()
+            scale_y = self.spin_stage_scale_y.value()
+            if abs(scale_x - 1.0) > 1e-7 or abs(scale_y - 1.0) > 1e-7:
+                cal.set_additional_scale(scale_x, scale_y)
             if self.engine.stage is not None:
                 self.engine.stage.set_calibration(cal)
             self._refresh_calibration_status()
@@ -437,6 +465,10 @@ class MachineConfigTabWidget(QScrollArea):
             self.txt_cal_file,
             self.btn_browse_cal,
             self.spin_camera_pixel_size,
+            self.spin_stage_rotation,
+            self.spin_stage_skew,
+            self.spin_stage_scale_x,
+            self.spin_stage_scale_y,
             self.btn_apply_stage_cal,
             self.btn_clear_stage_cal,
             self.btn_save_config,

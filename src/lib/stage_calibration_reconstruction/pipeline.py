@@ -51,6 +51,8 @@ class ReconstructionPipeline:
         complementary_images_dir: Optional[str] = None,
         additional_stage_rotation_deg: float = 0.0,
         additional_stage_skew: float = 0.0,
+        additional_stage_scale_x: float = 1.0,
+        additional_stage_scale_y: float = 1.0,
     ):
         self.images_dir = images_dir
         self.stage1_json_path = stage1_json_path
@@ -59,6 +61,8 @@ class ReconstructionPipeline:
         self.complementary_images_dir = complementary_images_dir
         self.additional_stage_rotation_deg = float(additional_stage_rotation_deg)
         self.additional_stage_skew = float(additional_stage_skew)
+        self.additional_stage_scale_x = float(additional_stage_scale_x)
+        self.additional_stage_scale_y = float(additional_stage_scale_y)
 
     def run(
         self,
@@ -207,6 +211,9 @@ class ReconstructionPipeline:
         )
 
         M_extra = np.eye(2, dtype=np.float64)
+        if abs(self.additional_stage_scale_x - 1.0) > 1e-7 or abs(self.additional_stage_scale_y - 1.0) > 1e-7:
+            S_scale = np.array([[self.additional_stage_scale_x, 0.0], [0.0, self.additional_stage_scale_y]], dtype=np.float64)
+            M_extra = S_scale @ M_extra
         if abs(self.additional_stage_skew) > 1e-9:
             S_extra = np.array([[1.0, 0.0], [self.additional_stage_skew, 1.0]], dtype=np.float64)
             M_extra = S_extra @ M_extra
@@ -399,6 +406,8 @@ class ReconstructionPipeline:
             detected_marker_ids=observed_ids,
             additional_rotation_deg=self.additional_stage_rotation_deg,
             additional_skew=self.additional_stage_skew,
+            additional_scale_x=self.additional_stage_scale_x,
+            additional_scale_y=self.additional_stage_scale_y,
         )
 
         if progress_cb:

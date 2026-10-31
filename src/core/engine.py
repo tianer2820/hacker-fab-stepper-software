@@ -100,6 +100,14 @@ class StepperEngine:
                     cal.set_additional_rotation(self.machine_config.stage_calibration.additional_stage_rotation_deg)
                 if abs(self.machine_config.stage_calibration.additional_stage_skew) > 1e-9:
                     cal.set_additional_skew(self.machine_config.stage_calibration.additional_stage_skew)
+                if (
+                    abs(self.machine_config.stage_calibration.additional_stage_scale_x - 1.0) > 1e-7
+                    or abs(self.machine_config.stage_calibration.additional_stage_scale_y - 1.0) > 1e-7
+                ):
+                    cal.set_additional_scale(
+                        self.machine_config.stage_calibration.additional_stage_scale_x,
+                        self.machine_config.stage_calibration.additional_stage_scale_y,
+                    )
                 self.stage.set_calibration(cal)
                 print(f"[StepperEngine] Loaded stage calibration from {cal_path}", flush=True)
             except Exception as e:
@@ -119,6 +127,10 @@ class StepperEngine:
             if cal is not None:
                 cal.set_additional_rotation(config.stage_calibration.additional_stage_rotation_deg)
                 cal.set_additional_skew(config.stage_calibration.additional_stage_skew)
+                cal.set_additional_scale(
+                    config.stage_calibration.additional_stage_scale_x,
+                    config.stage_calibration.additional_stage_scale_y,
+                )
             else:
                 self._init_stage_calibration()
         else:

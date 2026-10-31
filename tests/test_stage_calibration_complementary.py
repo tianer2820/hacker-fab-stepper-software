@@ -282,12 +282,18 @@ class TestStageCalibrationComplementary(unittest.TestCase):
         cfg = MachineConfig()
         cfg.stage_calibration.additional_stage_rotation_deg = 2.5
         cfg.stage_calibration.additional_stage_skew = 0.005
+        cfg.stage_calibration.additional_stage_scale_x = 1.02
+        cfg.stage_calibration.additional_stage_scale_y = 0.98
         d = cfg.to_dict()
         self.assertEqual(d["stage_calibration"]["additional_stage_rotation_deg"], 2.5)
         self.assertEqual(d["stage_calibration"]["additional_stage_skew"], 0.005)
+        self.assertEqual(d["stage_calibration"]["additional_stage_scale_x"], 1.02)
+        self.assertEqual(d["stage_calibration"]["additional_stage_scale_y"], 0.98)
         cfg_loaded = MachineConfig.from_dict(d)
         self.assertEqual(cfg_loaded.stage_calibration.additional_stage_rotation_deg, 2.5)
         self.assertEqual(cfg_loaded.stage_calibration.additional_stage_skew, 0.005)
+        self.assertEqual(cfg_loaded.stage_calibration.additional_stage_scale_x, 1.02)
+        self.assertEqual(cfg_loaded.stage_calibration.additional_stage_scale_y, 0.98)
 
     def test_additional_stage_skew_in_calibration(self):
         from stage_control.calibration import StageCalibration, StageCalibrationPoint
@@ -342,6 +348,73 @@ class TestStageCalibrationComplementary(unittest.TestCase):
         fwd_x, fwd_y = cal.forward_map_xy(rx1, ry1)
         self.assertAlmostEqual(fwd_x, 5100.0, places=3)
         self.assertAlmostEqual(fwd_y, 5000.0, places=3)
+
+    def test_stage_motion_scale_in_calibration(self):
+        from stage_control.calibration import StageCalibration, StageCalibrationPoint
+        import tempfile
+        import os
+
+        # Create a 3x3 grid centered around (5000, 5000)
+        coords = [4000.0, 5000.0, 6000.0]
+        pts = []
+        mid = 0
+        for r, y in enumerate(coords):
+            for c, x in enumerate(coords):
+                pts.append(StageCalibrationPoint((r, c), mid, (x, y), (x, y), 0.0))
+                mid += 1
+
+        identity_T = np.eye(2, dtype=np.float64)
+        cal = StageCalibration(
+            grid_shape=(3, 3),
+            points=pts,
+            cam_to_stage_matrix=identity_T,
+            additional_scale_x=1.0,
+            additional_scale_y=1.0,
+        )
+
+        # Baseline: default scale is 1.0 (both X and Y)
+        rx_base0, ry_base0 = cal.inverse_map_xy(5000.0, 5000.0)
+        rx_base_x, ry_base_x = cal.inverse_map_xy(5100.0, 5000.0)
+        rx_base_y, ry_base_y = cal.inverse_map_xy(5000.0, 5100.0)
+        self.assertAlmostEqual(rx_base_x - rx_base0, 100.0, places=3)
+        self.assertAlmostEqual(ry_base_y - ry_base0, 100.0, places=3)
+
+        # Apply higher motion scale: scale_x = 1.05 (moves 5% more), scale_y = 1.10 (moves 10% more)
+        cal.set_additional_scale(1.05, 1.10)
+        self.assertEqual(cal.additional_scale_x, 1.05)
+        self.assertEqual(cal.additional_scale_y, 1.10)
+
+        # Move 100 um along X in commanded coords -> stage raw moves 105 um
+        rx0, ry0 = cal.inverse_map_xy(5000.0, 5000.0)
+        rx_x, ry_x = cal.inverse_map_xy(5100.0, 5000.0)
+        dx_raw = rx_x - rx0
+        dy_raw = ry_x - ry0
+        self.assertAlmostEqual(dx_raw, 105.0, places=3)
+        self.assertAlmostEqual(dy_raw, 0.0, places=3)
+
+        # Move 100 um along Y in commanded coords -> stage raw moves 110 um
+        rx_y, ry_y = cal.inverse_map_xy(5000.0, 5100.0)
+        dx_raw_y = rx_y - rx0
+        dy_raw_y = ry_y - ry0
+        self.assertAlmostEqual(dx_raw_y, 0.0, places=3)
+        self.assertAlmostEqual(dy_raw_y, 110.0, places=3)
+
+        # Forward map and inverse map should remain mutually inverse
+        fwd_x, fwd_y = cal.forward_map_xy(rx_x, ry_x)
+        self.assertAlmostEqual(fwd_x, 5100.0, places=3)
+        self.assertAlmostEqual(fwd_y, 5000.0, places=3)
+
+        # Test JSON persistence roundtrip
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            temp_path = f.name
+        try:
+            cal.save_to_json(temp_path)
+            loaded_cal = StageCalibration.load_from_json(temp_path)
+            self.assertAlmostEqual(loaded_cal.additional_scale_x, 1.05, places=5)
+            self.assertAlmostEqual(loaded_cal.additional_scale_y, 1.10, places=5)
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
 
 
 if __name__ == "__main__":
