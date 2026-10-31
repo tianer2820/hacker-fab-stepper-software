@@ -58,6 +58,7 @@ class PipelineWorker(QThread):
         params: EdgeDetectorParameters,
         complementary_images_dir: Optional[str] = None,
         additional_stage_rotation_deg: float = 0.0,
+        additional_stage_skew: float = 0.0,
     ):
         super().__init__()
         self.images_dir = images_dir
@@ -66,6 +67,7 @@ class PipelineWorker(QThread):
         self.params = params
         self.complementary_images_dir = complementary_images_dir
         self.additional_stage_rotation_deg = float(additional_stage_rotation_deg)
+        self.additional_stage_skew = float(additional_stage_skew)
 
     def run(self):
         pipeline = ReconstructionPipeline(
@@ -75,6 +77,7 @@ class PipelineWorker(QThread):
             detector_params=self.params,
             complementary_images_dir=self.complementary_images_dir,
             additional_stage_rotation_deg=self.additional_stage_rotation_deg,
+            additional_stage_skew=self.additional_stage_skew,
         )
         cal, diag, err = pipeline.run(
             progress_cb=lambda pct, msg: self.progress_updated.emit(pct, msg)
@@ -170,8 +173,10 @@ class StageCalibrationInspectorWindow(QMainWindow):
         row2.addWidget(self.spin_pixel_size)
 
         init_rot = 0.0
+        init_skew = 0.0
         if self.engine is not None and getattr(self.engine, "machine_config", None) is not None:
             init_rot = getattr(self.engine.machine_config.stage_calibration, "additional_stage_rotation_deg", 0.0)
+            init_skew = getattr(self.engine.machine_config.stage_calibration, "additional_stage_skew", 0.0)
 
         row2.addWidget(QLabel("Stage Rot (°):"))
         self.spin_stage_rotation = QDoubleSpinBox()
@@ -180,6 +185,14 @@ class StageCalibrationInspectorWindow(QMainWindow):
         self.spin_stage_rotation.setDecimals(3)
         self.spin_stage_rotation.setSingleStep(0.1)
         row2.addWidget(self.spin_stage_rotation)
+
+        row2.addWidget(QLabel("Skew (dy/dx):"))
+        self.spin_stage_skew = QDoubleSpinBox()
+        self.spin_stage_skew.setRange(-1.0, 1.0)
+        self.spin_stage_skew.setValue(float(init_skew))
+        self.spin_stage_skew.setDecimals(5)
+        self.spin_stage_skew.setSingleStep(0.0001)
+        row2.addWidget(self.spin_stage_skew)
 
         top_layout.addLayout(row2)
         main_layout.addWidget(top_bar)
@@ -621,6 +634,7 @@ class StageCalibrationInspectorWindow(QMainWindow):
             params=params,
             complementary_images_dir=comp_dir,
             additional_stage_rotation_deg=float(self.spin_stage_rotation.value()),
+            additional_stage_skew=float(self.spin_stage_skew.value()),
         )
         self._worker_thread.progress_updated.connect(self._on_worker_progress)
         self._worker_thread.finished_reconstruction.connect(self._on_worker_finished)

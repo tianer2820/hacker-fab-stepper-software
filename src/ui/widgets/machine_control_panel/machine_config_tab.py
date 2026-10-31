@@ -176,6 +176,14 @@ class MachineConfigTabWidget(QScrollArea):
         self.spin_stage_rotation.valueChanged.connect(self._on_ui_changed)
         stage_cal_layout.addRow("Additional Stage Rotation:", self.spin_stage_rotation)
 
+        self.spin_stage_skew = QDoubleSpinBox()
+        self.spin_stage_skew.setRange(-1.0, 1.0)
+        self.spin_stage_skew.setDecimals(5)
+        self.spin_stage_skew.setSingleStep(0.0001)
+        self.spin_stage_skew.setSuffix(" dy/dx")
+        self.spin_stage_skew.valueChanged.connect(self._on_ui_changed)
+        stage_cal_layout.addRow("Additional Stage Skew:", self.spin_stage_skew)
+
         cal_btn_row = QHBoxLayout()
         self.btn_apply_stage_cal = QPushButton("Load / Apply Calibration")
         self.btn_apply_stage_cal.clicked.connect(self._on_apply_stage_cal_clicked)
@@ -247,6 +255,7 @@ class MachineConfigTabWidget(QScrollArea):
             self.txt_cal_file.setText(sc.calibration_file_path)
             self.spin_camera_pixel_size.setValue(sc.camera_pixel_size)
             self.spin_stage_rotation.setValue(sc.additional_stage_rotation_deg)
+            self.spin_stage_skew.setValue(sc.additional_stage_skew)
 
             # Populate stages table
             self._populate_stages_table(config.autofocus.stages)
@@ -322,10 +331,12 @@ class MachineConfigTabWidget(QScrollArea):
         cfg.stage_calibration.calibration_file_path = self.txt_cal_file.text().strip()
         cfg.stage_calibration.camera_pixel_size = self.spin_camera_pixel_size.value()
         cfg.stage_calibration.additional_stage_rotation_deg = self.spin_stage_rotation.value()
+        cfg.stage_calibration.additional_stage_skew = self.spin_stage_skew.value()
         if self.engine.stage is not None:
             cal = self.engine.stage.get_calibration()
             if cal is not None:
                 cal.set_additional_rotation(cfg.stage_calibration.additional_stage_rotation_deg)
+                cal.set_additional_skew(cfg.stage_calibration.additional_stage_skew)
         if self.engine.project is not None:
             self.engine.project.invalidate_all_tile_caches()
 
@@ -370,6 +381,9 @@ class MachineConfigTabWidget(QScrollArea):
             rot_deg = self.spin_stage_rotation.value()
             if abs(rot_deg) > 1e-6:
                 cal.set_additional_rotation(rot_deg)
+            skew = self.spin_stage_skew.value()
+            if abs(skew) > 1e-9:
+                cal.set_additional_skew(skew)
             if self.engine.stage is not None:
                 self.engine.stage.set_calibration(cal)
             self._refresh_calibration_status()

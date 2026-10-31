@@ -123,6 +123,7 @@ class StageCalibrationMachineConfig:
     calibration_file_path: str = "stage_calibration.json"
     camera_pixel_size: float = 1.0
     additional_stage_rotation_deg: float = 0.0
+    additional_stage_skew: float = 0.0
 
     @classmethod
     def from_dict(cls, d: Optional[Dict[str, Any]]) -> StageCalibrationMachineConfig:
@@ -130,10 +131,12 @@ class StageCalibrationMachineConfig:
             return cls()
         pixel_size = d.get("camera_pixel_size", d.get("pixel_scale", 1.0))
         rot_deg = d.get("additional_stage_rotation_deg", d.get("additional_stage_rotation", 0.0))
+        skew = d.get("additional_stage_skew", d.get("additional_skew", 0.0))
         return cls(
             calibration_file_path=str(d.get("calibration_file_path", "stage_calibration.json")),
             camera_pixel_size=float(pixel_size),
             additional_stage_rotation_deg=float(rot_deg),
+            additional_stage_skew=float(skew),
         )
 
 
@@ -167,6 +170,7 @@ class MachineConfig:
                 "calibration_file_path": self.stage_calibration.calibration_file_path,
                 "camera_pixel_size": self.stage_calibration.camera_pixel_size,
                 "additional_stage_rotation_deg": self.stage_calibration.additional_stage_rotation_deg,
+                "additional_stage_skew": self.stage_calibration.additional_stage_skew,
             },
         }
 

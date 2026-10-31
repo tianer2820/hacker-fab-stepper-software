@@ -98,6 +98,8 @@ class StepperEngine:
                 cal = StageCalibration.load_from_json(cal_path)
                 if abs(self.machine_config.stage_calibration.additional_stage_rotation_deg) > 1e-6:
                     cal.set_additional_rotation(self.machine_config.stage_calibration.additional_stage_rotation_deg)
+                if abs(self.machine_config.stage_calibration.additional_stage_skew) > 1e-9:
+                    cal.set_additional_skew(self.machine_config.stage_calibration.additional_stage_skew)
                 self.stage.set_calibration(cal)
                 print(f"[StepperEngine] Loaded stage calibration from {cal_path}", flush=True)
             except Exception as e:
@@ -116,6 +118,7 @@ class StepperEngine:
             cal = self.stage.get_calibration()
             if cal is not None:
                 cal.set_additional_rotation(config.stage_calibration.additional_stage_rotation_deg)
+                cal.set_additional_skew(config.stage_calibration.additional_stage_skew)
             else:
                 self._init_stage_calibration()
         else:

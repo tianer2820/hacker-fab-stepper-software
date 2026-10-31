@@ -61,6 +61,7 @@ class StageCalibration:
         cam_to_stage_matrix: Optional[Sequence[Sequence[float]] | np.ndarray] = None,
         detected_marker_ids: Optional[Sequence[int] | Set[int]] = None,
         additional_rotation_deg: float = 0.0,
+        additional_skew: float = 0.0,
     ):
         self.grid_shape = (int(grid_shape[0]), int(grid_shape[1]))
         assert self.grid_shape[0] >= 1 and self.grid_shape[1] >= 1, 'Calibration grid must be at least 1x1'
@@ -72,6 +73,7 @@ class StageCalibration:
         self.calibration_range = float(calibration_range) if calibration_range is not None else None
         self.detected_marker_ids: Set[int] = set(detected_marker_ids) if detected_marker_ids is not None else set()
         self.additional_rotation_deg: float = float(additional_rotation_deg)
+        self.additional_skew: float = float(additional_skew)
 
         if cam_to_stage_matrix is not None:
             self._base_cam_to_stage_matrix: Optional[np.ndarray] = np.array(cam_to_stage_matrix, dtype=np.float64)
@@ -97,15 +99,19 @@ class StageCalibration:
         self._build_grids()
 
     def _update_effective_matrices(self):
-        """Updates effective cam_to_stage_matrix and _stage_to_cam_matrix including additional_rotation_deg."""
+        """Updates effective cam_to_stage_matrix and _stage_to_cam_matrix including additional_rotation_deg and additional_skew."""
         if self._base_cam_to_stage_matrix is not None:
+            M_extra = np.eye(2, dtype=np.float64)
+            if abs(self.additional_skew) > 1e-9:
+                S_extra = np.array([[1.0, 0.0], [self.additional_skew, 1.0]], dtype=np.float64)
+                M_extra = S_extra @ M_extra
             if abs(self.additional_rotation_deg) > 1e-6:
                 rad = np.radians(self.additional_rotation_deg)
                 c_a, s_a = np.cos(rad), np.sin(rad)
                 R_extra = np.array([[c_a, -s_a], [s_a, c_a]], dtype=np.float64)
-                self.cam_to_stage_matrix = R_extra @ self._base_cam_to_stage_matrix
-            else:
-                self.cam_to_stage_matrix = self._base_cam_to_stage_matrix.copy()
+                M_extra = R_extra @ M_extra
+
+            self.cam_to_stage_matrix = M_extra @ self._base_cam_to_stage_matrix
 
             try:
                 self._stage_to_cam_matrix = np.linalg.inv(self.cam_to_stage_matrix)
@@ -118,6 +124,11 @@ class StageCalibration:
     def set_additional_rotation(self, deg: float):
         """Updates additional stage rotation angle (degrees) and recomputes effective transform matrices."""
         self.additional_rotation_deg = float(deg)
+        self._update_effective_matrices()
+
+    def set_additional_skew(self, skew: float):
+        """Updates additional stage skew factor (dy/dx) and recomputes effective transform matrices."""
+        self.additional_skew = float(skew)
         self._update_effective_matrices()
 
     def _build_grids(self):
@@ -375,6 +386,7 @@ class StageCalibration:
             "calibration_range": self.calibration_range,
             "cam_to_stage_matrix": self._base_cam_to_stage_matrix.tolist() if self._base_cam_to_stage_matrix is not None else (self.cam_to_stage_matrix.tolist() if self.cam_to_stage_matrix is not None else None),
             "additional_rotation_deg": self.additional_rotation_deg,
+            "additional_skew": self.additional_skew,
             "detected_marker_ids": sorted(list(self.detected_marker_ids)) if self.detected_marker_ids else None,
             "bounds_raw": {
                 "x_min": float(np.min(self._raw_x_grid)) if self._raw_x_grid.size > 0 else 0.0,
@@ -402,6 +414,7 @@ class StageCalibration:
         calibration_range = data.get("calibration_range")
         cam_to_stage_matrix = data.get("cam_to_stage_matrix")
         additional_rotation_deg = float(data.get("additional_rotation_deg", 0.0))
+        additional_skew = float(data.get("additional_skew", 0.0))
         detected_marker_ids = data.get("detected_marker_ids")
 
         return cls(
@@ -415,4 +428,5 @@ class StageCalibration:
             cam_to_stage_matrix=cam_to_stage_matrix,
             detected_marker_ids=detected_marker_ids,
             additional_rotation_deg=additional_rotation_deg,
+            additional_skew=additional_skew,
         )

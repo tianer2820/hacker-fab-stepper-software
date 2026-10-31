@@ -285,10 +285,67 @@ class TestStageCalibrationComplementary(unittest.TestCase):
         # Verify MachineConfig serialization round-trip
         cfg = MachineConfig()
         cfg.stage_calibration.additional_stage_rotation_deg = 2.5
+        cfg.stage_calibration.additional_stage_skew = 0.005
         d = cfg.to_dict()
         self.assertEqual(d["stage_calibration"]["additional_stage_rotation_deg"], 2.5)
+        self.assertEqual(d["stage_calibration"]["additional_stage_skew"], 0.005)
         cfg_loaded = MachineConfig.from_dict(d)
         self.assertEqual(cfg_loaded.stage_calibration.additional_stage_rotation_deg, 2.5)
+        self.assertEqual(cfg_loaded.stage_calibration.additional_stage_skew, 0.005)
+
+    def test_additional_stage_skew_in_calibration(self):
+        from stage_control.calibration import StageCalibration, StageCalibrationPoint
+
+        # Create a 3x3 grid centered around (5000, 5000)
+        coords = [4000.0, 5000.0, 6000.0]
+        pts = []
+        mid = 0
+        for r, y in enumerate(coords):
+            for c, x in enumerate(coords):
+                pts.append(StageCalibrationPoint((r, c), mid, (x, y), (x, y), 0.0))
+                mid += 1
+
+        # Identity cam to stage matrix for straightforward skew verification:
+        # dx_stage = dx_cam, dy_stage = dy_cam
+        identity_T = np.eye(2, dtype=np.float64)
+        cal = StageCalibration(
+            grid_shape=(3, 3),
+            points=pts,
+            cam_to_stage_matrix=identity_T,
+            additional_rotation_deg=0.0,
+            additional_skew=0.0,
+        )
+
+        # Baseline: with 0 skew, (5000, 5000) -> (5000, 5000)
+        rx_base, ry_base = cal.inverse_map_xy(5000.0, 5000.0)
+        self.assertAlmostEqual(rx_base, 5000.0, places=3)
+        self.assertAlmostEqual(ry_base, 5000.0, places=3)
+
+        # Apply skew of +0.01 (dy/dx = 0.01)
+        # S = [[1, 0], [0.01, 1]]
+        cal.set_additional_skew(0.01)
+        self.assertEqual(cal.additional_skew, 0.01)
+
+        # Under skew=0.01, (5000, 5000) -> ry = 5000 + 0.01*5000 = 5050
+        rx0, ry0 = cal.inverse_map_xy(5000.0, 5000.0)
+        self.assertAlmostEqual(rx0, 5000.0, places=3)
+        self.assertAlmostEqual(ry0, 5050.0, places=3)
+
+        # Moving +100 um along X should produce +1 um shift along Y (100 * 0.01 = 1)
+        rx1, ry1 = cal.inverse_map_xy(5100.0, 5000.0)
+        # Expected: rx = 5100.0, ry = 5000.0 + 0.01 * 5100.0 = 5051.0
+        self.assertAlmostEqual(rx1, 5100.0, places=3)
+        self.assertAlmostEqual(ry1, 5051.0, places=3)
+
+        # Verify dy/dx ratio: delta_y / delta_x == 0.01
+        dy = ry1 - ry0
+        dx = rx1 - rx0
+        self.assertAlmostEqual(dy / dx, 0.01, places=5)
+
+        # Forward map and inverse map should remain mutually inverse
+        fwd_x, fwd_y = cal.forward_map_xy(rx1, ry1)
+        self.assertAlmostEqual(fwd_x, 5100.0, places=3)
+        self.assertAlmostEqual(fwd_y, 5000.0, places=3)
 
 
 if __name__ == "__main__":
