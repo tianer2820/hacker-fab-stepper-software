@@ -170,6 +170,7 @@ class StageCalibrationInspectorWindow(QMainWindow):
         self.spin_pixel_size.setRange(0.01, 1000.0)
         self.spin_pixel_size.setValue(float(camera_pixel_size))
         self.spin_pixel_size.setSingleStep(0.1)
+        self.spin_pixel_size.setDecimals(4)
         row2.addWidget(self.spin_pixel_size)
 
         init_rot = 0.0
