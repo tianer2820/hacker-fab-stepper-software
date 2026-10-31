@@ -748,8 +748,6 @@ class StageCalibrationPatternOperation(Operation):
                 if exp_err or self.is_aborted:
                     return exp_err or "Stage 2 calibration aborted during exposure"
 
-            cal.save_to_json(input_path)
-
             report_progress(
                 1.0,
                 f"Stage 2 complete! {total_points} ArUco markers patterned using calibrated Z heights. "
@@ -768,6 +766,8 @@ class StageCalibrationPatternOperation(Operation):
             return None
 
         finally:
+            cal.save_to_json(input_path)
+
             projector.set_on(False)
             projector.set_generated_image(None)
             projector.set_image_source(ProjectorImageSource.ACTIVE_LAYER)
@@ -876,69 +876,70 @@ class StageCalibrationScanOperation(Operation):
 
         report_progress(0.0, f"Starting spiral scan on {nx}x{ny} grid ({total_points} photos, step {step_dist:.1f} µm)...")
 
-        for point_idx, (r, c) in enumerate(spiral_indices):
-            if self.is_aborted:
-                return "Stage 3 calibration aborted"
-
-            prog = point_idx / total_points
-            dx = (c - c0) * step_dist
-            dy = (r - r0) * step_dist
-            target_x = start_x + dx
-            target_y = start_y + dy
-
-            report_progress(
-                prog,
-                f"Photo {point_idx + 1}/{total_points} (Grid [{r}, {c}]): Moving to ({target_x:.1f}, {target_y:.1f}) µm...",
-            )
-            stage.move_absolute({"x": target_x, "y": target_y}, z_calib_only=True)
-            context.delay_func(self.stabilization_delay)
-
-            # Optional autofocus before each photo
-            if self.autofocus:
-                report_progress(prog + 0.02 / total_points, f"Autofocusing at point {point_idx + 1}/{total_points}...")
-                af_op = AutofocusOperation()
-                af_reporter = sub_progress(
-                    report_progress,
-                    prog + 0.02 / total_points,
-                    prog + 0.5 / total_points,
-                    prefix=f"AF {point_idx + 1}/{total_points}",
-                )
-                af_err = self._run_sub_op(af_op, context, af_reporter)
-                if af_err and self.is_aborted:
-                    return "Stage 3 calibration aborted during autofocus"
-
-            frame = camera.get_latest_frame()
-            if frame is None:
-                continue
-
-            img_filename = f"scan_{point_idx:04d}_r{r}_c{c}_x{target_x:.1f}_y{target_y:.1f}.png"
-            img_path = os.path.join(self.output_dir, img_filename)
-            cv2.imwrite(img_path, frame)
-
-            actual_pos = stage.get_raw_position()
-            manifest.append({
-                "step": point_idx,
-                "grid_index": [r, c],
-                "filename": img_filename,
-                "target_xy": [target_x, target_y],
-                "actual_raw_pos": list(actual_pos),
-            })
-
-        # Save manifest
-        manifest_path = os.path.join(self.output_dir, "scan_manifest.json")
         try:
-            with open(manifest_path, "w", encoding="utf-8") as f:
-                json.dump({
-                    "version": "1.0",
-                    "total_photos": len(manifest),
-                    "grid_shape": [ny, nx],
-                    "step_distance": step_dist,
-                    "fov_min": fov_min,
-                    "pixel_size": effective_pixel_scale,
-                    "photos": manifest,
-                }, f, indent=2)
-        except Exception as e:
-            print(f"[StageCalibrationScan] Warning: could not write scan_manifest.json: {e}")
+            for point_idx, (r, c) in enumerate(spiral_indices):
+                if self.is_aborted:
+                    return "Stage 3 calibration aborted"
+
+                prog = point_idx / total_points
+                dx = (c - c0) * step_dist
+                dy = (r - r0) * step_dist
+                target_x = start_x + dx
+                target_y = start_y + dy
+
+                report_progress(
+                    prog,
+                    f"Photo {point_idx + 1}/{total_points} (Grid [{r}, {c}]): Moving to ({target_x:.1f}, {target_y:.1f}) µm...",
+                )
+                stage.move_absolute({"x": target_x, "y": target_y}, z_calib_only=True)
+                context.delay_func(self.stabilization_delay)
+
+                # Optional autofocus before each photo
+                if self.autofocus:
+                    report_progress(prog + 0.02 / total_points, f"Autofocusing at point {point_idx + 1}/{total_points}...")
+                    af_op = AutofocusOperation()
+                    af_reporter = sub_progress(
+                        report_progress,
+                        prog + 0.02 / total_points,
+                        prog + 0.5 / total_points,
+                        prefix=f"AF {point_idx + 1}/{total_points}",
+                    )
+                    af_err = self._run_sub_op(af_op, context, af_reporter)
+                    if af_err and self.is_aborted:
+                        return "Stage 3 calibration aborted during autofocus"
+
+                frame = camera.get_latest_frame()
+                if frame is None:
+                    continue
+
+                img_filename = f"scan_{point_idx:04d}_r{r}_c{c}_x{target_x:.1f}_y{target_y:.1f}.jpg"
+                img_path = os.path.join(self.output_dir, img_filename)
+                cv2.imwrite(img_path, frame)
+
+                actual_pos = stage.get_raw_position()
+                manifest.append({
+                    "step": point_idx,
+                    "grid_index": [r, c],
+                    "filename": img_filename,
+                    "target_xy": [target_x, target_y],
+                    "actual_raw_pos": list(actual_pos),
+                })
+        finally:
+            # Save manifest
+            manifest_path = os.path.join(self.output_dir, "scan_manifest.json")
+            try:
+                with open(manifest_path, "w", encoding="utf-8") as f:
+                    json.dump({
+                        "version": "1.0",
+                        "total_photos": len(manifest),
+                        "grid_shape": [ny, nx],
+                        "step_distance": step_dist,
+                        "fov_min": fov_min,
+                        "pixel_size": effective_pixel_scale,
+                        "photos": manifest,
+                    }, f, indent=2)
+            except Exception as e:
+                print(f"[StageCalibrationScan] Warning: could not write scan_manifest.json: {e}")
 
         report_progress(1.0, f"Spiral scan complete! Saved {len(manifest)} photos to {self.output_dir}.")
         return None
