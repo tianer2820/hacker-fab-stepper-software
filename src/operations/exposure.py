@@ -119,6 +119,12 @@ class ExposureOperation(Operation):
                     cam_px = float(context.machine_config.stage_calibration.camera_pixel_size)
                     proj_to_cam = context.machine_config.optics.proj_to_cam_matrix
 
+                cam_to_stage_mat = None
+                if context.stage is not None and context.stage.get_calibration() is not None:
+                    cam_to_stage_mat = context.stage.get_calibration().cam_to_stage_matrix
+                elif context.machine_config is not None and hasattr(context.machine_config.stage_calibration, "get_cam_to_stage_matrix"):
+                    cam_to_stage_mat = context.machine_config.stage_calibration.get_cam_to_stage_matrix()
+
                 footprint_chip = compute_projector_footprint_in_chip_space(
                     stage_xy_corr=(sx, sy),
                     projector_size=proj_size,
@@ -126,6 +132,7 @@ class ExposureOperation(Operation):
                     projector_pixel_size=proj_px,
                     camera_pixel_size=cam_px,
                     proj_to_cam_matrix=proj_to_cam,
+                    cam_to_stage_matrix=cam_to_stage_mat,
                     corr_to_chip_matrix=context.project.chip_progress.get_corr_to_chip_matrix(),
                 )
                 record = ExposureRecord(

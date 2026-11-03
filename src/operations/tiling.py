@@ -59,6 +59,11 @@ class LayerExposureOperation(Operation):
         if context.camera is not None and getattr(context.camera, "_last_frame_size", None):
             project.camera_size = context.camera._last_frame_size
 
+        if context.stage is not None:
+            cal = context.stage.get_calibration()
+            if cal is not None and cal.cam_to_stage_matrix is not None:
+                project.cam_to_stage_matrix = cal.cam_to_stage_matrix
+
         project.select_layer(self.layer_index)
         layer = project.layers[self.layer_index]
         effective_settings = self.settings if self.settings is not None else layer.get_effective_settings()

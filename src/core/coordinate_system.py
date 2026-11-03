@@ -78,34 +78,60 @@ def build_camera_to_corr_stage_matrix(
     stage_xy_corr: Tuple[float, float],
     camera_size: Tuple[int, int],
     camera_pixel_size: float,
+    cam_to_stage_matrix: Optional[Sequence[Sequence[float]] | np.ndarray] = None,
 ) -> np.ndarray:
     """Builds the 3x3 matrix mapping camera pixel (u, v) to corr-stage-space (x_corr, y_corr) in µm.
 
     Camera center (cam_w / 2, cam_h / 2) corresponds to stage_xy_corr.
-    x_corr = stage_x + (u - cam_w / 2) * camera_pixel_size
-    y_corr = stage_y + (v - cam_h / 2) * camera_pixel_size
+    Offset from center in camera pixels is scaled by camera_pixel_size and transformed by cam_to_stage_matrix:
+    [x_corr, y_corr]^T = [stage_x, stage_y]^T + cam_to_stage_matrix @ [(u - cam_w/2) * s, (v - cam_h/2) * s]^T
     """
     cam_w, cam_h = float(camera_size[0]), float(camera_size[1])
     s = float(camera_pixel_size)
     sx, sy = float(stage_xy_corr[0]), float(stage_xy_corr[1])
 
-    return np.array(
+    T_stage_trans = np.array(
         [
-            [s, 0.0, sx - 0.5 * cam_w * s],
-            [0.0, s, sy - 0.5 * cam_h * s],
+            [1.0, 0.0, sx],
+            [0.0, 1.0, sy],
             [0.0, 0.0, 1.0],
         ],
         dtype=np.float64,
     )
+
+    T_cam_rot = np.eye(3, dtype=np.float64)
+    if cam_to_stage_matrix is not None:
+        arr = np.asarray(cam_to_stage_matrix, dtype=np.float64)
+        if arr.shape == (2, 2):
+            T_cam_rot[:2, :2] = arr
+        elif arr.shape == (3, 3):
+            T_cam_rot = arr
+
+    T_cam_scale_shift = np.array(
+        [
+            [s, 0.0, -0.5 * cam_w * s],
+            [0.0, s, -0.5 * cam_h * s],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=np.float64,
+    )
+
+    return T_stage_trans @ T_cam_rot @ T_cam_scale_shift
 
 
 def build_corr_stage_to_camera_matrix(
     stage_xy_corr: Tuple[float, float],
     camera_size: Tuple[int, int],
     camera_pixel_size: float,
+    cam_to_stage_matrix: Optional[Sequence[Sequence[float]] | np.ndarray] = None,
 ) -> np.ndarray:
     """Builds the 3x3 matrix mapping corr-stage-space (x_corr, y_corr) in µm to camera pixel (u, v)."""
-    M = build_camera_to_corr_stage_matrix(stage_xy_corr, camera_size, camera_pixel_size)
+    M = build_camera_to_corr_stage_matrix(
+        stage_xy_corr=stage_xy_corr,
+        camera_size=camera_size,
+        camera_pixel_size=camera_pixel_size,
+        cam_to_stage_matrix=cam_to_stage_matrix,
+    )
     return np.linalg.inv(M)
 
 
@@ -147,6 +173,7 @@ def build_projector_to_chip_matrix(
     projector_pixel_size: float,
     camera_pixel_size: float,
     proj_to_cam_matrix: Optional[Sequence[Sequence[float]] | np.ndarray] = None,
+    cam_to_stage_matrix: Optional[Sequence[Sequence[float]] | np.ndarray] = None,
     corr_to_chip_matrix: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Builds the composite 3x3 matrix mapping projector pixel (px, py) -> chip-space (x_chip, y_chip) in µm
@@ -163,6 +190,7 @@ def build_projector_to_chip_matrix(
         stage_xy_corr=stage_xy_corr,
         camera_size=camera_size,
         camera_pixel_size=camera_pixel_size,
+        cam_to_stage_matrix=cam_to_stage_matrix,
     )
     T_corr_to_chip = (
         np.asarray(corr_to_chip_matrix, dtype=np.float64)
@@ -179,6 +207,7 @@ def compute_projector_footprint_in_chip_space(
     projector_pixel_size: float,
     camera_pixel_size: float,
     proj_to_cam_matrix: Optional[Sequence[Sequence[float]] | np.ndarray] = None,
+    cam_to_stage_matrix: Optional[Sequence[Sequence[float]] | np.ndarray] = None,
     corr_to_chip_matrix: Optional[np.ndarray] = None,
 ) -> List[Tuple[float, float]]:
     """Returns the 4 corners of the projector frame in chip-space (µm) when stage is at stage_xy_corr."""
@@ -199,6 +228,7 @@ def compute_projector_footprint_in_chip_space(
         projector_pixel_size=projector_pixel_size,
         camera_pixel_size=camera_pixel_size,
         proj_to_cam_matrix=proj_to_cam_matrix,
+        cam_to_stage_matrix=cam_to_stage_matrix,
         corr_to_chip_matrix=corr_to_chip_matrix,
     )
     chip_corners = apply_homography_2d(proj_corners, M_proj_to_chip)

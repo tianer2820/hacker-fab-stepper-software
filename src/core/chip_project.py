@@ -471,12 +471,15 @@ class ChipLayer:
         proj_px_size = 1.0
         cam_px_size = 1.0
         proj_to_cam_mat = None
+        cam_to_stage_mat = getattr(self._project, "cam_to_stage_matrix", None)
 
         if self._project.machine_config is not None:
             cfg = self._project.machine_config
             proj_px_size = cfg.optics.projector_pixel_size
             cam_px_size = cfg.stage_calibration.camera_pixel_size
             proj_to_cam_mat = cfg.optics.proj_to_cam_matrix
+            if cam_to_stage_mat is None and hasattr(cfg.stage_calibration, "get_cam_to_stage_matrix"):
+                cam_to_stage_mat = cfg.stage_calibration.get_cam_to_stage_matrix()
 
         corr_to_chip_mat = (
             self._project.chip_progress.get_corr_to_chip_matrix()
@@ -497,6 +500,7 @@ class ChipLayer:
             projector_pixel_size=proj_px_size,
             camera_pixel_size=cam_px_size,
             proj_to_cam_matrix=proj_to_cam_mat,
+            cam_to_stage_matrix=cam_to_stage_mat,
             corr_to_chip_matrix=corr_to_chip_mat,
             nearest_interp=(self.threshold != -1),
             single_fullscreen_tile=single_fullscreen_tile,
@@ -591,6 +595,7 @@ class ChipProject:
     machine_config: Optional[Any] = field(default=None, repr=False, compare=False)
     projector_size: Tuple[int, int] = field(default=(1920, 1080), repr=False, compare=False)
     camera_size: Tuple[int, int] = field(default=(1920, 1080), repr=False, compare=False)
+    cam_to_stage_matrix: Optional[Any] = field(default=None, repr=False, compare=False)
 
     def __post_init__(self):
         if not self.layers:

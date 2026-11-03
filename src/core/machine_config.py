@@ -145,6 +145,29 @@ class StageCalibrationMachineConfig:
             additional_stage_scale_y=float(scale_y),
         )
 
+    def get_cam_to_stage_matrix(self) -> Optional[Any]:
+        """Loads and returns effective 2x2 cam_to_stage_matrix from calibration_file_path if available."""
+        if not self.calibration_file_path or not os.path.exists(self.calibration_file_path):
+            return None
+        try:
+            from stage_control.calibration import StageCalibration
+            cal = StageCalibration.load_from_json(self.calibration_file_path)
+            if abs(self.additional_stage_rotation_deg) > 1e-6:
+                cal.set_additional_rotation(self.additional_stage_rotation_deg)
+            if abs(self.additional_stage_skew) > 1e-9:
+                cal.set_additional_skew(self.additional_stage_skew)
+            if (
+                abs(self.additional_stage_scale_x - 1.0) > 1e-7
+                or abs(self.additional_stage_scale_y - 1.0) > 1e-7
+            ):
+                cal.set_additional_scale(
+                    self.additional_stage_scale_x,
+                    self.additional_stage_scale_y,
+                )
+            return cal.cam_to_stage_matrix
+        except Exception:
+            return None
+
 
 @dataclass
 class MachineConfig:

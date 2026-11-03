@@ -336,6 +336,87 @@ class TestChipZLeveling(unittest.TestCase):
             if os.path.exists(temp_path):
                 os.remove(temp_path)
 
+    def test_optical_alignment_under_wafer_rotation_with_cam_to_stage(self):
+        """Verifies that cam_to_stage_matrix orientation and reflection are accounted for,
+        so that rotating the wafer by 90 degrees projects the pattern in the exact same
+        physical chip coordinates without 180 deg inversion or flipping."""
+        from core.coordinate_system import (
+            apply_homography_2d,
+            build_projector_to_chip_matrix,
+            compute_two_point_rigid_transform,
+        )
+        from lib.tiling import generate_projector_aligned_tiles
+
+        # Use an asymmetric camera-to-stage matrix with ~90 deg rotation and axis flip
+        cam_to_stage = np.array([
+            [0.0, -1.0],
+            [-1.0, 0.0],
+        ], dtype=np.float64)
+
+        img = np.zeros((1000, 1000, 3), dtype=np.uint8)
+        img[200:800, 200:300] = 255  # vertical stem
+        img[200:300, 200:700] = 255  # top bar
+        img[450:550, 200:500] = 255  # middle bar
+
+        # Setup 0: Wafer at 0 deg
+        m1_stage_0 = (1000.0, 1000.0)
+        m2_stage_0 = (5000.0, 1000.0)
+        m1_chip, m2_chip = m1_stage_0, m2_stage_0
+        T_corr_to_chip_0 = compute_two_point_rigid_transform(m1_stage_0, m2_stage_0, m1_chip, m2_chip)
+
+        # Setup 90: Wafer physically rotated by +90 deg CCW
+        m1_stage_90 = (1000.0, 1000.0)
+        m2_stage_90 = (1000.0, 5000.0)
+        T_corr_to_chip_90 = compute_two_point_rigid_transform(m1_stage_90, m2_stage_90, m1_chip, m2_chip)
+
+        tiles_0, coords_0 = generate_projector_aligned_tiles(
+            img, 1000, 1000, 0, 0,
+            cam_to_stage_matrix=cam_to_stage,
+            corr_to_chip_matrix=T_corr_to_chip_0,
+        )
+        tiles_90, coords_90 = generate_projector_aligned_tiles(
+            img, 1000, 1000, 0, 0,
+            cam_to_stage_matrix=cam_to_stage,
+            corr_to_chip_matrix=T_corr_to_chip_90,
+        )
+
+        stage_pos_0 = apply_homography_2d((0.0, 0.0), np.linalg.inv(T_corr_to_chip_0))
+        M_proj_to_chip_0 = build_projector_to_chip_matrix(
+            stage_xy_corr=stage_pos_0,
+            projector_size=(1920, 1080),
+            camera_size=(1920, 1080),
+            projector_pixel_size=1.0,
+            camera_pixel_size=1.0,
+            cam_to_stage_matrix=cam_to_stage,
+            corr_to_chip_matrix=T_corr_to_chip_0,
+        )
+
+        stage_pos_90 = apply_homography_2d((0.0, 0.0), np.linalg.inv(T_corr_to_chip_90))
+        M_proj_to_chip_90 = build_projector_to_chip_matrix(
+            stage_xy_corr=stage_pos_90,
+            projector_size=(1920, 1080),
+            camera_size=(1920, 1080),
+            projector_pixel_size=1.0,
+            camera_pixel_size=1.0,
+            cam_to_stage_matrix=cam_to_stage,
+            corr_to_chip_matrix=T_corr_to_chip_90,
+        )
+
+        ys0, xs0 = np.where(tiles_0[0][..., 0] > 0)
+        ys90, xs90 = np.where(tiles_90[0][..., 0] > 0)
+
+        chip_pts0 = apply_homography_2d(np.column_stack([xs0, ys0]), M_proj_to_chip_0)
+        chip_pts90 = apply_homography_2d(np.column_stack([xs90, ys90]), M_proj_to_chip_90)
+
+        com0 = np.mean(chip_pts0, axis=0)
+        com90 = np.mean(chip_pts90, axis=0)
+        std0 = np.std(chip_pts0, axis=0)
+        std90 = np.std(chip_pts90, axis=0)
+
+        # Center of mass and spatial variance must match exactly on the physical chip
+        np.testing.assert_allclose(com0, com90, atol=1e-3)
+        np.testing.assert_allclose(std0, std90, atol=1e-3)
+
 
 if __name__ == "__main__":
     unittest.main()

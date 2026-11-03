@@ -95,6 +95,7 @@ def generate_projector_aligned_tiles(
     projector_pixel_size: float = 1.0,
     camera_pixel_size: float = 1.0,
     proj_to_cam_matrix: Optional[Sequence[Sequence[float]] | np.ndarray] = None,
+    cam_to_stage_matrix: Optional[Sequence[Sequence[float]] | np.ndarray] = None,
     corr_to_chip_matrix: Optional[np.ndarray] = None,
     nearest_interp: bool = True,
     single_fullscreen_tile: bool = False,
@@ -158,6 +159,7 @@ def generate_projector_aligned_tiles(
         projector_pixel_size=projector_pixel_size,
         camera_pixel_size=camera_pixel_size,
         proj_to_cam_matrix=proj_to_cam_matrix,
+        cam_to_stage_matrix=cam_to_stage_matrix,
         corr_to_chip_matrix=corr_to_chip_matrix,
     )
     proj_center_chip = apply_homography_2d((0.5 * pw, 0.5 * ph), M_proj_to_chip_raw)
