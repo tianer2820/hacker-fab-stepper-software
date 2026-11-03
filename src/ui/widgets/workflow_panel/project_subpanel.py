@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
+    QLabel,
     QPushButton,
     QSpinBox,
     QTableWidget,
@@ -145,6 +146,51 @@ class ProjectSubpanelWidget(QTabWidget):
         tile_form.addRow("Overlap Y:", self.spin_overlap_y)
 
         layout.addWidget(tile_group)
+
+        # Pattern Physical Size (Project-wide setting for all layers)
+        size_group = QGroupBox("Pattern Physical Size (µm)")
+        size_layout = QVBoxLayout(size_group)
+        size_layout.setContentsMargins(6, 6, 6, 6)
+        size_layout.setSpacing(6)
+
+        size_row = QHBoxLayout()
+        size_row.addWidget(QLabel("Width:"))
+        self.spin_width_um = QDoubleSpinBox()
+        self.spin_width_um.setRange(-1.0, 100000.0)
+        self.spin_width_um.setDecimals(1)
+        self.spin_width_um.setSingleStep(10.0)
+        self.spin_width_um.setValue(self.engine.project.settings.width_um)
+        self.spin_width_um.setSuffix(" µm")
+        self.spin_width_um.setToolTip("Target pattern width in µm (-1 for Fullscreen / Projector FOV)")
+        self.spin_width_um.valueChanged.connect(self._on_pattern_size_changed)
+        size_row.addWidget(self.spin_width_um)
+
+        size_row.addWidget(QLabel("Height:"))
+        self.spin_height_um = QDoubleSpinBox()
+        self.spin_height_um.setRange(-1.0, 100000.0)
+        self.spin_height_um.setDecimals(1)
+        self.spin_height_um.setSingleStep(10.0)
+        self.spin_height_um.setValue(self.engine.project.settings.height_um)
+        self.spin_height_um.setSuffix(" µm")
+        self.spin_height_um.setToolTip("Target pattern height in µm (-1 for Fullscreen / Projector FOV)")
+        self.spin_height_um.valueChanged.connect(self._on_pattern_size_changed)
+        size_row.addWidget(self.spin_height_um)
+        size_layout.addLayout(size_row)
+
+        btn_row = QHBoxLayout()
+        self.btn_fullscreen = QPushButton("Fullscreen (-1)")
+        self.btn_fullscreen.setToolTip("Set both dimensions to -1 for quick single-tile fullscreen projection")
+        self.btn_fullscreen.clicked.connect(self._on_fullscreen_clicked)
+        btn_row.addWidget(self.btn_fullscreen)
+
+        self.btn_match_projector = QPushButton("Set to Projector FOV")
+        self.btn_match_projector.setToolTip("Set physical dimensions to 1 projector frame in µm")
+        self.btn_match_projector.clicked.connect(self._on_match_projector_clicked)
+        btn_row.addWidget(self.btn_match_projector)
+        btn_row.addStretch()
+        size_layout.addLayout(btn_row)
+
+        layout.addWidget(size_group)
         layout.addStretch()
 
     def _refresh_ui(self):
@@ -182,6 +228,14 @@ class ProjectSubpanelWidget(QTabWidget):
         self.spin_overlap_y.blockSignals(True)
         self.spin_overlap_y.setValue(s.overlap_y)
         self.spin_overlap_y.blockSignals(False)
+
+        self.spin_width_um.blockSignals(True)
+        self.spin_width_um.setValue(s.width_um)
+        self.spin_width_um.blockSignals(False)
+
+        self.spin_height_um.blockSignals(True)
+        self.spin_height_um.setValue(s.height_um)
+        self.spin_height_um.blockSignals(False)
 
     def _refresh_layer_selection(self):
         active_idx = self.engine.project.active_layer_index
@@ -246,4 +300,37 @@ class ProjectSubpanelWidget(QTabWidget):
 
     def _on_overlap_y_changed(self, val: float):
         self.engine.project.update_settings(overlap_y=float(val))
+
+    def _on_pattern_size_changed(self):
+        w = self.spin_width_um.value()
+        h = self.spin_height_um.value()
+        self.engine.project.set_pattern_size(w, h)
+
+    def _on_fullscreen_clicked(self):
+        self.spin_width_um.blockSignals(True)
+        self.spin_height_um.blockSignals(True)
+        self.spin_width_um.setValue(-1.0)
+        self.spin_height_um.setValue(-1.0)
+        self.spin_width_um.blockSignals(False)
+        self.spin_height_um.blockSignals(False)
+        self.engine.project.set_pattern_size(-1.0, -1.0)
+        self.bridge.status_message.emit("Set project pattern size to Fullscreen mode (-1 × -1)")
+
+    def _on_match_projector_clicked(self):
+        pw, ph = self.engine.project.projector_size
+        if hasattr(self.engine, "projector") and self.engine.projector is not None:
+            pw, ph = self.engine.projector.projector_size()
+        proj_px = 1.0
+        if self.engine.machine_config is not None:
+            proj_px = float(self.engine.machine_config.optics.projector_pixel_size)
+        w_um = pw * proj_px
+        h_um = ph * proj_px
+        self.spin_width_um.blockSignals(True)
+        self.spin_height_um.blockSignals(True)
+        self.spin_width_um.setValue(w_um)
+        self.spin_height_um.setValue(h_um)
+        self.spin_width_um.blockSignals(False)
+        self.spin_height_um.blockSignals(False)
+        self.engine.project.set_pattern_size(w_um, h_um)
+        self.bridge.status_message.emit(f"Set project pattern size to Projector FOV: {w_um:.1f} × {h_um:.1f} µm")
 

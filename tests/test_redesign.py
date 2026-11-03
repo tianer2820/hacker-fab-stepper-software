@@ -1021,7 +1021,8 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
         self.assertIsNone(err2)
         self.assertTrue(engine.project.chip_progress.has_reference_markers())
 
-        with patch("operations.tiling.AutofocusOperation.execute", return_value=None):
+        with patch("operations.tiling.AutofocusOperation.execute", return_value=None), \
+             patch("operations.tiling.ExposureOperation.execute", return_value=None):
             # Expose Layer 1 at two different locations -> records two origins in chip-space
             engine.stage.move_absolute({"x": 100.0, "y": 200.0, "z": 0.0})
             self.assertIsNone(LayerExposureOperation(layer_index=0).execute(engine.context, lambda p, m: None))

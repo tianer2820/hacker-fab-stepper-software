@@ -180,6 +180,49 @@ class StageMapCanvas(QFrame):
                     sx, sy = self._to_screen(corr_x, corr_y, t)
                     painter.drawRect(QRectF(sx - tile_w / 2, sy - tile_h / 2, tile_w, tile_h))
 
+            # Draw exposed pattern origins and pattern boundaries (Cyan #06b6d4)
+            for orig_idx, orig_chip in enumerate(cp.pattern_origins_chip):
+                orig_w = fov_w
+                orig_h = fov_h
+                if orig_idx < len(cp.pattern_sizes_chip):
+                    stored_sz = cp.pattern_sizes_chip[orig_idx]
+                    if stored_sz[0] > 0 and stored_sz[1] > 0:
+                        orig_w, orig_h = float(stored_sz[0]), float(stored_sz[1])
+
+                ox, oy = float(orig_chip[0]), float(orig_chip[1])
+                hw, hh = orig_w / 2.0, orig_h / 2.0
+                chip_corners = [
+                    (ox - hw, oy - hh),
+                    (ox + hw, oy - hh),
+                    (ox + hw, oy + hh),
+                    (ox - hw, oy + hh),
+                ]
+
+                poly_pts = []
+                for cx_c, cy_c in chip_corners:
+                    corr_x, corr_y = cp.chip_to_corr((cx_c, cy_c))
+                    sx, sy = self._to_screen(corr_x, corr_y, t)
+                    poly_pts.append(QPointF(sx, sy))
+
+                painter.setPen(QPen(QColor("#06b6d4"), 1.5, Qt.DashLine))
+                painter.setBrush(QBrush(QColor(6, 182, 212, 45)))
+                painter.drawPolygon(QPolygonF(poly_pts))
+
+                # Draw origin center point and label
+                oc_corr_x, oc_corr_y = cp.chip_to_corr((ox, oy))
+                osx, osy = self._to_screen(oc_corr_x, oc_corr_y, t)
+                painter.setPen(QPen(QColor("#06b6d4"), 2))
+                painter.setBrush(QBrush(QColor("#06b6d4")))
+                painter.drawEllipse(QPointF(osx, osy), 3, 3)
+                painter.drawLine(QPointF(osx - 5, osy), QPointF(osx + 5, osy))
+                painter.drawLine(QPointF(osx, osy - 5), QPointF(osx, osy + 5))
+
+                font = painter.font()
+                font.setPointSize(8)
+                painter.setFont(font)
+                painter.setPen(QPen(QColor("#38bdf8")))
+                painter.drawText(QPointF(osx + 6, osy - 4), f"Idx {orig_idx + 1}")
+
             # Draw chip markers if recorded
             for idx, m_chip in ((1, cp.marker1_chip), (2, cp.marker2_chip)):
                 if m_chip is not None:
@@ -188,6 +231,10 @@ class StageMapCanvas(QFrame):
                     painter.setPen(QPen(QColor("#10b981"), 1.5))
                     painter.setBrush(QBrush(QColor(16, 185, 129, 180)))
                     painter.drawEllipse(QPointF(msx, msy), 4, 4)
+                    font = painter.font()
+                    font.setPointSize(8)
+                    painter.setFont(font)
+                    painter.drawText(QPointF(msx + 6, msy - 4), f"M{idx}")
 
         # Draw current stage position indicator
         cx, cy, _ = self.parent_widget.engine.stage.get_position()

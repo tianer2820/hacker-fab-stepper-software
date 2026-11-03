@@ -11,7 +11,6 @@ from core.coordinate_system import (
     compute_two_point_rigid_transform,
 )
 from core.events import Event, EventBus
-from lib.tiling import generate_projector_aligned_tiles
 
 
 @dataclass
@@ -78,6 +77,7 @@ class ChipProgress:
     marker1_corr: Optional[Tuple[float, float]] = None
     marker2_corr: Optional[Tuple[float, float]] = None
     pattern_origins_chip: List[Tuple[float, float]] = field(default_factory=list)
+    pattern_sizes_chip: List[Tuple[float, float]] = field(default_factory=list)
     exposure_history: List[ExposureRecord] = field(default_factory=list)
     events: Optional[EventBus] = field(default=None, repr=False, compare=False)
 
@@ -165,10 +165,20 @@ class ChipProgress:
         res = apply_homography_2d(chip_xy, self.get_chip_to_corr_matrix())
         return (float(res[0]), float(res[1]))
 
-    def add_pattern_origin(self, chip_xy: Tuple[float, float]) -> int:
-        """Appends a pattern origin in chip-space (µm) and returns its 0-based index."""
+    def add_pattern_origin(
+        self,
+        chip_xy: Tuple[float, float],
+        size_um: Optional[Tuple[float, float]] = None,
+    ) -> int:
+        """Appends a pattern origin and optional physical size in chip-space (µm) and returns its 0-based index."""
         pt = (float(chip_xy[0]), float(chip_xy[1]))
+        sz = (
+            (float(size_um[0]), float(size_um[1]))
+            if size_um is not None and len(size_um) >= 2
+            else (-1.0, -1.0)
+        )
         self.pattern_origins_chip.append(pt)
+        self.pattern_sizes_chip.append(sz)
         if self.events is not None:
             self.events.emit(Event.CHIP_PROGRESS_CHANGED, self)
         return len(self.pattern_origins_chip) - 1
@@ -192,6 +202,7 @@ class ChipProgress:
         self.marker1_corr = None
         self.marker2_corr = None
         self.pattern_origins_chip.clear()
+        self.pattern_sizes_chip.clear()
         self.exposure_history.clear()
         if self.events is not None:
             self.events.emit(Event.EXPOSURE_HISTORY_CHANGED, self.exposure_history)
@@ -205,6 +216,7 @@ class ChipProgress:
             "marker1_corr": list(self.marker1_corr) if self.marker1_corr is not None else None,
             "marker2_corr": list(self.marker2_corr) if self.marker2_corr is not None else None,
             "pattern_origins_chip": [[float(p[0]), float(p[1])] for p in self.pattern_origins_chip],
+            "pattern_sizes_chip": [[float(s[0]), float(s[1])] for s in self.pattern_sizes_chip],
             "exposure_history": [rec.to_disk() for rec in self.exposure_history],
         }
 
@@ -225,6 +237,14 @@ class ChipProgress:
             for p in d.get("pattern_origins_chip", [])
             if isinstance(p, (list, tuple)) and len(p) >= 2
         ]
+        sizes = [
+            (float(s[0]), float(s[1]))
+            for s in d.get("pattern_sizes_chip", [])
+            if isinstance(s, (list, tuple)) and len(s) >= 2
+        ]
+        while len(sizes) < len(origins):
+            sizes.append((-1.0, -1.0))
+
         history = [
             ExposureRecord.from_disk(r)
             for r in d.get("exposure_history", [])
@@ -236,6 +256,7 @@ class ChipProgress:
             marker1_corr=m1_corr,
             marker2_corr=m2_corr,
             pattern_origins_chip=origins,
+            pattern_sizes_chip=sizes,
             exposure_history=history,
             events=events,
         )
@@ -259,12 +280,16 @@ class PatterningSettings:
     exposure_time: float = 8000.0  # ms
     overlap_x: float = 5.0  # µm
     overlap_y: float = 5.0  # µm
+    width_um: float = -1.0  # µm (-1 when height_um == -1 uses Fullscreen Projector mode)
+    height_um: float = -1.0  # µm
 
     def to_disk(self) -> dict:
         return {
             "exposure_time": self.exposure_time,
             "overlap_x": self.overlap_x,
             "overlap_y": self.overlap_y,
+            "width_um": self.width_um,
+            "height_um": self.height_um,
         }
 
     @classmethod
@@ -273,6 +298,8 @@ class PatterningSettings:
             exposure_time=float(d.get("exposure_time", 8000.0)),
             overlap_x=float(d.get("overlap_x", 5.0)),
             overlap_y=float(d.get("overlap_y", 5.0)),
+            width_um=float(d.get("width_um", -1.0)),
+            height_um=float(d.get("height_um", -1.0)),
         )
 
     def with_overrides(self, overrides: "LayerSettingsOverride") -> "PatterningSettings":
@@ -283,6 +310,8 @@ class PatterningSettings:
             else self.exposure_time,
             overlap_x=self.overlap_x,
             overlap_y=self.overlap_y,
+            width_um=self.width_um,
+            height_um=self.height_um,
         )
 
 
@@ -308,8 +337,8 @@ class ChipLayer:
 
     name: str = "Layer 1"
     pattern_path: Optional[str] = None
-    width_um: float = -1.0  # µm (-1 when height_um == -1 uses Fullscreen Projector mode)
-    height_um: float = -1.0  # µm
+    width_um: float = -1.0
+    height_um: float = -1.0
     threshold: int = 50
     overrides: LayerSettingsOverride = field(default_factory=LayerSettingsOverride)
 
@@ -323,6 +352,36 @@ class ChipLayer:
 
     events: Optional[Any] = field(default=None, repr=False, compare=False)
     _project: Optional["ChipProject"] = field(default=None, repr=False, compare=False)
+
+    @property
+    def width_um(self) -> float:
+        if self._project is not None:
+            return float(self._project.settings.width_um)
+        return float(getattr(self, "_w_um", -1.0))
+
+    @width_um.setter
+    def width_um(self, val: Any):
+        if isinstance(val, property):
+            val = -1.0
+        val_f = float(val)
+        self._w_um = val_f
+        if self._project is not None:
+            self._project.set_pattern_size(val_f, self._project.settings.height_um)
+
+    @property
+    def height_um(self) -> float:
+        if self._project is not None:
+            return float(self._project.settings.height_um)
+        return float(getattr(self, "_h_um", -1.0))
+
+    @height_um.setter
+    def height_um(self, val: Any):
+        if isinstance(val, property):
+            val = -1.0
+        val_f = float(val)
+        self._h_um = val_f
+        if self._project is not None:
+            self._project.set_pattern_size(self._project.settings.width_um, val_f)
 
     @property
     def is_fullscreen_mode(self) -> bool:
@@ -346,12 +405,15 @@ class ChipLayer:
             self.events.emit(Event.EXPOSURE_CONFIG_CHANGED)
 
     def set_dimensions_um(self, width_um: float, height_um: float):
-        self.width_um = float(width_um)
-        self.height_um = float(height_um)
-        self._tile_cache = []
-        self._tile_coords = []
-        if self.events is not None:
-            self.events.emit(Event.EXPOSURE_CONFIG_CHANGED)
+        if self._project is not None:
+            self._project.set_pattern_size(float(width_um), float(height_um))
+        else:
+            self._width_um = float(width_um)
+            self._height_um = float(height_um)
+            self._tile_cache = []
+            self._tile_coords = []
+            if self.events is not None:
+                self.events.emit(Event.EXPOSURE_CONFIG_CHANGED)
 
     def set_physical_size(self, width_um: float, height_um: float):
         self.set_dimensions_um(width_um, height_um)
@@ -418,6 +480,8 @@ class ChipLayer:
             if self._project.chip_progress is not None
             else np.eye(3, dtype=np.float64)
         )
+
+        from lib.tiling import generate_projector_aligned_tiles
 
         tiles, tile_coords = generate_projector_aligned_tiles(
             img=pattern,
@@ -526,12 +590,25 @@ class ChipProject:
     def __post_init__(self):
         if not self.layers:
             self.layers = [ChipLayer(name="Layer 1", events=self.events, _project=self)]
+        # If any layer had width_um/height_um specified while settings was default, initialize settings
         for layer in self.layers:
+            if self.settings.width_um <= 0 and getattr(layer, "_w_um", -1.0) > 0:
+                self.settings.width_um = layer._w_um
+            if self.settings.height_um <= 0 and getattr(layer, "_h_um", -1.0) > 0:
+                self.settings.height_um = layer._h_um
             layer.events = self.events
             layer._project = self
         self.chip_progress.events = self.events
         if self.active_layer_index >= len(self.layers):
             self.active_layer_index = max(0, len(self.layers) - 1)
+
+    def set_pattern_size(self, width_um: float, height_um: float):
+        """Sets the project-wide pattern physical dimensions in µm for all layers."""
+        self.settings.width_um = float(width_um)
+        self.settings.height_um = float(height_um)
+        self.invalidate_all_tile_caches()
+        if self.events is not None:
+            self.events.emit(Event.EXPOSURE_CONFIG_CHANGED)
 
     def set_eventbus(self, events: Optional[Any]) -> None:
         self.events = events
@@ -632,8 +709,18 @@ class ChipProject:
     @classmethod
     def from_disk(cls, d: dict, events: Optional[Any] = None) -> "ChipProject":
         name = d.get("name", "Untitled Project")
-        settings = PatterningSettings.from_disk(d.get("settings", {}))
-        layers = [ChipLayer.from_disk(l) for l in d.get("layers", [])]
+        settings_dict = d.get("settings", {})
+        layers_data = d.get("layers", [])
+        settings = PatterningSettings.from_disk(settings_dict)
+
+        # Backwards compatibility: if width_um/height_um not present in settings, pull from first layer
+        if ("width_um" not in settings_dict or "height_um" not in settings_dict) and layers_data:
+            if "width_um" not in settings_dict:
+                settings.width_um = float(layers_data[0].get("width_um", -1.0))
+            if "height_um" not in settings_dict:
+                settings.height_um = float(layers_data[0].get("height_um", -1.0))
+
+        layers = [ChipLayer.from_disk(l) for l in layers_data]
         active_idx = int(d.get("active_layer_index", 0))
         active_tile = int(d.get("active_tile_index", 0))
         return cls(

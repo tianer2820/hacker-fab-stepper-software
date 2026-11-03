@@ -72,28 +72,43 @@ class LayerExposureOperation(Operation):
         pos = context.stage.get_position() if context.stage is not None else (0.0, 0.0, 0.0)
         cur_chip_xy = chip_progress.corr_to_chip((float(pos[0]), float(pos[1])))
 
+        # Determine effective physical pattern size (using calculated projector size if -1)
+        pw, ph = project.projector_size
+        proj_px = 1.0
+        if context.machine_config is not None:
+            proj_px = float(context.machine_config.optics.projector_pixel_size)
+        img = layer.get_pattern_image()
+        img_shape = img.shape if img is not None else (ph, pw)
+        from lib.tiling import resolve_layer_physical_size
+        eff_w_um, eff_h_um = resolve_layer_physical_size(
+            img_shape,
+            layer.width_um,
+            layer.height_um,
+            projector_size=(pw, ph),
+            projector_pixel_size=proj_px,
+        )
+        effective_pattern_size = (float(eff_w_um), float(eff_h_um))
+
         # Resolve target origin(s) in chip-space
         origins: List[Tuple[float, float]] = []
-        if self.layer_index == 0 and self.origin_mode in ("auto", "current"):
+        if self.origin_mode == "current" or (self.layer_index == 0 and self.origin_mode in ("auto", "current")):
             origins = [cur_chip_xy]
-            chip_progress.add_pattern_origin(cur_chip_xy)
+            chip_progress.add_pattern_origin(cur_chip_xy, size_um=effective_pattern_size)
             if context.event_bus is not None:
                 context.event_bus.emit(Event.CHIP_PROGRESS_CHANGED, chip_progress)
+        elif (
+            self.origin_mode == "index"
+            and self.origin_index is not None
+            and 0 <= self.origin_index < len(chip_progress.pattern_origins_chip)
+        ):
+            origins = [chip_progress.pattern_origins_chip[self.origin_index]]
+        elif self.origin_mode in ("all", "auto") and chip_progress.pattern_origins_chip:
+            origins = list(chip_progress.pattern_origins_chip)
         else:
-            if self.origin_mode == "current" or not chip_progress.pattern_origins_chip:
-                origins = [cur_chip_xy]
-                if self.layer_index == 0:
-                    chip_progress.add_pattern_origin(cur_chip_xy)
-                    if context.event_bus is not None:
-                        context.event_bus.emit(Event.CHIP_PROGRESS_CHANGED, chip_progress)
-            elif (
-                self.origin_mode == "index"
-                and self.origin_index is not None
-                and 0 <= self.origin_index < len(chip_progress.pattern_origins_chip)
-            ):
-                origins = [chip_progress.pattern_origins_chip[self.origin_index]]
-            else:
-                origins = list(chip_progress.pattern_origins_chip)
+            origins = [cur_chip_xy]
+            chip_progress.add_pattern_origin(cur_chip_xy, size_um=effective_pattern_size)
+            if context.event_bus is not None:
+                context.event_bus.emit(Event.CHIP_PROGRESS_CHANGED, chip_progress)
 
         total_steps = len(origins) * total_tiles_per_origin
         report_progress(

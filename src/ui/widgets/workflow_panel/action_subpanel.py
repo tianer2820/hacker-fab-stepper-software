@@ -117,24 +117,24 @@ class ActionSubpanelWidget(QWidget):
         self.combo_origin.clear()
         origins = cp.pattern_origins_chip
 
-        if layer_idx == 0:
-            self.combo_origin.addItem("Current Stage Pos (Record Origin)", ("current", None))
-            if origins:
-                self.combo_origin.addItem(f"All Recorded Origins ({len(origins)})", ("all", None))
-                for idx, (ox, oy) in enumerate(origins):
-                    self.combo_origin.addItem(f"Origin #{idx + 1} ({ox:.0f}, {oy:.0f} µm)", ("index", idx))
-        else:
-            if origins:
-                self.combo_origin.addItem(f"All Recorded Origins ({len(origins)})", ("all", None))
-                for idx, (ox, oy) in enumerate(origins):
-                    self.combo_origin.addItem(f"Origin #{idx + 1} ({ox:.0f}, {oy:.0f} µm)", ("index", idx))
-            self.combo_origin.addItem("Current Stage Position", ("current", None))
+        self.combo_origin.addItem("Create new (current pos)", ("current", None))
+        if origins:
+            self.combo_origin.addItem(f"All previous ({len(origins)})", ("all", None))
+            for idx, (ox, oy) in enumerate(origins):
+                self.combo_origin.addItem(f"Idx {idx + 1}", ("index", idx))
+                self.combo_origin.setItemData(
+                    self.combo_origin.count() - 1,
+                    f"Origin {idx + 1} at ({ox:.1f}, {oy:.1f}) µm",
+                    Qt.ToolTipRole,
+                )
 
         if prev_data is not None:
             for i in range(self.combo_origin.count()):
                 if self.combo_origin.itemData(i) == prev_data:
                     self.combo_origin.setCurrentIndex(i)
                     break
+        elif layer_idx > 0 and origins:
+            self.combo_origin.setCurrentIndex(1)
         self.combo_origin.blockSignals(False)
 
     def _on_expose_clicked(self):

@@ -99,8 +99,8 @@ class LayerSubpanelWidget(QTabWidget):
         mid_row.addStretch()
         layout.addLayout(mid_row)
 
-        # Pattern Physical Size section
-        scale_box = QGroupBox("Pattern Physical Size (µm)")
+        # Pattern Physical Size section (Project Setting - applies to all layers)
+        scale_box = QGroupBox("Pattern Physical Size (µm) (Project Setting)")
         scale_layout = QVBoxLayout(scale_box)
         scale_layout.setContentsMargins(6, 6, 6, 6)
         scale_layout.setSpacing(6)
@@ -363,8 +363,8 @@ class LayerSubpanelWidget(QTabWidget):
         self.spin_height_um.setValue(-1.0)
         self.spin_width_um.blockSignals(False)
         self.spin_height_um.blockSignals(False)
-        self.engine.project.active_layer.set_physical_size(-1.0, -1.0)
-        self.bridge.status_message.emit("Set layer pattern to Fullscreen Projector mode (-1 × -1)")
+        self.engine.project.set_pattern_size(-1.0, -1.0)
+        self.bridge.status_message.emit("Set project pattern size to Fullscreen mode (-1 × -1)")
 
     def _on_match_projector_clicked(self):
         pw, ph = self.engine.project.projector_size
@@ -381,8 +381,8 @@ class LayerSubpanelWidget(QTabWidget):
         self.spin_height_um.setValue(h_um)
         self.spin_width_um.blockSignals(False)
         self.spin_height_um.blockSignals(False)
-        self.engine.project.active_layer.set_physical_size(w_um, h_um)
-        self.bridge.status_message.emit(f"Set pattern size to Projector FOV: {w_um:.1f} × {h_um:.1f} µm")
+        self.engine.project.set_pattern_size(w_um, h_um)
+        self.bridge.status_message.emit(f"Set project pattern size to Projector FOV: {w_um:.1f} × {h_um:.1f} µm")
 
     def _on_regenerate_tiles_clicked(self):
         layer = self.engine.project.active_layer

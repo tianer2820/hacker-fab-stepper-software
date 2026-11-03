@@ -1,8 +1,10 @@
 from .autofocus import AutofocusOperation
 from .chip_z_leveling import (
     ChipZLevelingOperation,
+    ExposeMarkerAndRecordOperation,
     LocateChipMarkerOperation,
     chip_z_leveling,
+    generate_marker_pattern,
     locate_chip_marker,
 )
 from .exposure import ExposureOperation
@@ -39,6 +41,8 @@ __all__ = [
     "PatternSource",
     "ChipZLevelingOperation",
     "LocateChipMarkerOperation",
+    "ExposeMarkerAndRecordOperation",
+    "generate_marker_pattern",
     "chip_z_leveling",
     "locate_chip_marker",
 ]

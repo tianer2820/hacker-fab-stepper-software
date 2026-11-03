@@ -62,9 +62,15 @@ def resolve_layer_physical_size(
     img_shape: Tuple[int, ...],
     width_um: float,
     height_um: float,
+    projector_size: Tuple[int, int] = (1920, 1080),
+    projector_pixel_size: float = 1.0,
 ) -> Tuple[float, float]:
-    """Resolves (w_um, h_um) from layer width_um and height_um, inferring from aspect ratio if one is <= 0."""
+    """Resolves (w_um, h_um) from layer width_um and height_um, inferring from aspect ratio if one is <= 0.
+    If both are <= 0 (fullscreen mode), resolves to the calculated projector size in physical units (µm).
+    """
     img_h, img_w = int(img_shape[0]), int(img_shape[1])
+    pw, ph = int(projector_size[0]), int(projector_size[1])
+    proj_px = float(projector_pixel_size) if float(projector_pixel_size) > 0 else 1.0
     if width_um > 0 and height_um > 0:
         return float(width_um), float(height_um)
     elif width_um > 0 and height_um <= 0:
@@ -75,7 +81,7 @@ def resolve_layer_physical_size(
         h = float(height_um)
         w = h * (float(img_w) / max(1.0, float(img_h)))
         return w, h
-    return -1.0, -1.0
+    return float(pw * proj_px), float(ph * proj_px)
 
 
 def generate_projector_aligned_tiles(
@@ -111,9 +117,15 @@ def generate_projector_aligned_tiles(
     pw, ph = int(projector_size[0]), int(projector_size[1])
     img_h, img_w = img.shape[:2]
 
-    w_um, h_um = resolve_layer_physical_size(img.shape, width_um, height_um)
+    w_um, h_um = resolve_layer_physical_size(
+        img.shape,
+        width_um,
+        height_um,
+        projector_size=(pw, ph),
+        projector_pixel_size=projector_pixel_size,
+    )
     if w_um <= 0 or h_um <= 0:
-        # Fullscreen projector mode
+        # Fallback if size could not be determined
         tile = fit_pattern_to_projector_canvas(img, projector_size=(pw, ph), nearest_interp=nearest_interp)
         return [tile], [(0.0, 0.0)]
 

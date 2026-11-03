@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QRadioButton,
     QScrollArea,
@@ -25,6 +26,7 @@ from core.events import ColorMode, ProjectorImageSource
 from operations import (
     AutofocusOperation,
     ChipZLevelingOperation,
+    ExposeMarkerAndRecordOperation,
     HomeOperation,
     JogOperation,
     LocateChipMarkerOperation,
@@ -262,6 +264,13 @@ class ManualControlTabWidget(QScrollArea):
         self.btn_locate_chip_marker.clicked.connect(self._on_locate_chip_marker_clicked)
         chip_layout.addWidget(self.btn_locate_chip_marker)
 
+        self.btn_expose_marker_and_record = QPushButton("Expose Marker and Record")
+        self.btn_expose_marker_and_record.setToolTip(
+            "Generates fiducial marker pattern with selected index, autofocuses, exposes on projector at center of screen, and records marker location"
+        )
+        self.btn_expose_marker_and_record.clicked.connect(self._on_expose_marker_and_record_clicked)
+        chip_layout.addWidget(self.btn_expose_marker_and_record)
+
         manual_layout.addWidget(chip_box)
 
         # 4b. Projector-Camera Calibration Group Box (below Chip Calibration)
@@ -347,6 +356,20 @@ class ManualControlTabWidget(QScrollArea):
     def _on_locate_chip_marker_clicked(self):
         idx = 2 if self.radio_marker_2.isChecked() else 1
         op = LocateChipMarkerOperation(idx=idx)
+        self.bridge.start_operation(op)
+
+    def _on_expose_marker_and_record_clicked(self):
+        idx = 2 if self.radio_marker_2.isChecked() else 1
+        cp = self.engine.project.chip_progress if self.engine.project else None
+        if cp is not None:
+            if (idx == 1 and cp.marker1_chip is not None) or (idx == 2 and cp.marker2_chip is not None):
+                QMessageBox.warning(
+                    self,
+                    "Marker Already Recorded",
+                    f"Marker {idx} is already recorded. Please reset chip progress before re-recording.",
+                )
+                return
+        op = ExposeMarkerAndRecordOperation(idx=idx)
         self.bridge.start_operation(op)
 
     def _on_proj_cam_cal_clicked(self):
@@ -469,6 +492,7 @@ class ManualControlTabWidget(QScrollArea):
             self.radio_marker_1,
             self.radio_marker_2,
             self.btn_locate_chip_marker,
+            self.btn_expose_marker_and_record,
             self.btn_proj_cam_cal,
             self.btn_maximize_sharpness,
             self.spin_sharp_z_range,
