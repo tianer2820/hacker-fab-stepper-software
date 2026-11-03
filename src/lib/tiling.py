@@ -117,6 +117,11 @@ def generate_projector_aligned_tiles(
     pw, ph = int(projector_size[0]), int(projector_size[1])
     img_h, img_w = img.shape[:2]
 
+    if width_um <= 0 and height_um <= 0:
+        # Fullscreen projector mode: always a single full screen tile fitted to the projector canvas
+        tile = fit_pattern_to_projector_canvas(img, projector_size=(pw, ph), nearest_interp=nearest_interp)
+        return [tile], [(0.0, 0.0)]
+
     w_um, h_um = resolve_layer_physical_size(
         img.shape,
         width_um,

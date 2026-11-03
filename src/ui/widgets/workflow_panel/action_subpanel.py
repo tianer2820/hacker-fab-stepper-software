@@ -161,12 +161,13 @@ class ActionSubpanelWidget(QWidget):
         layer_idx = self.engine.project.active_layer_index
         layer = self.engine.project.active_layer
         effective = self.engine.project.settings.with_overrides(layer.overrides)
-        tile_idx = self.engine.project.active_tile_index
+        tile_idx = 0 if layer.is_fullscreen_mode else self.engine.project.active_tile_index
 
         op = ExposureOperation(
             layer_index=layer_idx,
             exposure_time=effective.exposure_time,
             tile_index=tile_idx,
+            record_origin=True,
         )
         self.bridge.start_operation(op)
 

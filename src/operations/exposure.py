@@ -14,11 +14,13 @@ class ExposureOperation(Operation):
         layer_index: Optional[int] = None,
         exposure_time: Optional[float] = None,
         tile_index: Optional[int] = None,
+        record_origin: bool = False,
     ):
         super().__init__("Layer Exposure" if layer_index is not None else "Exposure")
         self.layer_index = layer_index
         self.exposure_time = exposure_time
         self.tile_index = tile_index
+        self.record_origin = bool(record_origin)
 
     def execute(self, context: ExecutionContext, report_progress: Callable[[float, str], None]) -> Optional[str]:
         if self.exposure_time is not None:
@@ -48,13 +50,13 @@ class ExposureOperation(Operation):
         if self.layer_index is not None and context.project is not None:
             # Select layer and tile, and set projector image source to ACTIVE_LAYER
             context.project.select_layer(self.layer_index)
-            if self.tile_index is not None:
-                context.project.select_tile(self.tile_index)
-            context.projector.set_image_source(ProjectorImageSource.ACTIVE_LAYER)
-
             # Pre-render the tile into cache and configure UV pattern before turning projector on
-            tile_idx = self.tile_index if self.tile_index is not None else context.project.active_tile_index
             layer.generate_tiles()
+            tile_idx = self.tile_index if self.tile_index is not None else context.project.active_tile_index
+            if layer._tile_cache and (tile_idx < 0 or tile_idx >= len(layer._tile_cache)):
+                tile_idx = 0
+            context.project.select_tile(tile_idx)
+            context.projector.set_image_source(ProjectorImageSource.ACTIVE_LAYER)
             layer.get_tile(tile_idx)
 
         context.projector.set_color_mode(ColorMode.UV)
@@ -131,6 +133,23 @@ class ExposureOperation(Operation):
                     footprint_chip_corners=footprint_chip,
                 )
                 context.project.add_exposure_record(record)
+
+                if self.record_origin and not self.is_aborted and self.layer_index is not None and layer is not None:
+                    from lib.tiling import resolve_layer_physical_size
+                    img = layer.get_pattern_image()
+                    img_shape = img.shape if img is not None else (proj_size[1], proj_size[0])
+                    eff_w, eff_h = resolve_layer_physical_size(
+                        img_shape,
+                        layer.width_um,
+                        layer.height_um,
+                        projector_size=proj_size,
+                        projector_pixel_size=proj_px,
+                    )
+                    context.project.chip_progress.add_pattern_origin(
+                        chip_xy,
+                        size_um=(float(eff_w), float(eff_h)),
+                    )
+
                 if context.event_bus is not None:
                     context.event_bus.emit(Event.CHIP_PROGRESS_CHANGED, context.project.chip_progress)
 

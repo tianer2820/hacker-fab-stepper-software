@@ -268,6 +268,62 @@ class TestChipZLeveling(unittest.TestCase):
         self.assertEqual(project.chip_progress.pattern_origins_chip, [(500.0, 600.0)])
         self.assertEqual(project.chip_progress.pattern_sizes_chip, [(w, h)])
 
+    def test_quick_expose_single_fullscreen_tile_and_origin_creation(self):
+        from operations.exposure import ExposureOperation
+        from core.machine_config import MachineConfig
+        import tempfile
+        import cv2
+
+        project = ChipProject()
+        cfg = MachineConfig()
+        cfg.optics.projector_pixel_size = 1.25
+        cfg.stage_calibration.camera_pixel_size = 1.0
+        # Simulated rotation between projector and stage
+        cfg.optics.proj_to_cam_matrix = [[1.0, 0.08, 0.0], [-0.08, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        project.machine_config = cfg
+
+        layer = project.active_layer
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            img = np.zeros((100, 200, 3), dtype=np.uint8)
+            cv2.imwrite(f.name, img)
+            temp_path = f.name
+
+        try:
+            layer.set_pattern_path(temp_path)
+            # Ensure fullscreen mode (-1, -1) produces a single tile even under rotation
+            tiles, coords = layer.generate_tiles(force=True)
+            self.assertEqual(len(tiles), 1)
+            self.assertEqual(coords, [(0.0, 0.0)])
+
+            # Execute quick expose with record_origin=True
+            stage = DummyStage()
+            stage.move_absolute({"x": 450.0, "y": 650.0, "z": 0.0})
+            proj_mock = MagicMock()
+            proj_mock.projector_size.return_value = (1920, 1080)
+            cam_mock = MagicMock()
+            cam_mock._last_frame_size = (1920, 1080)
+
+            context = ExecutionContext(
+                stage=stage,
+                projector=proj_mock,
+                camera=cam_mock,
+                project=project,
+                machine_config=cfg,
+                delay_func=lambda d: None,
+            )
+
+            op = ExposureOperation(layer_index=0, exposure_time=10.0, record_origin=True)
+            err = op.execute(context, lambda p, m: None)
+            self.assertIsNone(err)
+
+            # Verify new origin and calculated projector size recorded
+            self.assertEqual(project.chip_progress.pattern_origins_chip, [(450.0, 650.0)])
+            self.assertEqual(project.chip_progress.pattern_sizes_chip, [(1920 * 1.25, 1080 * 1.25)])
+            self.assertEqual(len(project.exposure_history), 1)
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
 
 if __name__ == "__main__":
     unittest.main()
