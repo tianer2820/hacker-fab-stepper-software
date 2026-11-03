@@ -15,12 +15,14 @@ class ExposureOperation(Operation):
         exposure_time: Optional[float] = None,
         tile_index: Optional[int] = None,
         record_origin: bool = False,
+        single_fullscreen_tile: bool = False,
     ):
         super().__init__("Layer Exposure" if layer_index is not None else "Exposure")
         self.layer_index = layer_index
         self.exposure_time = exposure_time
         self.tile_index = tile_index
         self.record_origin = bool(record_origin)
+        self.single_fullscreen_tile = bool(single_fullscreen_tile)
 
     def execute(self, context: ExecutionContext, report_progress: Callable[[float, str], None]) -> Optional[str]:
         if self.exposure_time is not None:
@@ -51,7 +53,10 @@ class ExposureOperation(Operation):
             # Select layer and tile, and set projector image source to ACTIVE_LAYER
             context.project.select_layer(self.layer_index)
             # Pre-render the tile into cache and configure UV pattern before turning projector on
-            layer.generate_tiles()
+            if self.single_fullscreen_tile:
+                layer.generate_tiles(single_fullscreen_tile=True)
+            else:
+                layer.generate_tiles()
             tile_idx = self.tile_index if self.tile_index is not None else context.project.active_tile_index
             if layer._tile_cache and (tile_idx < 0 or tile_idx >= len(layer._tile_cache)):
                 tile_idx = 0
@@ -149,6 +154,10 @@ class ExposureOperation(Operation):
                         chip_xy,
                         size_um=(float(eff_w), float(eff_h)),
                     )
+
+                if self.single_fullscreen_tile and layer is not None:
+                    # Restore standard layer tiling cache so UI previews and multi-tile expose operations remain consistent
+                    layer.generate_tiles()
 
                 if context.event_bus is not None:
                     context.event_bus.emit(Event.CHIP_PROGRESS_CHANGED, context.project.chip_progress)

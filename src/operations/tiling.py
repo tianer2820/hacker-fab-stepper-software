@@ -191,6 +191,8 @@ class LayerExposureOperation(Operation):
                         layer_index=self.layer_index,
                         exposure_time=exp_time,
                         tile_index=tile_idx,
+                        record_origin=False,
+                        single_fullscreen_tile=False,
                     )
                     err = self._run_sub_op(exp_op, context, exp_reporter)
                     if err or self.is_aborted:

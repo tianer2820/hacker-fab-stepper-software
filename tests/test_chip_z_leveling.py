@@ -290,12 +290,16 @@ class TestChipZLeveling(unittest.TestCase):
 
         try:
             layer.set_pattern_path(temp_path)
-            # Ensure fullscreen mode (-1, -1) produces a single tile even under rotation
-            tiles, coords = layer.generate_tiles(force=True)
-            self.assertEqual(len(tiles), 1)
+            # Regular tiling with dimension = -1 under rotation keeps tiling behavior (> 1 tiles)
+            tiles_reg, _ = layer.generate_tiles(force=True, single_fullscreen_tile=False)
+            self.assertGreater(len(tiles_reg), 1)
+
+            # Fullscreen single tile mode produces exactly 1 tile
+            tiles_single, coords = layer.generate_tiles(force=True, single_fullscreen_tile=True)
+            self.assertEqual(len(tiles_single), 1)
             self.assertEqual(coords, [(0.0, 0.0)])
 
-            # Execute quick expose with record_origin=True
+            # Execute quick expose with record_origin=True and single_fullscreen_tile=True
             stage = DummyStage()
             stage.move_absolute({"x": 450.0, "y": 650.0, "z": 0.0})
             proj_mock = MagicMock()
@@ -312,7 +316,12 @@ class TestChipZLeveling(unittest.TestCase):
                 delay_func=lambda d: None,
             )
 
-            op = ExposureOperation(layer_index=0, exposure_time=10.0, record_origin=True)
+            op = ExposureOperation(
+                layer_index=0,
+                exposure_time=10.0,
+                record_origin=True,
+                single_fullscreen_tile=True,
+            )
             err = op.execute(context, lambda p, m: None)
             self.assertIsNone(err)
 
@@ -320,6 +329,9 @@ class TestChipZLeveling(unittest.TestCase):
             self.assertEqual(project.chip_progress.pattern_origins_chip, [(450.0, 650.0)])
             self.assertEqual(project.chip_progress.pattern_sizes_chip, [(1920 * 1.25, 1080 * 1.25)])
             self.assertEqual(len(project.exposure_history), 1)
+
+            # Verify that regular tiling cache is restored after quick expose completes
+            self.assertGreater(len(layer._tile_cache), 1)
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)

@@ -1,8 +1,10 @@
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
     QGroupBox,
     QLabel,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -158,6 +160,16 @@ class ActionSubpanelWidget(QWidget):
         self.bridge.start_operation(op)
 
     def _on_quick_expose_clicked(self):
+        data = self.combo_origin.currentData()
+        origin_mode = data[0] if isinstance(data, tuple) and len(data) == 2 else None
+        if origin_mode != "current":
+            QMessageBox.warning(
+                self,
+                "Quick Expose Unavailable",
+                "Quick expose is not available for overlapped exposure. Target origin mode must be set to 'Create new (current pos)'.",
+            )
+            return
+
         layer_idx = self.engine.project.active_layer_index
         layer = self.engine.project.active_layer
         effective = self.engine.project.settings.with_overrides(layer.overrides)
@@ -168,6 +180,7 @@ class ActionSubpanelWidget(QWidget):
             exposure_time=effective.exposure_time,
             tile_index=tile_idx,
             record_origin=True,
+            single_fullscreen_tile=layer.is_fullscreen_mode,
         )
         self.bridge.start_operation(op)
 

@@ -97,11 +97,16 @@ def generate_projector_aligned_tiles(
     proj_to_cam_matrix: Optional[Sequence[Sequence[float]] | np.ndarray] = None,
     corr_to_chip_matrix: Optional[np.ndarray] = None,
     nearest_interp: bool = True,
+    single_fullscreen_tile: bool = False,
 ) -> Tuple[List[np.ndarray], List[Tuple[float, float]]]:
     """Generates projector-space tiles covering the layer's chip-space area.
 
-    If both width_um <= 0 and height_um <= 0, operates in Fullscreen Projector mode
-    (single tile fitted to the projector canvas at offset (0.0, 0.0)).
+    If single_fullscreen_tile is True and both width_um <= 0 and height_um <= 0,
+    operates in Fullscreen Projector single-tile mode (single tile fitted to the projector
+    canvas at offset (0.0, 0.0), e.g. for Quick Expose Here).
+    Otherwise, when width_um <= 0 and height_um <= 0, resolves the physical footprint
+    using the calculated projector FOV and generates standard projector-aligned tiles
+    (tiling behavior covering the chip-space footprint under rotation).
 
     Otherwise:
       1. Resolves physical dimensions (w_um, h_um) in chip-space.
@@ -117,8 +122,8 @@ def generate_projector_aligned_tiles(
     pw, ph = int(projector_size[0]), int(projector_size[1])
     img_h, img_w = img.shape[:2]
 
-    if width_um <= 0 and height_um <= 0:
-        # Fullscreen projector mode: always a single full screen tile fitted to the projector canvas
+    if single_fullscreen_tile and width_um <= 0 and height_um <= 0:
+        # Fullscreen projector single-tile mode (e.g. quick expose here)
         tile = fit_pattern_to_projector_canvas(img, projector_size=(pw, ph), nearest_interp=nearest_interp)
         return [tile], [(0.0, 0.0)]
 

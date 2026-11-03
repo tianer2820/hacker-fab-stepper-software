@@ -1060,6 +1060,42 @@ class TestExposureColorModeAndTilingUpdates(unittest.TestCase):
             self.assertAlmostEqual(stage_targets[1][0], 550.0, places=3)
             self.assertAlmostEqual(stage_targets[1][1], 570.0, places=3)
 
+    def test_quick_expose_origin_mode_validation_and_qt_imports(self):
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        from ui.widgets.workflow_panel.action_subpanel import ActionSubpanelWidget
+        from ui.bridge import QtEngineBridge
+
+        if not QApplication.instance():
+            _ = QApplication(["test", "-platform", "offscreen"])
+        engine = self._create_engine()
+        bridge = QtEngineBridge(engine)
+        panel = ActionSubpanelWidget(engine, bridge)
+
+        # 1. Verify combo origin populates without "Qt not found" error
+        engine.project.chip_progress.add_pattern_origin((100.0, 200.0), size_um=(1000.0, 1000.0))
+        panel._refresh_dashboard()
+        self.assertEqual(panel.combo_origin.count(), 3)
+        self.assertEqual(panel.combo_origin.itemText(0), "Create new (current pos)")
+        self.assertEqual(panel.combo_origin.itemText(1), "All previous (1)")
+        self.assertEqual(panel.combo_origin.itemText(2), "Idx 1")
+
+        # 2. When origin mode is NOT "current", quick expose aborts and shows warning
+        panel.combo_origin.setCurrentIndex(1)  # All previous
+        with patch.object(QMessageBox, "warning") as mock_warn, patch.object(bridge, "start_operation") as mock_start:
+            panel._on_quick_expose_clicked()
+            mock_warn.assert_called_once()
+            mock_start.assert_not_called()
+
+        # 3. When origin mode is "current", quick expose proceeds and passes single_fullscreen_tile
+        panel.combo_origin.setCurrentIndex(0)  # Create new
+        with patch.object(QMessageBox, "warning") as mock_warn, patch.object(bridge, "start_operation") as mock_start:
+            panel._on_quick_expose_clicked()
+            mock_warn.assert_not_called()
+            mock_start.assert_called_once()
+            op = mock_start.call_args[0][0]
+            self.assertTrue(op.record_origin)
+            self.assertTrue(op.single_fullscreen_tile)
+
 
 if __name__ == "__main__":
     unittest.main()

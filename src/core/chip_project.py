@@ -442,14 +442,16 @@ class ChipLayer:
     def generate_tiles(
         self,
         force: bool = False,
+        single_fullscreen_tile: bool = False,
     ) -> tuple[list[np.ndarray], list[tuple[float, float]]]:
         """Generates projector-space tiles and their relative chip-space coordinates."""
-        if force:
+        cached_single = getattr(self, "_tile_cache_single_fullscreen", False)
+        if force or cached_single != single_fullscreen_tile:
             self._pattern_cache = None
             self._tile_cache = []
             self._tile_coords = []
 
-        if not force and self._tile_cache:
+        if not force and self._tile_cache and cached_single == single_fullscreen_tile:
             return self._tile_cache, self._tile_coords
 
         assert self._project is not None
@@ -459,6 +461,7 @@ class ChipLayer:
         if pattern is None:
             self._tile_cache = []
             self._tile_coords = []
+            self._tile_cache_single_fullscreen = single_fullscreen_tile
             if self.events is not None:
                 self.events.emit(Event.LAYER_CACHE_RECOMPUTED, self)
             return self._tile_cache, self._tile_coords
@@ -496,10 +499,12 @@ class ChipLayer:
             proj_to_cam_matrix=proj_to_cam_mat,
             corr_to_chip_matrix=corr_to_chip_mat,
             nearest_interp=(self.threshold != -1),
+            single_fullscreen_tile=single_fullscreen_tile,
         )
 
         self._tile_cache = tiles
         self._tile_coords = tile_coords
+        self._tile_cache_single_fullscreen = single_fullscreen_tile
 
         if self.events is not None:
             self.events.emit(Event.LAYER_CACHE_RECOMPUTED, self)
@@ -621,6 +626,7 @@ class ChipProject:
         for layer in self.layers:
             layer._tile_cache = []
             layer._tile_coords = []
+            layer._tile_cache_single_fullscreen = False
 
     @property
     def exposure_history(self) -> List[ExposureRecord]:
