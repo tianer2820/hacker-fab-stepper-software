@@ -95,7 +95,10 @@ class ExposureOperation(Operation):
             context.projector.set_color_mode(ColorMode.RED)
             if context.project is not None:
                 from core.chip_project import ExposureRecord
-                from core.coordinate_system import compute_projector_footprint_in_chip_space
+                from core.coordinate_system import (
+                    compute_fullscreen_pattern_to_chip_matrix,
+                    compute_projector_footprint_in_chip_space,
+                )
 
                 sx, sy, sz = float(coords[0]), float(coords[1]), float(coords[2])
                 chip_xy = context.project.chip_progress.corr_to_chip((sx, sy))
@@ -119,12 +122,7 @@ class ExposureOperation(Operation):
                     cam_px = float(context.machine_config.stage_calibration.camera_pixel_size)
                     proj_to_cam = context.machine_config.optics.proj_to_cam_matrix
 
-                cam_to_stage_mat = None
-                if context.stage is not None and context.stage.get_calibration() is not None:
-                    cam_to_stage_mat = context.stage.get_calibration().cam_to_stage_matrix
-                elif context.machine_config is not None and hasattr(context.machine_config.stage_calibration, "get_cam_to_stage_matrix"):
-                    cam_to_stage_mat = context.machine_config.stage_calibration.get_cam_to_stage_matrix()
-
+                corr_to_chip_mat = context.project.chip_progress.get_corr_to_chip_matrix()
                 footprint_chip = compute_projector_footprint_in_chip_space(
                     stage_xy_corr=(sx, sy),
                     projector_size=proj_size,
@@ -132,8 +130,7 @@ class ExposureOperation(Operation):
                     projector_pixel_size=proj_px,
                     camera_pixel_size=cam_px,
                     proj_to_cam_matrix=proj_to_cam,
-                    cam_to_stage_matrix=cam_to_stage_mat,
-                    corr_to_chip_matrix=context.project.chip_progress.get_corr_to_chip_matrix(),
+                    corr_to_chip_matrix=corr_to_chip_mat,
                 )
                 record = ExposureRecord(
                     coords=chip_coords,
@@ -157,9 +154,21 @@ class ExposureOperation(Operation):
                         projector_size=proj_size,
                         projector_pixel_size=proj_px,
                     )
+                    transform_chip = None
+                    if self.single_fullscreen_tile:
+                        transform_chip = compute_fullscreen_pattern_to_chip_matrix(
+                            pattern_size_um=(float(eff_w), float(eff_h)),
+                            projector_size=proj_size,
+                            camera_size=cam_size,
+                            projector_pixel_size=proj_px,
+                            camera_pixel_size=cam_px,
+                            proj_to_cam_matrix=proj_to_cam,
+                            corr_to_chip_matrix=corr_to_chip_mat,
+                        )
                     context.project.chip_progress.add_pattern_origin(
                         chip_xy,
                         size_um=(float(eff_w), float(eff_h)),
+                        transform_chip=transform_chip,
                     )
 
                 if self.single_fullscreen_tile and layer is not None:

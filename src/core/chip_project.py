@@ -78,6 +78,7 @@ class ChipProgress:
     marker2_corr: Optional[Tuple[float, float]] = None
     pattern_origins_chip: List[Tuple[float, float]] = field(default_factory=list)
     pattern_sizes_chip: List[Tuple[float, float]] = field(default_factory=list)
+    pattern_transforms_chip: List[Optional[List[List[float]]]] = field(default_factory=list)
     exposure_history: List[ExposureRecord] = field(default_factory=list)
     events: Optional[EventBus] = field(default=None, repr=False, compare=False)
 
@@ -169,19 +170,37 @@ class ChipProgress:
         self,
         chip_xy: Tuple[float, float],
         size_um: Optional[Tuple[float, float]] = None,
+        transform_chip: Optional[Any] = None,
     ) -> int:
-        """Appends a pattern origin and optional physical size in chip-space (µm) and returns its 0-based index."""
+        """Appends a pattern origin, optional physical size, and optional 3x3 pattern-to-chip transform in chip-space (µm) and returns its 0-based index."""
         pt = (float(chip_xy[0]), float(chip_xy[1]))
         sz = (
             (float(size_um[0]), float(size_um[1]))
             if size_um is not None and len(size_um) >= 2
             else (-1.0, -1.0)
         )
+        t_list: Optional[List[List[float]]] = None
+        if transform_chip is not None:
+            arr = np.asarray(transform_chip, dtype=np.float64)
+            if arr.shape == (3, 3):
+                t_list = [[float(v) for v in row] for row in arr]
+
         self.pattern_origins_chip.append(pt)
         self.pattern_sizes_chip.append(sz)
+        self.pattern_transforms_chip.append(t_list)
         if self.events is not None:
             self.events.emit(Event.CHIP_PROGRESS_CHANGED, self)
         return len(self.pattern_origins_chip) - 1
+
+    def get_pattern_transform_chip(self, origin_index: int) -> np.ndarray:
+        """Returns the 3x3 matrix mapping local pattern coordinates (µm) to local chip-space offsets (µm) for the given origin."""
+        if 0 <= origin_index < len(self.pattern_transforms_chip):
+            mat = self.pattern_transforms_chip[origin_index]
+            if mat is not None:
+                arr = np.asarray(mat, dtype=np.float64)
+                if arr.shape == (3, 3):
+                    return arr
+        return np.eye(3, dtype=np.float64)
 
     def add_exposure_record(self, record: ExposureRecord) -> None:
         self.exposure_history.append(record)
@@ -203,6 +222,7 @@ class ChipProgress:
         self.marker2_corr = None
         self.pattern_origins_chip.clear()
         self.pattern_sizes_chip.clear()
+        self.pattern_transforms_chip.clear()
         self.exposure_history.clear()
         if self.events is not None:
             self.events.emit(Event.EXPOSURE_HISTORY_CHANGED, self.exposure_history)
@@ -217,6 +237,10 @@ class ChipProgress:
             "marker2_corr": list(self.marker2_corr) if self.marker2_corr is not None else None,
             "pattern_origins_chip": [[float(p[0]), float(p[1])] for p in self.pattern_origins_chip],
             "pattern_sizes_chip": [[float(s[0]), float(s[1])] for s in self.pattern_sizes_chip],
+            "pattern_transforms_chip": [
+                [[float(v) for v in row] for row in t] if t is not None else None
+                for t in self.pattern_transforms_chip
+            ],
             "exposure_history": [rec.to_disk() for rec in self.exposure_history],
         }
 
@@ -245,6 +269,17 @@ class ChipProgress:
         while len(sizes) < len(origins):
             sizes.append((-1.0, -1.0))
 
+        raw_transforms = d.get("pattern_transforms_chip", [])
+        transforms: List[Optional[List[List[float]]]] = []
+        if isinstance(raw_transforms, list):
+            for t in raw_transforms:
+                if isinstance(t, (list, tuple)) and len(t) == 3 and all(isinstance(r, (list, tuple)) and len(r) == 3 for r in t):
+                    transforms.append([[float(v) for v in r] for r in t])
+                else:
+                    transforms.append(None)
+        while len(transforms) < len(origins):
+            transforms.append(None)
+
         history = [
             ExposureRecord.from_disk(r)
             for r in d.get("exposure_history", [])
@@ -257,6 +292,7 @@ class ChipProgress:
             marker2_corr=m2_corr,
             pattern_origins_chip=origins,
             pattern_sizes_chip=sizes,
+            pattern_transforms_chip=transforms,
             exposure_history=history,
             events=events,
         )
@@ -443,18 +479,26 @@ class ChipLayer:
         self,
         force: bool = False,
         single_fullscreen_tile: bool = False,
+        pattern_transform_chip: Optional[Any] = None,
     ) -> tuple[list[np.ndarray], list[tuple[float, float]]]:
         """Generates projector-space tiles and their relative chip-space coordinates."""
+        assert self._project is not None
         cached_single = getattr(self, "_tile_cache_single_fullscreen", False)
-        if force or cached_single != single_fullscreen_tile:
-            self._pattern_cache = None
-            self._tile_cache = []
-            self._tile_coords = []
+        cached_transform = getattr(self, "_tile_cache_pattern_transform", None)
 
         if not force and self._tile_cache and cached_single == single_fullscreen_tile:
-            return self._tile_cache, self._tile_coords
+            if pattern_transform_chip is None:
+                return self._tile_cache, self._tile_coords
+            if cached_transform is not None and np.allclose(
+                np.asarray(pattern_transform_chip, dtype=np.float64),
+                np.asarray(cached_transform, dtype=np.float64),
+            ):
+                return self._tile_cache, self._tile_coords
 
-        assert self._project is not None
+        self._pattern_cache = None
+        self._tile_cache = []
+        self._tile_coords = []
+
         project_settings = self._project.settings
         pattern = self.get_pattern_image()
 
@@ -462,6 +506,7 @@ class ChipLayer:
             self._tile_cache = []
             self._tile_coords = []
             self._tile_cache_single_fullscreen = single_fullscreen_tile
+            self._tile_cache_pattern_transform = pattern_transform_chip
             if self.events is not None:
                 self.events.emit(Event.LAYER_CACHE_RECOMPUTED, self)
             return self._tile_cache, self._tile_coords
@@ -471,15 +516,12 @@ class ChipLayer:
         proj_px_size = 1.0
         cam_px_size = 1.0
         proj_to_cam_mat = None
-        cam_to_stage_mat = getattr(self._project, "cam_to_stage_matrix", None)
 
         if self._project.machine_config is not None:
             cfg = self._project.machine_config
             proj_px_size = cfg.optics.projector_pixel_size
             cam_px_size = cfg.stage_calibration.camera_pixel_size
             proj_to_cam_mat = cfg.optics.proj_to_cam_matrix
-            if cam_to_stage_mat is None and hasattr(cfg.stage_calibration, "get_cam_to_stage_matrix"):
-                cam_to_stage_mat = cfg.stage_calibration.get_cam_to_stage_matrix()
 
         corr_to_chip_mat = (
             self._project.chip_progress.get_corr_to_chip_matrix()
@@ -500,8 +542,8 @@ class ChipLayer:
             projector_pixel_size=proj_px_size,
             camera_pixel_size=cam_px_size,
             proj_to_cam_matrix=proj_to_cam_mat,
-            cam_to_stage_matrix=cam_to_stage_mat,
             corr_to_chip_matrix=corr_to_chip_mat,
+            pattern_transform_chip=pattern_transform_chip,
             nearest_interp=(self.threshold != -1),
             single_fullscreen_tile=single_fullscreen_tile,
         )
@@ -509,6 +551,11 @@ class ChipLayer:
         self._tile_cache = tiles
         self._tile_coords = tile_coords
         self._tile_cache_single_fullscreen = single_fullscreen_tile
+        self._tile_cache_pattern_transform = (
+            np.asarray(pattern_transform_chip, dtype=np.float64).copy()
+            if pattern_transform_chip is not None
+            else None
+        )
 
         if self.events is not None:
             self.events.emit(Event.LAYER_CACHE_RECOMPUTED, self)
@@ -595,7 +642,6 @@ class ChipProject:
     machine_config: Optional[Any] = field(default=None, repr=False, compare=False)
     projector_size: Tuple[int, int] = field(default=(1920, 1080), repr=False, compare=False)
     camera_size: Tuple[int, int] = field(default=(1920, 1080), repr=False, compare=False)
-    cam_to_stage_matrix: Optional[Any] = field(default=None, repr=False, compare=False)
 
     def __post_init__(self):
         if not self.layers:

@@ -95,8 +95,8 @@ def generate_projector_aligned_tiles(
     projector_pixel_size: float = 1.0,
     camera_pixel_size: float = 1.0,
     proj_to_cam_matrix: Optional[Sequence[Sequence[float]] | np.ndarray] = None,
-    cam_to_stage_matrix: Optional[Sequence[Sequence[float]] | np.ndarray] = None,
     corr_to_chip_matrix: Optional[np.ndarray] = None,
+    pattern_transform_chip: Optional[Sequence[Sequence[float]] | np.ndarray] = None,
     nearest_interp: bool = True,
     single_fullscreen_tile: bool = False,
 ) -> Tuple[List[np.ndarray], List[Tuple[float, float]]]:
@@ -140,8 +140,9 @@ def generate_projector_aligned_tiles(
         tile = fit_pattern_to_projector_canvas(img, projector_size=(pw, ph), nearest_interp=nearest_interp)
         return [tile], [(0.0, 0.0)]
 
-    # 1. Layer image pixel (u_img, v_img) -> local chip-space (centered at (0, 0))
-    M_img_to_chip = np.array(
+    # 1. Layer image pixel (u_img, v_img) -> local pattern-space (centered at (0, 0)),
+    # then transformed into local chip-space via pattern_transform_chip (identity by default).
+    M_img_to_pat = np.array(
         [
             [w_um / float(img_w), 0.0, -0.5 * w_um],
             [0.0, h_um / float(img_h), -0.5 * h_um],
@@ -149,6 +150,15 @@ def generate_projector_aligned_tiles(
         ],
         dtype=np.float64,
     )
+    M_pat_to_chip = np.eye(3, dtype=np.float64)
+    if pattern_transform_chip is not None:
+        arr = np.asarray(pattern_transform_chip, dtype=np.float64)
+        if arr.shape == (3, 3):
+            M_pat_to_chip = arr
+        elif arr.shape == (2, 2):
+            M_pat_to_chip[:2, :2] = arr
+
+    M_img_to_chip = M_pat_to_chip @ M_img_to_pat
 
     # 2. Projector pixel -> chip-space at reference stage_xy_corr = (0, 0),
     # shifted so projector center (pw/2, ph/2) is at local chip-space origin (0, 0).
@@ -159,7 +169,6 @@ def generate_projector_aligned_tiles(
         projector_pixel_size=projector_pixel_size,
         camera_pixel_size=camera_pixel_size,
         proj_to_cam_matrix=proj_to_cam_matrix,
-        cam_to_stage_matrix=cam_to_stage_matrix,
         corr_to_chip_matrix=corr_to_chip_matrix,
     )
     proj_center_chip = apply_homography_2d((0.5 * pw, 0.5 * ph), M_proj_to_chip_raw)
@@ -192,8 +201,8 @@ def generate_projector_aligned_tiles(
     u_x = vec_x / fov_w_um
     u_y = vec_y / fov_h_um
 
-    # 4. Project the 4 corners of the layer's chip-space rectangle onto (u_x, u_y)
-    layer_corners_chip = np.array(
+    # 4. Project the 4 corners of the layer's chip-space footprint onto (u_x, u_y)
+    layer_corners_pat = np.array(
         [
             [-0.5 * w_um, -0.5 * h_um],
             [0.5 * w_um, -0.5 * h_um],
@@ -202,6 +211,7 @@ def generate_projector_aligned_tiles(
         ],
         dtype=np.float64,
     )
+    layer_corners_chip = apply_homography_2d(layer_corners_pat, M_pat_to_chip)
     proj_x_vals = layer_corners_chip @ u_x
     proj_y_vals = layer_corners_chip @ u_y
     span_x = float(np.max(proj_x_vals) - np.min(proj_x_vals))
@@ -210,12 +220,25 @@ def generate_projector_aligned_tiles(
     stride_x = max(1.0, fov_w_um - float(overlap_x_um))
     stride_y = max(1.0, fov_h_um - float(overlap_y_um))
 
-    if span_x <= fov_w_um + 1e-6:
+    # Check if the layer corners fit within a single centered projector frame
+    fits_single_proj_x = False
+    fits_single_proj_y = False
+    try:
+        M_chip_to_proj_0 = np.linalg.inv(M_proj_to_chip_0)
+        corners_in_proj = apply_homography_2d(layer_corners_chip, M_chip_to_proj_0)
+        if np.min(corners_in_proj[:, 0]) >= -1e-3 and np.max(corners_in_proj[:, 0]) <= float(pw) + 1e-3:
+            fits_single_proj_x = True
+        if np.min(corners_in_proj[:, 1]) >= -1e-3 and np.max(corners_in_proj[:, 1]) <= float(ph) + 1e-3:
+            fits_single_proj_y = True
+    except np.linalg.LinAlgError:
+        pass
+
+    if fits_single_proj_x or span_x <= fov_w_um + 1e-6:
         nx = 1
     else:
         nx = int(np.ceil((span_x - fov_w_um) / stride_x)) + 1
 
-    if span_y <= fov_h_um + 1e-6:
+    if fits_single_proj_y or span_y <= fov_h_um + 1e-6:
         ny = 1
     else:
         ny = int(np.ceil((span_y - fov_h_um) / stride_y)) + 1

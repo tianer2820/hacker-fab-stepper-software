@@ -181,6 +181,7 @@ class StageMapCanvas(QFrame):
                     painter.drawRect(QRectF(sx - tile_w / 2, sy - tile_h / 2, tile_w, tile_h))
 
             # Draw exposed pattern origins and pattern boundaries (Cyan #06b6d4)
+            from core.coordinate_system import apply_homography_2d
             for orig_idx, orig_chip in enumerate(cp.pattern_origins_chip):
                 orig_w = fov_w
                 orig_h = fov_h
@@ -189,13 +190,19 @@ class StageMapCanvas(QFrame):
                     if stored_sz[0] > 0 and stored_sz[1] > 0:
                         orig_w, orig_h = float(stored_sz[0]), float(stored_sz[1])
 
-                ox, oy = float(orig_chip[0]), float(orig_chip[1])
+                ox_c, oy_c = float(orig_chip[0]), float(orig_chip[1])
                 hw, hh = orig_w / 2.0, orig_h / 2.0
+                local_corners = [
+                    (-hw, -hh),
+                    (hw, -hh),
+                    (hw, hh),
+                    (-hw, hh),
+                ]
+                pat_transform = cp.get_pattern_transform_chip(orig_idx)
+                rel_corners = apply_homography_2d(local_corners, pat_transform)
                 chip_corners = [
-                    (ox - hw, oy - hh),
-                    (ox + hw, oy - hh),
-                    (ox + hw, oy + hh),
-                    (ox - hw, oy + hh),
+                    (ox_c + float(pt[0]), oy_c + float(pt[1]))
+                    for pt in rel_corners
                 ]
 
                 poly_pts = []
@@ -209,7 +216,7 @@ class StageMapCanvas(QFrame):
                 painter.drawPolygon(QPolygonF(poly_pts))
 
                 # Draw origin center point and label
-                oc_corr_x, oc_corr_y = cp.chip_to_corr((ox, oy))
+                oc_corr_x, oc_corr_y = cp.chip_to_corr((ox_c, oy_c))
                 osx, osy = self._to_screen(oc_corr_x, oc_corr_y, t)
                 painter.setPen(QPen(QColor("#06b6d4"), 2))
                 painter.setBrush(QBrush(QColor("#06b6d4")))

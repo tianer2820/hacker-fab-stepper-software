@@ -59,20 +59,9 @@ class LayerExposureOperation(Operation):
         if context.camera is not None and getattr(context.camera, "_last_frame_size", None):
             project.camera_size = context.camera._last_frame_size
 
-        if context.stage is not None:
-            cal = context.stage.get_calibration()
-            if cal is not None and cal.cam_to_stage_matrix is not None:
-                project.cam_to_stage_matrix = cal.cam_to_stage_matrix
-
         project.select_layer(self.layer_index)
         layer = project.layers[self.layer_index]
         effective_settings = self.settings if self.settings is not None else layer.get_effective_settings()
-
-        tiles, tile_rel_coords = layer.generate_tiles()
-        total_tiles_per_origin = len(tiles)
-        if total_tiles_per_origin == 0:
-            report_progress(1.0, "No tiles to expose")
-            return None
 
         pos = context.stage.get_position() if context.stage is not None else (0.0, 0.0, 0.0)
         cur_chip_xy = chip_progress.corr_to_chip((float(pos[0]), float(pos[1])))
@@ -94,11 +83,11 @@ class LayerExposureOperation(Operation):
         )
         effective_pattern_size = (float(eff_w_um), float(eff_h_um))
 
-        # Resolve target origin(s) in chip-space
-        origins: List[Tuple[float, float]] = []
+        # Resolve target origin(s) and their pattern transforms in chip-space
+        origins_with_indices: List[Tuple[int, Tuple[float, float]]] = []
         if self.origin_mode == "current" or (self.layer_index == 0 and self.origin_mode in ("auto", "current")):
-            origins = [cur_chip_xy]
-            chip_progress.add_pattern_origin(cur_chip_xy, size_um=effective_pattern_size)
+            new_idx = chip_progress.add_pattern_origin(cur_chip_xy, size_um=effective_pattern_size)
+            origins_with_indices = [(new_idx, cur_chip_xy)]
             if context.event_bus is not None:
                 context.event_bus.emit(Event.CHIP_PROGRESS_CHANGED, chip_progress)
         elif (
@@ -106,38 +95,48 @@ class LayerExposureOperation(Operation):
             and self.origin_index is not None
             and 0 <= self.origin_index < len(chip_progress.pattern_origins_chip)
         ):
-            origins = [chip_progress.pattern_origins_chip[self.origin_index]]
+            origins_with_indices = [(self.origin_index, chip_progress.pattern_origins_chip[self.origin_index])]
         elif self.origin_mode in ("all", "auto") and chip_progress.pattern_origins_chip:
-            origins = list(chip_progress.pattern_origins_chip)
+            origins_with_indices = list(enumerate(chip_progress.pattern_origins_chip))
         else:
-            origins = [cur_chip_xy]
-            chip_progress.add_pattern_origin(cur_chip_xy, size_um=effective_pattern_size)
+            new_idx = chip_progress.add_pattern_origin(cur_chip_xy, size_um=effective_pattern_size)
+            origins_with_indices = [(new_idx, cur_chip_xy)]
             if context.event_bus is not None:
                 context.event_bus.emit(Event.CHIP_PROGRESS_CHANGED, chip_progress)
 
-        total_steps = len(origins) * total_tiles_per_origin
+        first_transform = chip_progress.get_pattern_transform_chip(origins_with_indices[0][0])
+        tiles, tile_rel_coords = layer.generate_tiles(pattern_transform_chip=first_transform)
+        total_tiles_per_origin = len(tiles)
+        if total_tiles_per_origin == 0:
+            report_progress(1.0, "No tiles to expose")
+            return None
+
+        total_steps = len(origins_with_indices) * total_tiles_per_origin
         report_progress(
             0.0,
-            f"Beginning layer exposure ({len(origins)} origin(s) × {total_tiles_per_origin} tile(s))...",
+            f"Beginning layer exposure ({len(origins_with_indices)} origin(s) × {total_tiles_per_origin} tile(s))...",
         )
 
         last_error: Optional[str] = None
         step_counter = 0
         try:
-            for orig_idx, origin_chip in enumerate(origins):
+            for orig_idx, (prog_orig_idx, origin_chip) in enumerate(origins_with_indices):
                 if self.is_aborted:
                     break
+                orig_transform = chip_progress.get_pattern_transform_chip(prog_orig_idx)
+                tiles, tile_rel_coords = layer.generate_tiles(pattern_transform_chip=orig_transform)
+                total_tiles_per_origin = len(tiles)
                 for tile_idx, (rel_cx, rel_cy) in enumerate(tile_rel_coords):
                     if self.is_aborted:
                         break
 
-                    pct_base = step_counter / total_steps
-                    pct_step = 1.0 / total_steps
+                    pct_base = step_counter / max(1, total_steps)
+                    pct_step = 1.0 / max(1, total_steps)
                     step_counter += 1
 
                     prefix_label = (
-                        f"Origin {orig_idx + 1}/{len(origins)} Tile {tile_idx + 1}/{total_tiles_per_origin}"
-                        if len(origins) > 1
+                        f"Origin {orig_idx + 1}/{len(origins_with_indices)} Tile {tile_idx + 1}/{total_tiles_per_origin}"
+                        if len(origins_with_indices) > 1
                         else f"Tile {tile_idx + 1}/{total_tiles_per_origin}"
                     )
 

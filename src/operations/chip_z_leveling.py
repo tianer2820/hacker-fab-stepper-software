@@ -430,17 +430,10 @@ class ExposeMarkerAndRecordOperation(Operation):
         u_cam = float(p_cam[0] / p_cam[2])
         v_cam = float(p_cam[1] / p_cam[2])
 
-        cam_to_stage_mat = None
-        if context.stage is not None and context.stage.get_calibration() is not None:
-            cam_to_stage_mat = context.stage.get_calibration().cam_to_stage_matrix
-        elif context.machine_config is not None and hasattr(context.machine_config.stage_calibration, "get_cam_to_stage_matrix"):
-            cam_to_stage_mat = context.machine_config.stage_calibration.get_cam_to_stage_matrix()
-
         M_cam_to_corr = build_camera_to_corr_stage_matrix(
             stage_xy_corr=(sx, sy),
             camera_size=cam_size,
             camera_pixel_size=cam_px,
-            cam_to_stage_matrix=cam_to_stage_mat,
         )
         p_corr = M_cam_to_corr @ np.array([u_cam, v_cam, 1.0])
         marker_corr_xy = (float(p_corr[0]), float(p_corr[1]))
@@ -457,7 +450,6 @@ class ExposeMarkerAndRecordOperation(Operation):
             projector_pixel_size=proj_px,
             camera_pixel_size=cam_px,
             proj_to_cam_matrix=proj_to_cam,
-            cam_to_stage_matrix=cam_to_stage_mat,
             corr_to_chip_matrix=cp.get_corr_to_chip_matrix(),
         )
         from core.chip_project import ExposureRecord
